@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+from asgi_correlation_id import CorrelationIdMiddleware
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
@@ -61,6 +62,12 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
         allow_credentials=False,
     )
+    # CorrelationIdMiddleware injects a `X-Request-ID` per request into a
+    # context-var that structlog's `merge_contextvars` processor picks up —
+    # every log line generated during a request gets the same request_id field
+    # for tail-grep correlation. The middleware also echoes the ID back in
+    # the response header so clients can quote it in bug reports.
+    app.add_middleware(CorrelationIdMiddleware)
 
     @app.get("/healthz", tags=["meta"], summary="Liveness probe")
     async def healthz() -> dict[str, str]:
@@ -68,11 +75,12 @@ def create_app() -> FastAPI:
 
     @app.get("/metrics", tags=["meta"], summary="Prometheus metrics")
     async def metrics() -> object:
-        from fastapi.responses import PlainTextResponse
+        from fastapi.responses import Response
 
         from kb.api.metrics import render_prometheus
 
-        return PlainTextResponse(render_prometheus(), media_type="text/plain; version=0.0.4")
+        body, content_type = render_prometheus()
+        return Response(content=body, media_type=content_type)
 
     @app.get("/readyz", tags=["meta"], summary="Readiness — checks DB, vector store, object store")
     async def readyz() -> dict[str, object]:

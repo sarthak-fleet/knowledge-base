@@ -48,9 +48,25 @@ def configure_logging(level: str | None = None) -> None:
     log_level_str = (level or os.environ.get("KB_LOG_LEVEL") or "info").upper()
     log_level = getattr(logging, log_level_str, logging.INFO)
 
+    def _add_correlation_id(_logger: object, _name: str, event_dict: dict) -> dict:
+        """Pull the asgi-correlation-id contextvar into the log event so
+        every log line generated during an HTTP request carries the same
+        request_id field. No-op outside a request context.
+        """
+        try:
+            from asgi_correlation_id.context import correlation_id
+
+            cid = correlation_id.get()
+            if cid:
+                event_dict.setdefault("request_id", cid)
+        except Exception:
+            pass
+        return event_dict
+
     # Shared processors run on both stdlib logs and structlog-native logs.
     shared_processors: list = [
         structlog.contextvars.merge_contextvars,
+        _add_correlation_id,
         structlog.stdlib.add_log_level,
         structlog.stdlib.add_logger_name,
         structlog.processors.TimeStamper(fmt="iso", utc=True),

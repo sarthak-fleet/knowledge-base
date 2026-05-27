@@ -1,88 +1,42 @@
-"""Prometheus /metrics endpoint.
+"""Prometheus /metrics endpoint backed by the official prometheus_client library.
 
-Exposes per-stage p50/p95 query latency, token spend, ingest counts, and
-RAGAS metric history (sampled from query_traces). Plain-text Prometheus
-exposition format — no client dependency.
+Replaces a ~85-line hand-rolled aggregator with a Counter + Summary surface
+that other production systems already know how to scrape. The metric NAMES
+are unchanged so any existing dashboards keep working:
 
-This is intentionally minimal: a real production setup would push to a TSDB
-(VictoriaMetrics, Mimir, etc.); the in-process aggregator here gives the
-operator a same-process view via curl.
+  - kb_queries_total            (Counter)
+  - kb_ingest_files_total       (Counter)
+  - kb_query_tokens             (Summary; .5 and .95 quantiles)
+  - kb_stage_latency_ms{stage}  (Summary; .5 and .95 per stage)
+
+`record_query` / `record_ingest` keep the same call shape so the wiring in
+`kb/query/engine.py` and the worker doesn't change.
 """
 
 from __future__ import annotations
 
-from collections import deque
-from dataclasses import dataclass, field
 from typing import Any
 
-# Grok Issue 7: previously gated by `threading.Lock`. The whole app runs on a
-# single asyncio event loop (FastAPI + asyncio workers) so there is at most
-# one Python thread executing user code. Counter increments and deque appends
-# are GIL-atomic at bytecode level, so an explicit lock here is pure overhead
-# and a category error (threading primitives in async code). If this module
-# is ever called from a real threadpool, swap in `asyncio.Lock` and make the
-# recorders async.
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Summary, generate_latest
 
-
-@dataclass
-class _Stats:
-    samples: deque[float] = field(default_factory=lambda: deque(maxlen=1024))
-
-    def add(self, v: float) -> None:
-        self.samples.append(v)
-
-    def p(self, q: float) -> float:
-        if not self.samples:
-            return 0.0
-        s = sorted(self.samples)
-        idx = max(0, min(len(s) - 1, int(len(s) * q)))
-        return s[idx]
-
-    def avg(self) -> float:
-        return sum(self.samples) / len(self.samples) if self.samples else 0.0
-
-    def count(self) -> int:
-        return len(self.samples)
-
-
-_stage_latencies: dict[str, _Stats] = {}
-_tokens: _Stats = _Stats()
-_queries_total = {"value": 0}
-_ingest_total = {"value": 0}
+_queries_total = Counter("kb_queries_total", "Total queries served")
+_ingest_total = Counter("kb_ingest_files_total", "Total files ingested")
+_tokens = Summary("kb_query_tokens", "Token usage per query")
+# Pre-declared with the label key; values appear lazily as new stages fire.
+_stage_latency = Summary("kb_stage_latency_ms", "Per-stage latency in ms", labelnames=["stage"])
 
 
 def record_query(latency_ms: int, token_total: int, stages: list[dict[str, Any]]) -> None:
-    _queries_total["value"] += 1
-    _tokens.add(float(token_total or 0))
+    _queries_total.inc()
+    _tokens.observe(float(token_total or 0))
     for s in stages or []:
-        name = s.get("stage", "unknown")
-        _stage_latencies.setdefault(name, _Stats()).add(float(s.get("latency_ms", 0)))
+        _stage_latency.labels(stage=s.get("stage", "unknown")).observe(float(s.get("latency_ms", 0)))
 
 
 def record_ingest(file_count: int) -> None:
-    _ingest_total["value"] += int(file_count or 0)
+    _ingest_total.inc(int(file_count or 0))
 
 
-def render_prometheus() -> str:
-    """Emit prometheus-format metrics text."""
-    out: list[str] = []
-    out.append("# HELP kb_queries_total Total number of queries served")
-    out.append("# TYPE kb_queries_total counter")
-    out.append(f"kb_queries_total {_queries_total['value']}")
-    out.append("# HELP kb_ingest_files_total Total files ingested")
-    out.append("# TYPE kb_ingest_files_total counter")
-    out.append(f"kb_ingest_files_total {_ingest_total['value']}")
-    out.append("# HELP kb_query_tokens Token usage per query (rolling)")
-    out.append("# TYPE kb_query_tokens summary")
-    out.append(f'kb_query_tokens{{quantile="0.5"}} {_tokens.p(0.5):.2f}')
-    out.append(f'kb_query_tokens{{quantile="0.95"}} {_tokens.p(0.95):.2f}')
-    out.append(f"kb_query_tokens_count {_tokens.count()}")
-    out.append("# HELP kb_stage_latency_ms Per-stage latency in ms (rolling)")
-    out.append("# TYPE kb_stage_latency_ms summary")
-    # Snapshot the dict to avoid mutation during iteration in a future world
-    # where recorders happen from a non-event-loop thread.
-    for stage, stats in list(_stage_latencies.items()):
-        out.append(f'kb_stage_latency_ms{{stage="{stage}",quantile="0.5"}} {stats.p(0.5):.2f}')
-        out.append(f'kb_stage_latency_ms{{stage="{stage}",quantile="0.95"}} {stats.p(0.95):.2f}')
-        out.append(f'kb_stage_latency_ms_count{{stage="{stage}"}} {stats.count()}')
-    return "\n".join(out) + "\n"
+def render_prometheus() -> tuple[bytes, str]:
+    """Return (body_bytes, content_type) for the /metrics endpoint."""
+    return generate_latest(), CONTENT_TYPE_LATEST
