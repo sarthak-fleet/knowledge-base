@@ -62,15 +62,32 @@ def build_chunks(
     parents: list[HChunk] = []
     cur: HChunk | None = None
     cur_text_len = 0
+    # Track the running section context (last Title element we saw). Threaded
+    # into chunk metadata so retrieval can soft-boost "same section" matches
+    # and citations can show the section header inline.
+    cur_section_title: str | None = None
+    cur_section_id: str | None = None
 
     for e in elements:
         if not e.text:
             continue
+        # Maintain the running section context. Unstructured tags hierarchy
+        # headings as `Title` (with optional `Header`); track those so every
+        # downstream chunk knows which section it lives under.
+        if e.type in ("Title", "Header") and e.text.strip():
+            cur_section_title = e.text.strip()[:200]
+            cur_section_id = e.id
         if cur is None or cur_text_len + len(e.text) > parent_size:
             cur = HChunk(
                 page_start=e.page,
                 page_end=e.page,
-                metadata={**base},
+                metadata={
+                    **base,
+                    "section_title": cur_section_title,
+                    "section_id": cur_section_id,
+                    "first_element_type": e.type,
+                    "first_element_id": e.id,
+                },
             )
             parents.append(cur)
             cur_text_len = 0
@@ -131,11 +148,25 @@ async def build_chunks_semantic(
     parents: list[HChunk] = []
     cur: HChunk | None = None
     cur_text_len = 0
+    cur_section_title: str | None = None
+    cur_section_id: str | None = None
     for e in elements:
         if not e.text:
             continue
+        if e.type in ("Title", "Header") and e.text.strip():
+            cur_section_title = e.text.strip()[:200]
+            cur_section_id = e.id
         if cur is None or cur_text_len + len(e.text) > parent_size:
-            cur = HChunk(page_start=e.page, page_end=e.page, metadata={**base})
+            cur = HChunk(
+                page_start=e.page,
+                page_end=e.page,
+                metadata={
+                    **base,
+                    "section_title": cur_section_title,
+                    "section_id": cur_section_id,
+                    "first_element_type": e.type,
+                },
+            )
             parents.append(cur)
             cur_text_len = 0
         cur.text = (cur.text + "\n\n" + e.text).strip() if cur.text else e.text

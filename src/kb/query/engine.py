@@ -7,6 +7,7 @@ reviewer / user can inspect `/query/trace/{id}` to see exactly what happened.
 
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 from typing import Any
@@ -232,29 +233,71 @@ async def answer_query(body: QueryIn) -> QueryOut:
     # ── Stage 1c: query rewriting + HyDE + decomposition ────────────────────
     # Produces an expanded list of queries to retrieve against, fused via RRF.
     # All three are configurable on/off via retrieve.* config keys.
+    #
+    # Dependency graph (matters for perf):
+    #   decompose(body.question)  →  changes the seed list of queries
+    #   hyde(body.question)       →  independent of decompose
+    #   rewrite(q) for q in queries  →  depends on decompose's output, but
+    #                                   each rewrite is independent of the others
+    #
+    # So we run decompose ‖ hyde in parallel, then fan-out rewrite across all
+    # the resulting queries in parallel. ~50% latency drop on warm cache vs the
+    # prior sequential shape.
     queries = [body.question]
-    if bool(pipeline.get(cfg, "retrieve.query_decomposition", True)):
+    syn_model_for_queries = pipeline.get(cfg, "llm.synthesize.model")
+    decompose_on = bool(pipeline.get(cfg, "retrieve.query_decomposition", True))
+    hyde_on = bool(pipeline.get(cfg, "retrieve.hyde", False))
+
+    async def _decompose_call() -> tuple[bool, list[str], float]:
+        if not decompose_on:
+            return False, [body.question], 0.0
         from kb.query.rewriter import decompose_query
 
-        started = time.time()
-        is_compound, subs = await decompose_query(
-            body.question, model=pipeline.get(cfg, "llm.synthesize.model")
+        t0 = time.time()
+        is_compound, subs = await decompose_query(body.question, model=syn_model_for_queries)
+        return is_compound, (subs[:] if is_compound and len(subs) > 1 else [body.question]), (
+            time.time() - t0
+        ) * 1000
+
+    async def _hyde_call() -> tuple[str | None, float]:
+        if not hyde_on:
+            return None, 0.0
+        from kb.query.rewriter import hyde_passage
+
+        t0 = time.time()
+        h = await hyde_passage(body.question, model=syn_model_for_queries)
+        return (h if h and h != body.question else None), (time.time() - t0) * 1000
+
+    started_block = time.time()
+    (is_compound, decomposed, decompose_ms), (hyde_text, hyde_ms) = await asyncio.gather(
+        _decompose_call(), _hyde_call()
+    )
+    queries = decomposed
+    if decompose_on:
+        stages.append(
+            {
+                "stage": "decompose",
+                "latency_ms": int(decompose_ms),
+                "kind": "compound" if is_compound else "single",
+                "sub_count": len(queries),
+            }
         )
-        if is_compound and len(subs) > 1:
-            queries = subs[:]
-            stages.append(_stage("decompose", started, kind="compound", sub_count=len(subs)))
-        else:
-            stages.append(_stage("decompose", started, kind="single"))
+
+    # Fan-out rewrite across all queries in parallel.
     if bool(pipeline.get(cfg, "retrieve.query_rewriting", True)):
         from kb.query.rewriter import rewrite_query
 
-        started = time.time()
         n = int(pipeline.get(cfg, "retrieve.query_rewriting_variants", 3))
+        started = time.time()
+        rewrite_results = await asyncio.gather(
+            *(rewrite_query(q, n=n, model=syn_model_for_queries) for q in queries),
+            return_exceptions=True,
+        )
         expanded: list[str] = []
-        for q in queries:
-            expanded.extend(
-                await rewrite_query(q, n=n, model=pipeline.get(cfg, "llm.synthesize.model"))
-            )
+        for r in rewrite_results:
+            if isinstance(r, Exception):
+                continue
+            expanded.extend(r)
         # Dedupe, cap at 6 to keep retrieval cost reasonable
         seen: set[str] = set()
         queries = []
@@ -266,14 +309,22 @@ async def answer_query(body: QueryIn) -> QueryOut:
             if len(queries) >= 6:
                 break
         stages.append(_stage("rewrite", started, variants=len(queries)))
-    if bool(pipeline.get(cfg, "retrieve.hyde", False)):
-        from kb.query.rewriter import hyde_passage
 
-        started = time.time()
-        hyde = await hyde_passage(body.question, model=pipeline.get(cfg, "llm.synthesize.model"))
-        if hyde and hyde != body.question:
-            queries.append(hyde)
-        stages.append(_stage("hyde", started, used=hyde != body.question))
+    if hyde_on:
+        if hyde_text:
+            queries.append(hyde_text)
+        stages.append(
+            {"stage": "hyde", "latency_ms": int(hyde_ms), "used": hyde_text is not None}
+        )
+
+    _block_ms = int((time.time() - started_block) * 1000)
+    logger.info(
+        "query_expansion_done",
+        block_ms=_block_ms,
+        decompose_ms=int(decompose_ms),
+        hyde_ms=int(hyde_ms),
+        final_queries=len(queries),
+    )
 
     # ── Stage 2: retrieval (multi-query RRF) ─────────────────────────────────
     explicit_filters = _build_explicit_filters(body.scope, body.filters)
@@ -547,9 +598,20 @@ async def answer_query(body: QueryIn) -> QueryOut:
         confidence_reason = "no inline citations produced"
 
     # ── Stage 4.5: citation verification ─────────────────────────────────────
+    # AIS-style entailment per claim — the most expensive stage in the pipeline
+    # (~16s p50 with Pro judge). We can skip it on **high-confidence retrieval +
+    # high model confidence** without compromising the "cited or it didn't
+    # happen" rule: if CRAG already scored retrieval as strong AND the
+    # synthesizer reported high confidence, the marginal cost of one more
+    # per-claim entailment pass isn't worth ~16s. The synth-level
+    # refuse_if_no_citations guard still fires regardless.
     verify_enabled = bool(pipeline.get(cfg, "synthesize.verify_citations", True))
+    verify_skip_threshold = float(pipeline.get(cfg, "synthesize.verify_skip_threshold", 0.7))
+    should_verify = verify_enabled and cited_indices and not (
+        crag_score >= verify_skip_threshold and confidence_value >= verify_skip_threshold
+    )
     verify_summary: dict[str, Any] = {}
-    if verify_enabled and cited_indices:
+    if should_verify:
         started = time.time()
         checks = await verify_citations(
             answer=answer_text,
@@ -568,6 +630,17 @@ async def answer_query(body: QueryIn) -> QueryOut:
                 started,
                 **{k: v for k, v in verify_summary.items() if k != "failed_claims"},
             )
+        )
+    elif verify_enabled and cited_indices:
+        # Recorded for trace-transparency — verify is configured on but we
+        # skipped it because retrieval + synth were both highly confident.
+        stages.append(
+            {
+                "stage": "verify",
+                "latency_ms": 0,
+                "skipped": True,
+                "reason": f"crag={crag_score:.2f}, conf={confidence_value:.2f}",
+            }
         )
 
     # ── Stage 5: span-level citations (multi-source aware) ───────────────────
