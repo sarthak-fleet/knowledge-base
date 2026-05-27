@@ -29,20 +29,56 @@ class QdrantStore(VectorStore):
         self._ensured: set[str] = set()
         self._lock = asyncio.Lock()
 
+    # Postgres advisory-lock slot for cross-process exclusion on collection
+    # bootstrap (Grok Issue 1). Reserved in migrations/04_advisory_locks.sql.
+    _VEC_BOOTSTRAP_LOCK_KEY = 4242
+
     async def ensure_collection(self, domain: str) -> None:
-        """Idempotent collection creation. Multiple worker processes racing here
-        no longer fail: we treat "already exists" as success and retry the
-        existence check after a brief backoff.
+        """Idempotent, cross-process-safe collection creation.
+
+        Grok Issue 1: the previous impl used a per-process `asyncio.Lock`,
+        which gave no exclusion across the api + worker containers. Multiple
+        processes could pass the existence check, hit the create race, and
+        still mark `_ensured` even when the collection didn't actually land —
+        subsequent upserts then 404'd. Fix:
+          - Take a Postgres advisory lock that's visible across processes.
+          - Only mark `_ensured` after a confirmed existence check.
+          - On failure, raise so the upsert wrapper can retry rather than
+            silently caching the failure.
         """
         async with self._lock:
             if domain in self._ensured:
                 return
-            name = _collection(domain)
-            for attempt in range(3):
+        name = _collection(domain)
+
+        # Try to acquire the Postgres advisory lock. If we can't (because
+        # another worker holds it), we still poll for collection existence —
+        # the other worker will create it and we'll see it on next loop.
+        from sqlalchemy import text as _sql
+
+        from kb.storage.db import session as _db_session
+
+        held = False
+        try:
+            async with _db_session() as s:
+                got = (await s.execute(_sql("SELECT pg_try_advisory_lock(:k)"), {"k": self._VEC_BOOTSTRAP_LOCK_KEY})).scalar()
+                held = bool(got)
+        except Exception as e:
+            # If the DB isn't available we still want to make a best effort
+            # (e.g. legacy callers, tests). Fall through to the no-lock path.
+            logger.info("advisory-lock acquire failed (%s); proceeding without it", e)
+
+        try:
+            for attempt in range(5):
                 existing = {c.name for c in (await self._client.get_collections()).collections}
                 if name in existing:
-                    self._ensured.add(domain)
+                    async with self._lock:
+                        self._ensured.add(domain)
                     return
+                if not held and attempt < 4:
+                    # Another worker is presumed creating — back off and re-check.
+                    await asyncio.sleep(0.3 * (attempt + 1))
+                    continue
                 try:
                     await self._client.create_collection(
                         collection_name=name,
@@ -54,15 +90,45 @@ class QdrantStore(VectorStore):
                             name, field_name=fld, field_schema=qm.PayloadSchemaType.KEYWORD,
                         )
                     logger.info("created qdrant collection %s", name)
-                    self._ensured.add(domain)
+                    async with self._lock:
+                        self._ensured.add(domain)
                     return
                 except Exception as e:
-                    # Another worker won the race — back off and re-check.
                     logger.info("qdrant create_collection race (attempt %d): %s", attempt + 1, e)
                     await asyncio.sleep(0.3 * (attempt + 1))
-            # If we get here, the collection still isn't visible — final attempt
-            # without raising, so the caller can retry upsert.
-            self._ensured.add(domain)
+            # Collection still not visible after 5 attempts. DON'T cache
+            # success — caller will retry their op via _ensure_and_retry_op.
+            logger.warning("qdrant collection %s not visible after retries", name)
+            raise RuntimeError(f"qdrant collection {name} could not be created or observed")
+        finally:
+            if held:
+                try:
+                    async with _db_session() as s:
+                        await s.execute(_sql("SELECT pg_advisory_unlock(:k)"), {"k": self._VEC_BOOTSTRAP_LOCK_KEY})
+                except Exception:
+                    pass
+
+    async def _ensure_and_retry_op(self, domain: str, op):
+        """Helper: run `op()` against the collection; on 404 not-found, re-run
+        ensure_collection (forced) and retry once.
+
+        Grok Issue 6: the previous code called ensure_collection up-front but
+        never retried the actual op. Race conditions could leave callers
+        hitting 404 with no recovery. This wraps every vector op with one
+        ensure-and-retry pass.
+        """
+        await self.ensure_collection(domain)
+        try:
+            return await op()
+        except Exception as e:
+            if "404" not in str(e) and "Not found" not in str(e):
+                raise
+            logger.warning("qdrant op hit 404 for %s; forcing ensure + retry: %s", domain, e)
+            # Force a re-check by dropping the cached marker.
+            async with self._lock:
+                self._ensured.discard(domain)
+            await self.ensure_collection(domain)
+            return await op()
 
     async def upsert(self, domain: str, chunks: list[Chunk]) -> None:
         """Insert chunks; dedup by content_hash.
@@ -144,13 +210,15 @@ class QdrantStore(VectorStore):
             logger.info("upsert: %d new, %d merged into existing", len(new_chunks), len(to_update))
 
     async def delete_by_file(self, domain: str, file_id: str) -> None:
-        await self.ensure_collection(domain)
-        await self._client.delete(
-            collection_name=_collection(domain),
-            points_selector=qm.FilterSelector(
-                filter=qm.Filter(must=[qm.FieldCondition(key="file_id", match=qm.MatchValue(value=file_id))])
-            ),
-        )
+        async def _op():
+            await self._client.delete(
+                collection_name=_collection(domain),
+                points_selector=qm.FilterSelector(
+                    filter=qm.Filter(must=[qm.FieldCondition(key="file_id", match=qm.MatchValue(value=file_id))])
+                ),
+            )
+            return None
+        await self._ensure_and_retry_op(domain, _op)
 
     @staticmethod
     def _build_filter(filters: dict[str, Any] | None) -> qm.Filter | None:
