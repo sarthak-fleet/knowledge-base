@@ -15,6 +15,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from pydantic import BaseModel, Field
+
 from kb.extract import llm
 
 logger = logging.getLogger("kb.query.verify")
@@ -35,32 +37,19 @@ _VERIFY_SYSTEM = (
     "numbered source excerpts it cites, decompose the answer into discrete factual claims, "
     "associate each claim with its supporting [n] citations, and judge whether the cited "
     "excerpts ACTUALLY support that claim. "
-    "Be conservative: 'supported' only when the excerpt textually contains or directly implies the claim. "
-    'Return JSON: {"checks": [{"claim": "...", "cited": [n, ...], "supported": true|false, "reason": "..."}]}.'
+    "Be conservative: 'supported' only when the excerpt textually contains or directly implies the claim."
 )
 
 
-_VERIFY_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "checks": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "claim": {"type": "string"},
-                    "cited": {"type": "array", "items": {"type": "integer"}},
-                    "supported": {"type": "boolean"},
-                    "reason": {"type": "string"},
-                },
-                "required": ["claim", "cited", "supported", "reason"],
-                "additionalProperties": False,
-            },
-        }
-    },
-    "required": ["checks"],
-    "additionalProperties": False,
-}
+class _ClaimCheckItem(BaseModel):
+    claim: str = ""
+    cited: list[int] = Field(default_factory=list)
+    supported: bool = False
+    reason: str = ""
+
+
+class _VerifyResponse(BaseModel):
+    checks: list[_ClaimCheckItem] = Field(default_factory=list)
 
 
 def _build_user_prompt(answer: str, sources: list[dict[str, Any]]) -> str:
@@ -80,10 +69,10 @@ async def verify_citations(*, answer: str, sources: list[dict[str, Any]], model:
     if not _CITE_RE.search(answer):
         return []  # no claims with citations to verify
     try:
-        resp = await llm.chat_json(
+        resp = await llm.chat_structured(
             system=_VERIFY_SYSTEM,
             user=_build_user_prompt(answer, sources),
-            schema=_VERIFY_SCHEMA,
+            response_model=_VerifyResponse,
             model=model,
             temperature=0.0,
             max_tokens=1024,
@@ -92,20 +81,15 @@ async def verify_citations(*, answer: str, sources: list[dict[str, Any]], model:
     except Exception as e:
         logger.info("verification skipped (%s)", e)
         return []
-    out: list[ClaimCheck] = []
-    for c in resp.get("checks") or []:
-        try:
-            out.append(
-                ClaimCheck(
-                    claim=str(c.get("claim", ""))[:300],
-                    cited_indices=[int(i) for i in (c.get("cited") or [])],
-                    supported=bool(c.get("supported")),
-                    reason=str(c.get("reason", ""))[:200],
-                )
-            )
-        except (TypeError, ValueError):
-            continue
-    return out
+    return [
+        ClaimCheck(
+            claim=c.claim[:300],
+            cited_indices=list(c.cited),
+            supported=c.supported,
+            reason=c.reason[:200],
+        )
+        for c in resp.checks
+    ]
 
 
 def verification_summary(checks: list[ClaimCheck]) -> dict[str, Any]:

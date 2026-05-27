@@ -21,6 +21,7 @@ dependencies = [
   "qdrant-client>=1.11,<1.13",  # pin tight to qdrant/qdrant:v1.12.4 server image
   "fastembed>=0.4",
   "openai>=1.40",
+  "instructor>=1.6",      # Pydantic-typed LLM outputs; replaces hand-rolled chat_json
   "tiktoken>=0.7",
   "unstructured[pdf,xlsx]>=0.15",
   "pypdf>=4.3",

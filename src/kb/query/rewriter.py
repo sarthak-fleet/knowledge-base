@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import logging
 
+from pydantic import BaseModel, Field
+
 from kb.extract import llm
 
 logger = logging.getLogger("kb.query.rewriter")
@@ -28,17 +30,12 @@ _REWRITE_SYSTEM = (
     "Each rephrasing should: (a) preserve the user's intent, (b) substitute "
     "domain-typical vocabulary when possible (e.g. 'single source supplier' "
     "instead of 'supply chain concentration'), (c) be a self-contained "
-    "question/phrase a retriever could match against documents. "
-    "Return ONLY a JSON array of strings, no preamble."
+    "question/phrase a retriever could match against documents."
 )
 
 
-_REWRITE_SCHEMA = {
-    "type": "object",
-    "properties": {"variants": {"type": "array", "items": {"type": "string"}, "maxItems": 5}},
-    "required": ["variants"],
-    "additionalProperties": False,
-}
+class _RewriteResponse(BaseModel):
+    variants: list[str] = Field(default_factory=list, max_length=5)
 
 
 async def rewrite_query(question: str, *, n: int = 3, model: str | None = None) -> list[str]:
@@ -51,14 +48,13 @@ async def rewrite_query(question: str, *, n: int = 3, model: str | None = None) 
     user = (
         f"Question: {question}\n\n"
         f"Produce exactly {n - 1} additional rephrasings (so {n} total including the original). "
-        f"Vary vocabulary, especially substituting domain-typical terms when applicable. "
-        f'Return: {{"variants": ["...", "..."]}}.'
+        f"Vary vocabulary, especially substituting domain-typical terms when applicable."
     )
     try:
-        resp = await llm.chat_json(
+        resp = await llm.chat_structured(
             system=_REWRITE_SYSTEM,
             user=user,
-            schema=_REWRITE_SCHEMA,
+            response_model=_RewriteResponse,
             model=model,
             temperature=0.3,
             max_tokens=400,
@@ -68,9 +64,8 @@ async def rewrite_query(question: str, *, n: int = 3, model: str | None = None) 
         logger.info("query rewrite failed (%s); using original only", e)
         return [question]
 
-    variants = [v for v in (resp.get("variants") or []) if isinstance(v, str) and v.strip()]
     out = [question]
-    for v in variants[: n - 1]:
+    for v in resp.variants[: n - 1]:
         v = v.strip()
         if v and v.lower() != question.lower() and v not in out:
             out.append(v)
@@ -109,19 +104,13 @@ _DECOMP_SYSTEM = (
     "Decide whether the question is COMPOUND (requires looking up multiple "
     "separable sub-questions and combining the results). If compound, split "
     "into 2-4 atomic sub-questions. If not compound, return the original as "
-    "a single-element list. Return JSON: "
-    '{"is_compound": bool, "sub_questions": ["...", "..."]}.'
+    "a single-element list."
 )
 
-_DECOMP_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "is_compound": {"type": "boolean"},
-        "sub_questions": {"type": "array", "items": {"type": "string"}, "maxItems": 4},
-    },
-    "required": ["is_compound", "sub_questions"],
-    "additionalProperties": False,
-}
+
+class _DecompResponse(BaseModel):
+    is_compound: bool = False
+    sub_questions: list[str] = Field(default_factory=list, max_length=4)
 
 
 async def decompose_query(question: str, *, model: str | None = None) -> tuple[bool, list[str]]:
@@ -130,10 +119,10 @@ async def decompose_query(question: str, *, model: str | None = None) -> tuple[b
     Returns (is_compound, sub_questions). Falls back to (False, [question]).
     """
     try:
-        resp = await llm.chat_json(
+        resp = await llm.chat_structured(
             system=_DECOMP_SYSTEM,
             user=f"Question: {question}",
-            schema=_DECOMP_SCHEMA,
+            response_model=_DecompResponse,
             model=model,
             temperature=0.0,
             max_tokens=400,
@@ -143,9 +132,8 @@ async def decompose_query(question: str, *, model: str | None = None) -> tuple[b
         logger.info("decomposition failed (%s); single-shot", e)
         return False, [question]
 
-    is_compound = bool(resp.get("is_compound"))
-    subs = [s for s in (resp.get("sub_questions") or []) if isinstance(s, str) and s.strip()]
-    if not is_compound or not subs:
+    subs = [s.strip() for s in resp.sub_questions if s and s.strip()]
+    if not resp.is_compound or not subs:
         return False, [question]
     return True, subs[:4]
 

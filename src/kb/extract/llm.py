@@ -16,12 +16,16 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from openai import AsyncOpenAI
+from pydantic import BaseModel
 from tenacity import retry, stop_after_attempt, wait_exponential_jitter
 
 from kb.config import get_settings
+
+if TYPE_CHECKING:
+    import instructor
 
 logger = logging.getLogger("kb.extract.llm")
 
@@ -166,6 +170,93 @@ def _log_llm_error(where: str, e: BaseException) -> None:
         logger.error("LLM %s FAILED at %s: %s — %s", kind.upper(), where, cls, msg)
     else:
         logger.warning("LLM %s at %s: %s — %s", kind, where, cls, msg)
+
+
+# ─── instructor-backed structured outputs ────────────────────────────────
+# `chat_structured` is the default for typed LLM outputs: pass a Pydantic
+# model and get a validated instance back. Replaces the JSON-schema-dict +
+# `_coerce_json` + `.get(...)`-everywhere pattern at most call sites.
+#
+# `chat_json` (below) is retained on purpose for the two call sites where
+# the JSON schema is built dynamically from a domain spec at runtime
+# (`extract/runner.py`, `schema/infer.py`) — those benefit from passing a
+# fully-described schema with field-level enums to the LLM, which a static
+# Pydantic model can't easily express.
+
+_T_MODEL = TypeVar("_T_MODEL", bound="BaseModel")
+
+
+def _instructor_client() -> instructor.AsyncInstructor:
+    """Lazy-build an instructor-wrapped OpenAI client.
+
+    Reuses our existing `make_client()` so the gateway settings + project_id
+    `extra_body` plumb continue to work.
+    """
+    import instructor
+    return instructor.from_openai(make_client(), mode=instructor.Mode.TOOLS)
+
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential_jitter(initial=1, max=10))
+async def chat_structured(
+    *,
+    system: str,
+    user: str,
+    response_model: type[_T_MODEL],
+    model: str | None = None,
+    temperature: float = 0.0,
+    max_tokens: int = 4096,
+    timeout_s: float = 120,
+) -> _T_MODEL:
+    """Ask the LLM for output matching a Pydantic schema.
+
+    Instructor handles: tool-call shape, JSON parsing, validation against the
+    Pydantic model, and re-prompting on parse failure. Caller gets a typed
+    instance — no `.get(...)` dance, no defensive `isinstance` checks.
+
+    Cache shape mirrors chat_json: keyed by (model, system, user, params) so
+    the deterministic-replay layer (`KB_LLM_CACHE_DIR`) keeps working.
+    """
+    s = get_settings()
+    mdl = model or s.extract_model or s.ai_model
+
+    schema_dict = response_model.model_json_schema()
+    ck = cache_key(
+        model=mdl, system=system, user=user,
+        params={"kind": "structured", "schema": schema_dict, "t": temperature, "max": max_tokens},
+    )
+    hit = cache_get(ck)
+    if hit is not None:
+        return response_model.model_validate(hit.get("data") or {})
+
+    client = _instructor_client()
+    try:
+        result: _T_MODEL = await client.chat.completions.create(
+            model=mdl,
+            response_model=response_model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            temperature=temperature,
+            max_tokens=max_tokens,
+            timeout=timeout_s,
+            **_gateway_extras(),
+        )
+    except Exception as e:
+        _log_llm_error("chat_structured", e)
+        kind, _ = _classify_llm_error(e)
+        if kind in ("auth", "quota"):
+            raise
+        # Defensive default: hand back an empty model so callers don't crash.
+        # Pydantic-default-construction works when every field has a default;
+        # for required-field models the caller should handle ValidationError.
+        try:
+            return response_model.model_construct()
+        except Exception:
+            raise e from None
+
+    cache_put(ck, {"data": result.model_dump()})
+    return result
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential_jitter(initial=1, max=10))

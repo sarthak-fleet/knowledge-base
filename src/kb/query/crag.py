@@ -15,6 +15,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from pydantic import BaseModel, Field
+
 from kb.extract import llm
 
 logger = logging.getLogger("kb.query.crag")
@@ -22,22 +24,16 @@ logger = logging.getLogger("kb.query.crag")
 
 _EVAL_SYSTEM = (
     "You score whether a set of retrieved chunks contains enough information "
-    "to answer a user's question. Output ONE float between 0 and 1: "
+    "to answer a user's question. Score: "
     "  1.0  = the chunks directly answer the question, "
     "  0.5  = partial / requires inference, "
-    "  0.0  = chunks are unrelated to the question. "
-    "Return JSON only: {\"score\": 0.0-1.0, \"reason\": \"...\"}."
+    "  0.0  = chunks are unrelated to the question."
 )
 
-_EVAL_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "score": {"type": "number"},
-        "reason": {"type": "string"},
-    },
-    "required": ["score", "reason"],
-    "additionalProperties": False,
-}
+
+class _CragScore(BaseModel):
+    score: float = Field(default=1.0, ge=0.0, le=1.0)
+    reason: str = ""
 
 
 def _format_chunks(chunks: list[dict[str, Any]], max_n: int = 6, max_chars: int = 800) -> str:
@@ -55,18 +51,16 @@ async def evaluate_retrieval(
     if not chunks:
         return 0.0, "no chunks retrieved"
     try:
-        resp = await llm.chat_json(
+        resp = await llm.chat_structured(
             system=_EVAL_SYSTEM,
             user=f"QUESTION:\n{question}\n\nCHUNKS:\n{_format_chunks(chunks)}",
-            schema=_EVAL_SCHEMA,
+            response_model=_CragScore,
             model=model,
             temperature=0.0,
             max_tokens=400,
             timeout_s=30,
         )
-        score = float(resp.get("score", 1.0))
-        reason = str(resp.get("reason", ""))[:200]
-        return max(0.0, min(1.0, score)), reason
+        return max(0.0, min(1.0, resp.score)), resp.reason[:200]
     except Exception as e:
         logger.info("CRAG evaluator skipped (%s)", e)
         return 1.0, "evaluator unavailable; assume OK"

@@ -18,6 +18,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from pydantic import BaseModel, Field
+
 from kb.extract import llm
 from kb.schema.model import DomainSchema
 
@@ -48,52 +50,6 @@ def _enum_values(schema: DomainSchema, type_name: str, field_name: str) -> list[
         if f.name == field_name and f.enum:
             return list(f.enum)
     return []
-
-
-def _intent_schema(schema: DomainSchema) -> dict[str, Any]:
-    """Derive the JSON Schema the LLM fills, from the active domain schema."""
-    entity_names = [e.name for e in schema.entities]
-    # Common facet keys aggregated from all entities' identity fields.
-    facet_keys: set[str] = set()
-    for e in schema.entities:
-        for f in e.identity_fields():
-            facet_keys.add(f.name)
-        for f in e.fields:
-            if f.enum:
-                facet_keys.add(f.name)
-    facet_keys.update({"ticker", "form_type", "filed_date_after", "filed_date_before"})
-
-    return {
-        "type": "object",
-        "properties": {
-            "kind": {
-                "type": "string",
-                "enum": ["lookup", "aggregate", "compare", "negative"],
-                "description": (
-                    "lookup = single fact retrieval; aggregate = numeric/comparison across many entities "
-                    "(e.g. 'which X have Y > Z?'); compare = side-by-side of named items; "
-                    "negative = question that likely cannot be answered from the corpus."
-                ),
-            },
-            "entity_type": {
-                "type": ["string", "null"],
-                "enum": [*entity_names, None],
-                "description": "Primary entity type the question is about; null if unclear.",
-            },
-            "filters": {
-                "type": "object",
-                "description": "Facet filters. Keys may be any of the schema's identity fields, enum fields, or date fields.",
-                "properties": {k: {"type": ["string", "number", "null"]} for k in facet_keys},
-                "additionalProperties": True,
-            },
-            "sort_by": {"type": ["string", "null"], "description": "Field name to sort by (e.g. filed_date)."},
-            "sort_dir": {"type": "string", "enum": ["asc", "desc"]},
-            "limit": {"type": ["integer", "null"]},
-            "reason": {"type": "string", "description": "One short sentence explaining the classification."},
-        },
-        "required": ["kind", "filters", "reason"],
-        "additionalProperties": False,
-    }
 
 
 def _build_user_prompt(question: str, schema: DomainSchema) -> str:
@@ -144,18 +100,31 @@ Q: "What is Apple's highest quarterly revenue in the summary financials?"
 """
 
 
+class _IntentResponse(BaseModel):
+    """Pydantic response schema for `extract_intent`. Replaces the hand-rolled
+    JSON-schema dict we used with chat_json. Instructor enforces this against
+    the LLM and re-prompts on validation failure."""
+
+    kind: IntentKind = "lookup"
+    entity_type: str | None = None
+    filters: dict[str, Any] = Field(default_factory=dict)
+    sort_by: str | None = None
+    sort_dir: Literal["asc", "desc"] = "desc"
+    limit: int | None = None
+    reason: str = ""
+
+
 async def extract_intent(question: str, schema: DomainSchema, *, model: str | None = None) -> QueryIntent:
     """Best-effort intent extraction. Falls back to lookup-with-no-filters on any error.
 
-    Uses JSON-schema-constrained decoding via the LLM's tool-call mechanism +
-    few-shot examples to lock down the `kind` classification (which was the
-    biggest source of non-determinism in earlier runs).
+    Uses `instructor` to enforce Pydantic-typed output via tool-call. Few-shot
+    examples + the schema-derived entity vocabulary still guide the model.
     """
     try:
-        resp = await llm.chat_json(
+        resp = await llm.chat_structured(
             system=_SYSTEM_PROMPT + "\n\n" + _FEW_SHOT_EXAMPLES,
             user=_build_user_prompt(question, schema),
-            schema=_intent_schema(schema),
+            response_model=_IntentResponse,
             model=model,
             temperature=0.0,
             max_tokens=512,
@@ -165,10 +134,9 @@ async def extract_intent(question: str, schema: DomainSchema, *, model: str | No
         logger.info("intent extraction failed (%s); defaulting to lookup", e)
         return QueryIntent(kind="lookup", reason=f"extractor_error: {e!s}"[:200])
 
-    raw_filters: dict[str, Any] = resp.get("filters") or {}
-    # Drop nulls + empty strings; coerce ticker uppercase.
+    # Drop nulls + empty strings from filters; coerce ticker uppercase.
     clean: dict[str, Any] = {}
-    for k, v in raw_filters.items():
+    for k, v in resp.filters.items():
         if v in (None, "", []):
             continue
         if k.lower() == "ticker" and isinstance(v, str):
@@ -177,13 +145,13 @@ async def extract_intent(question: str, schema: DomainSchema, *, model: str | No
             clean[k] = v
 
     return QueryIntent(
-        kind=resp.get("kind") or "lookup",
-        entity_type=resp.get("entity_type") if resp.get("entity_type") else None,
+        kind=resp.kind or "lookup",
+        entity_type=resp.entity_type or None,
         filters=clean,
-        sort_by=resp.get("sort_by") or None,
-        sort_dir=resp.get("sort_dir") or "desc",
-        limit=resp.get("limit"),
-        reason=(resp.get("reason") or "")[:300],
+        sort_by=resp.sort_by or None,
+        sort_dir=resp.sort_dir or "desc",
+        limit=resp.limit,
+        reason=resp.reason[:300],
     )
 
 
