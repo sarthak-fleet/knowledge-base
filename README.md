@@ -55,7 +55,7 @@ Then open:
 | `migrations/` | Postgres schema (extensions, tables, indexes), idempotent |
 | `streamlit_app/` | Single-page demo UI — HighSignal-styled dark theme |
 | `DESIGN.md` | Architecture, trade-offs, what's missing |
-| `NOTES.md` | Interview brief — decision log, eval timeline, all numbers |
+| `NOTES.md` | Engineering notes — decision log, eval timeline, all numbers |
 | `LEARNING.md` | The session story end-to-end, every decision, every bug found |
 | `LIVE_VERIFICATION.md` | Snapshot of the actual live run — eval numbers, sample answers |
 | `GROK_FINDINGS.md` | External code review (Grok 4.3); all 13 findings addressed |

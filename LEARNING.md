@@ -4,7 +4,7 @@ This is the **one document** to read end-to-end and understand everything we did
 
 - `README.md` — how to run
 - `DESIGN.md` — architecture / trickiest decisions
-- `NOTES.md` — interview-prep brief, dense, decision log
+- `NOTES.md` — engineering notes, dense decision log
 - `LIVE_VERIFICATION.md` — snapshot of the last good eval
 - `GROK_FINDINGS.md` — external code review with 13 findings
 - **this file** — the *story*, in chronological session order, with the why behind every move
@@ -13,7 +13,7 @@ This is the **one document** to read end-to-end and understand everything we did
 
 ## Part 1: The starting state
 
-A domain-agnostic Knowledge Base service for an interview assignment. Stack:
+A domain-agnostic Knowledge Base service. Stack:
 
 ```
 FastAPI (api)  ─┐
@@ -49,7 +49,7 @@ The codebase already had:
 - An external code review (`GROK_FINDINGS.md`, 13 issues)
 - An invitation from the user to "go above and beyond" once more
 
-User's goal: get the assignment to "100% complete, full marks" with everything documented for interview prep.
+User's goal: get the project to a polished, fully-documented state with every decision captured for future reference.
 
 ## Part 3: The session goals as set by the user
 
@@ -99,7 +99,7 @@ In sequence, the user asked for:
 | 12 | LLM errors swallowed at INFO | Loud WARNING/ERROR with auth/quota re-raise |
 | 13 | CR truncation silent on long docs | Log when 12k-char ceiling fires |
 
-**Why this matters for the interview**: Most are "small but real" — but #1 is **the** bug from the user's "4/13 files failed on first concurrent ingest" memory, and #12 is what *surfaced* every subsequent bug we caught in this session. Loud error logging paid for itself ten times over.
+**Why this matters**: most are "small but real" — but #1 is **the** bug from the user's "4/13 files failed on first concurrent ingest" memory, and #12 is what *surfaced* every subsequent bug we caught in this session. Loud error logging paid for itself ten times over.
 
 **Commits**: `0b99f83` (issue 2+12), `4b400c9` (3,4,5), `80ce401` (1,6), `f0b50c0` (remaining nits).
 

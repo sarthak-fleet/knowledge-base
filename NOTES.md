@@ -1,23 +1,22 @@
-# Interview brief — Knowledge Base service
+# Engineering notes — Knowledge Base service
 
-This file is a single-source reference for talking through this codebase in an
-interview. It covers (a) every decision and why, (b) the research and primary
-sources behind each choice, (c) the empirical numbers we observed at each step,
+This file is a single-source reference for talking through this codebase.
+It covers (a) every decision and why, (b) the research and primary sources
+behind each choice, (c) the empirical numbers we observed at each step,
 (d) the tradeoffs and honest limits.
 
 Read top-to-bottom; each section is self-contained.
 
 ---
 
-## 0. The assignment, one paragraph
+## 0. The goal, one paragraph
 
 Build a domain-agnostic Knowledge Base over unstructured documents (PDFs, scans,
 spreadsheets). Users define a schema; the system ingests files, extracts typed
 entities, answers natural-language questions with **cited** answers, and works
-on a new domain by swapping config — not code. Submitted via git repo with
-one-command bootstrap, ≥10 seed docs, demo schema, ≤4-page write-up, 15+ eval
-Q&A with scoring. The phrase "cited or it didn't happen" appears verbatim in
-the spec.
+on a new domain by swapping config — not code. One-command bootstrap, ≥10 seed
+docs per demo schema, a 15+ Q&A eval set per domain, and the rule "cited or it
+didn't happen" enforced in synthesis.
 
 ---
 
@@ -43,7 +42,7 @@ verify       per-claim entailment check, downgrades confidence
 span_cite    sentence-level excerpt via dense cosine; multi-source aware
 ```
 
-### 1.3 The seven things that come up in interview questions
+### 1.3 The seven design questions worth knowing well
 1. **Why Qdrant?** Native dense+sparse hybrid, payload filters, RRF fusion.
    pgvector is the swappable adapter for "single Postgres" deployments.
 2. **Why Postgres for metadata?** Schemas versioned in JSONB; `SKIP LOCKED` for
@@ -266,7 +265,7 @@ Methodology this round was **much** stricter than v0-v6:
 | 7i | Legal | gemini-2.5-flash-lite | 0.514 | 0.083 (1/12) | 0.117 | 0.319 | 0.458 | 0.375 |
 | 7j | Legal | groq-llama-3.1-8b | 0.672 | 0.417 (5/12) | 0.632 | 0.361 | 0.625 | 0.608 |
 
-**The four big findings to talk about in interview:**
+**The four big findings worth highlighting:**
 
 1. **Citation F1 is identical (~0.61) across every SEC synth model.** Retrieval is the same; citation parsing is deterministic. The model swap genuinely isolates synthesis.
 
@@ -385,7 +384,7 @@ All 20 of the priority improvements from the "what else would we improve?" secti
 - **Tier 2 reasoning** (#6 decomposition, #7 CRAG, #8 bookend reorder) — `kb/query/crag.py` + engine
 - **Tier 3 cost & latency** (#9 prompt-cache structure, #10 SSE, #11 cheaper judge env, #12 embedding cache) — `kb/api/routes/query.py::query_stream`, `kb/vector/embed.py::embed_query_cached`
 - **Tier 4 production gaps** (#13 race fix, #14 XLSX bridge, #15 constrained intent, #16 schema migration) — fix held: 19/19 files re-ingested with **zero failures** (prior run had 4/13 fail)
-- **Tier 5 interview signal** (#17 RAGAS-CI, #18 provenance viewer, #19 schema inference, #20 Prometheus) — all live
+- **Tier 5 nice-to-have** (#17 RAGAS-CI, #18 provenance viewer, #19 schema inference, #20 Prometheus) — all live
 
 Pipeline now runs **9 stages per query**:
 intent → decompose → rewrite → retrieve → rerank → crag → synthesize → verify → span_cite
@@ -420,7 +419,7 @@ The decomposition tells a precise story:
    synthesizer. The other half either aren't in the corpus OR aren't
    retrieved despite being there.
 
-This is the **strongest interview talking point** from the whole
+This is the **strongest empirical finding** from the whole
 project: *with the same code and stage decomposition, two unrelated
 corpora produce the same RAGAS profile.* That's what justifies the
 next-week investment in **retrieval quality** (query rewriting / HyDE /
@@ -483,11 +482,11 @@ amount of synthesis or extraction polish.
 
 ---
 
-## 5. Honest limits — what to volunteer in interview
+## 5. Honest limits worth owning up to
 
 1. **The XLSX retrieval gap is a class-wide RAG failure**, not specific to our
-   system. FinanceBench documents it at the field level. Naming this in
-   interview shows you've read the literature.
+   system. FinanceBench documents it at the field level. Naming this in a
+   technical conversation shows you've read the literature.
 
 2. **The SEC eval regressed when we added dedup**. We tried to recover by
    turning MMR off; two re-runs converged at F1 0.573. The regression is real
@@ -563,7 +562,7 @@ In strict priority order with the expected delta:
 
 ---
 
-## 7. Things I would defend hard in interview
+## 7. Things worth defending hard
 
 These are the "I made this call and here's why" moments:
 
@@ -574,7 +573,7 @@ These are the "I made this call and here's why" moments:
 
 - **Cherry-pick LlamaIndex's patterns, don't depend on it**: LlamaIndex has
   real version churn (0.10 → 0.11 broke ServiceContext; 0.12 broke
-  WorkflowHandler.run_step). For a 1-week assignment, I read their reference
+  WorkflowHandler.run_step). For a tight build, I read their reference
   pipeline shapes (HierarchicalNodeParser, AutoMergingRetriever,
   CitationQueryEngine) and implemented the same shapes from scratch.
 

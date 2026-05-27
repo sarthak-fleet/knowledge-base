@@ -1,6 +1,6 @@
-# Interview demo — 5 things to show live, in order
+# Demo walkthrough — 5 things to show live, in order
 
-These are the demos that survive scrutiny. Each one takes ≤2 minutes and showcases something the assignment evaluator should care about.
+These are the demos that survive scrutiny. Each one takes ≤2 minutes and showcases something a reviewer or new collaborator should care about.
 
 ## Pre-demo setup (1 min)
 
