@@ -22,6 +22,7 @@ classifier mentions numeric/comparison shapes. Lookup questions stay on RAG.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -32,6 +33,21 @@ from kb.query.intent import QueryIntent
 from kb.query.structured import mentions_for
 from kb.schema.loader import schema_from_dict
 from kb.storage import repo
+
+# Filename → ticker fallback. Most SEC filings name themselves
+# `TICKER_FORM_DATE_*.html` (the EDGAR adapter follows this convention) so
+# parsing the prefix is reliable. We use this when the extraction itself
+# fails to populate the `ticker` field on a `FinancialMetric` — which is
+# the dominant cause of "DuckDB query returns NULL" on aggregate questions
+# (found by per-question failure analysis on the Step 7 evals).
+_TICKER_FROM_FILENAME = re.compile(r"^([A-Z]{1,5})[_-]")
+
+
+def _ticker_from_filename(filename: str | None) -> str | None:
+    if not filename:
+        return None
+    m = _TICKER_FROM_FILENAME.match(filename)
+    return m.group(1) if m else None
 
 logger = logging.getLogger("kb.query.duckdb")
 
@@ -132,6 +148,48 @@ async def maybe_duckdb_answer(*, intent: QueryIntent, domain: str, question: str
 
     if not entities_by_type:
         return None
+
+    # File-level ticker fallback. Many extracted entities (esp. FinancialMetric
+    # in the SEC schema) come back with `ticker=NULL` because the extractor
+    # didn't fill the field even though the source file is clearly tagged
+    # (e.g. AAPL_10-K_2025.html). Without this, every `WHERE ticker='AAPL'`
+    # SQL returns 0 rows and the route emits NULL.
+    #
+    # We resolve the first mention's filename for every entity once, derive
+    # the ticker prefix, and overlay it onto the entity row when the entity
+    # itself doesn't have a ticker. Done in batch (single SQL call).
+    all_ids = [str(r.get("id")) for rows in entities_by_type.values() for r in rows if r.get("id")]
+    file_ticker_by_entity: dict[str, str] = {}
+    if all_ids:
+        try:
+            ments = await mentions_for(all_ids)
+            # Keep the first mention per entity (mentions_for is ORDER BY created_at DESC,
+            # but a single ticker is what we want regardless of recency).
+            for m in ments:
+                eid = m.get("entity_id")
+                if eid and eid not in file_ticker_by_entity:
+                    tk = _ticker_from_filename(m.get("filename"))
+                    if tk:
+                        file_ticker_by_entity[eid] = tk
+        except Exception as e:
+            logger.info("duckdb: ticker-fallback resolution failed (%s); proceeding without it", e)
+
+    # Overlay the file-ticker onto every entity row's `fields` dict if the
+    # row doesn't already have a ticker. This keeps the DuckDB schema stable
+    # (same column names) and lets existing SQL using `ticker` just work.
+    if file_ticker_by_entity:
+        backfilled = 0
+        for _etype, rows in entities_by_type.items():
+            for r in rows:
+                fields = r.get("fields") or {}
+                if not fields.get("ticker"):
+                    tk = file_ticker_by_entity.get(str(r.get("id", "")))
+                    if tk:
+                        fields["ticker"] = tk
+                        r["fields"] = fields
+                        backfilled += 1
+        if backfilled:
+            logger.info("duckdb: backfilled ticker on %d entities via filename fallback", backfilled)
 
     conn = _build_duckdb_from_entities(entities_by_type)
     try:
