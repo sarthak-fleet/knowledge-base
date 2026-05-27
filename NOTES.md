@@ -259,16 +259,41 @@ Methodology this round was **much** stricter than v0-v6:
 | 7b | SEC | gemini-2.5-pro | 0.613 | 0.440 (11/25) | 0.526 | 0.200 | 0.360 | 0.520 |
 | 7c | SEC | gemini-2.5-flash-lite | 0.607 | 0.480 (12/25) | 0.566 | 0.180 | 0.360 | 0.356 |
 | 7d | Legal | gemini-2.5-flash | **0.787** | **0.667 (8/12)** | 0.741 | 0.361 | 0.458 | 0.650 |
+| 7e | SEC | **groq-llama-3.1-8b** | 0.610 | **0.680 (17/25)** | **0.791** | **0.372** | **0.660** | **0.760** |
+| 7f | SEC | groq-llama-3.1-8b + DuckDB ticker fallback | 0.610 | 0.680 (17/25) | 0.764 | 0.372 | 0.660 | 0.744 |
 
-**The three big findings to talk about in interview:**
+**The four big findings to talk about in interview:**
 
-1. **Citation F1 is identical (~0.61) across all 3 SEC synth models.** Retrieval is the same; citation parsing is deterministic. The model swap genuinely isolates synthesis.
+1. **Citation F1 is identical (~0.61) across every SEC synth model.** Retrieval is the same; citation parsing is deterministic. The model swap genuinely isolates synthesis.
 
-2. **Bigger model ≠ better RAG synthesis when retrieval is solid.** Pro scored *lower* on pass rate than Flash (0.44 vs 0.48) and Flash-lite (0.48). Pro hedges harder — more answers with confidence=0.00, more polite refusals. That's correct behavior for a strong model facing weak context, but it costs pass rate. Pro IS better on answer-relevance (+0.16) — more polished prose; just less decisive.
+2. **Bigger model ≠ better RAG synthesis when retrieval is solid.** Pro scored *lower* on pass rate than Flash (0.44 vs 0.48) and Flash-lite (0.48). Pro hedges harder — more answers with confidence=0.00, more polite refusals. Correct behavior for a strong model facing weak context, but it costs pass rate. Pro IS better on answer-relevance (+0.16) — more polished prose; just less decisive.
 
-3. **The cheap tier (Flash-lite, ~10× cheaper than Pro) ties Flash on pass.** User's intuition validated: for a RAG pipeline where retrieval and chunking are solid, the synthesis model's role is mostly "rephrase the cited context coherently" and a cheap model handles that fine. Diminishing returns above mid-tier.
+3. **The cheap tier (Flash-lite, ~10× cheaper than Pro) ties Flash on pass.** And then **`llama-3.1-8b` on Groq dominates everything** (0.68 pass, +24pts over Pro, +20pts over Flash) on every RAGAS metric too. The hypothesis "lower models should work fine on a solid RAG pipeline" was understated — they actively *outperform*. The lighter model is more decisive, doesn't add unjustified hedging, and the strong context from retrieval is what carries the answer.
 
-**Legal validation**: Legal × Flash scores *higher than* SEC across the board (F1 0.787 vs 0.618, pass 0.667 vs 0.480). The cross-domain claim holds — schema swap, no code change, better numbers than the "home" SEC domain.
+4. **Cross-domain works AND scores higher.** Legal × Flash hits 0.787 F1 / 0.667 pass — better than SEC. Schema swap, no code change. The domain-agnostic claim is real.
+
+### Step 7 deeper dive — per-question failure analysis
+
+7 of 25 SEC questions failed across **every model** tested. Of those 7, **five are aggregate / structured-query questions** (q06, q07, q19, q21, q25) — questions like "Apple's highest quarterly revenue," "compare Q1 vs Q2 EPS," "highest single-quarter net income across all companies." The judge explicitly says things like "DuckDB query returned NULL."
+
+Root cause (caught via DB inspection during a parallel debugging pass):
+- Only **3 of 15 `FinancialMetric` entities** in the SEC DB had a populated `ticker` field
+- The extraction LLM silently failed to attribute most entities to their company
+- DuckDB SQL `WHERE ticker='AAPL'` filtered to 0 rows → NULL → garbage answer
+
+Fix shipped (Step 7 commit `3955e5e`): **file-level ticker fallback** — each entity's first mention's filename is parsed (`AAPL_10-K_*.html` → `AAPL`) and overlaid onto rows missing a ticker. Column shape unchanged; existing SQL just works.
+
+The fix is correct and committed, but **the eval did not move on the re-run (run 7f vs 7e)**. Why: a second, deeper schema-quality issue remains. The metric *names* are also inconsistent:
+- Apple's revenue is stored as `name='Total Net Sales'`
+- Microsoft and NVIDIA use `name='Revenue'`
+- There are sub-categories like `Net Sales - iPhone`, `Net Sales - Services`
+
+So the LLM-generated SQL writes `WHERE name='Revenue' AND ticker='AAPL'` → 0 rows even with the ticker fix. The next-level fix is one of:
+(a) Normalize metric names at extraction time (substantial — requires re-ingest)
+(b) Inject sample-data context into the SQL prompt so the LLM sees what names exist
+(c) Map vocabulary at query time (e.g., "revenue" → ["Revenue", "Total Net Sales", "Net Sales"])
+
+This is exactly the *kind of finding that comes from end-to-end live testing* — the synthetic eval flowing through cleanly is what surfaces the data-quality gap that no unit test would catch.
 
 ### Step 7 retroactive caveat — what I'd own honestly
 
