@@ -99,6 +99,50 @@ async def hyde_passage(question: str, *, model: str | None = None) -> str:
     return text or question
 
 
+_SELFRAG_SYSTEM = (
+    "You help a retrieval system recover from a low-relevance result. Given the "
+    "user question and a short summary of the chunks the system DID retrieve "
+    "(which the system has judged irrelevant or weak), produce ONE reformulated "
+    "search query that would find what's actually missing. "
+    "Vary vocabulary, be more specific, or pivot to a near-synonym. "
+    "Do NOT include any explanation — return only the reformulated query."
+)
+
+
+class _SelfRagResponse(BaseModel):
+    query: str = ""
+
+
+async def reformulate_for_self_rag(
+    question: str, chunks_summary: str, *, model: str | None = None
+) -> str:
+    """Self-RAG: when CRAG marks retrieval as low quality, ask the LLM for a
+    better query and let the caller re-run retrieval. Returns the original
+    question if reformulation fails (so the caller never makes things worse).
+
+    Inspired by Asai et al. 2024 (Self-RAG, arXiv 2310.11511) — the same idea of
+    self-reflection on retrieval quality, but used here as a single-shot
+    recovery loop rather than as the primary control flow.
+    """
+    try:
+        resp = await llm.chat_structured(
+            system=_SELFRAG_SYSTEM,
+            user=f"QUESTION: {question}\n\nRETRIEVED (judged low-quality):\n{chunks_summary[:1500]}",
+            response_model=_SelfRagResponse,
+            model=model,
+            temperature=0.3,
+            max_tokens=200,
+            timeout_s=20,
+        )
+    except Exception as e:
+        logger.info("self-rag reformulation failed (%s); keeping original query", e)
+        return question
+    new_q = (resp.query or "").strip()
+    if not new_q or new_q.lower() == question.lower():
+        return question
+    return new_q
+
+
 _DECOMP_SYSTEM = (
     "Decide whether the question is COMPOUND (requires looking up multiple "
     "separable sub-questions and combining the results). If compound, split "

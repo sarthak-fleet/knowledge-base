@@ -46,7 +46,7 @@ from fastembed import TextEmbedding, SparseTextEmbedding;\
 from fastembed.rerank.cross_encoder import TextCrossEncoder;\
 TextEmbedding(model_name='BAAI/bge-small-en-v1.5');\
 SparseTextEmbedding(model_name='Qdrant/bm42-all-minilm-l6-v2-attentions');\
-TextCrossEncoder(model_name='Xenova/ms-marco-MiniLM-L-6-v2');\
+TextCrossEncoder(model_name='jinaai/jina-reranker-v2-base-multilingual');\
 print('fastembed cache primed')\
 " || echo "pre-warm best-effort; runtime will retry"
 

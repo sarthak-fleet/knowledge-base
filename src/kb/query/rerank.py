@@ -4,14 +4,19 @@ Hybrid retrieval gives us a candidate set ordered by RRF over dense + sparse. A
 cross-encoder reads the (query, candidate) pair as a single sequence and scores
 relevance directly — much more precise than separately encoding the two sides.
 
-We use `BAAI/bge-reranker-base` (a small, CPU-friendly cross-encoder via
-fastembed's `TextCrossEncoder`). Graceful: if the model fails to load, we log
-once and pass through the original ranking.
+We default to `jinaai/jina-reranker-v2-base-multilingual` (Jul 2024), which
+beats the older `ms-marco-MiniLM-L-6-v2` by ~7 NDCG points on BEIR while
+still running on CPU. Overridable via `KB_RERANK_MODEL` for benchmarking
+against e.g. `BAAI/bge-reranker-base` or `Xenova/ms-marco-MiniLM-L-12-v2`.
+
+Graceful: if the model fails to load, we log once and pass through the
+original ranking — retrieval still works, just less precise.
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
 from functools import lru_cache
 
 import structlog
@@ -22,12 +27,22 @@ logger = structlog.get_logger("kb.query.rerank")
 
 _disabled = False
 
+# Sane default + env override; fastembed-supported list:
+#   Xenova/ms-marco-MiniLM-L-6-v2    (old, smallest)
+#   Xenova/ms-marco-MiniLM-L-12-v2
+#   BAAI/bge-reranker-base
+#   jinaai/jina-reranker-v1-{tiny,turbo}-en
+#   jinaai/jina-reranker-v2-base-multilingual   <- our default
+_DEFAULT_RERANK_MODEL = "jinaai/jina-reranker-v2-base-multilingual"
+
 
 @lru_cache(maxsize=1)
 def _model():
     from fastembed.rerank.cross_encoder import TextCrossEncoder
 
-    return TextCrossEncoder(model_name="Xenova/ms-marco-MiniLM-L-6-v2")
+    name = os.environ.get("KB_RERANK_MODEL", _DEFAULT_RERANK_MODEL)
+    logger.info("loading reranker", model=name)
+    return TextCrossEncoder(model_name=name)
 
 
 async def rerank(query: str, hits: list[SearchHit], *, top_k: int) -> list[SearchHit]:

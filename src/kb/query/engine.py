@@ -342,11 +342,11 @@ async def answer_query(body: QueryIn) -> QueryOut:
     # ── Stage 3.8: CRAG retrieval evaluator ──────────────────────────────────
     # Score retrieval QUALITY before synthesis. If clearly noise, downgrade
     # confidence proactively. Yan et al. 2024 (arXiv 2401.15884).
+    from kb.query.crag import evaluate_retrieval
+
     crag_score: float = 1.0
     crag_reason: str = ""
     if bool(pipeline.get(cfg, "retrieve.crag_evaluator", True)) and serializable_hits:
-        from kb.query.crag import evaluate_retrieval
-
         started = time.time()
         crag_score, crag_reason = await evaluate_retrieval(
             question=body.question,
@@ -354,6 +354,72 @@ async def answer_query(body: QueryIn) -> QueryOut:
             model=pipeline.get(cfg, "llm.synthesize.model"),
         )
         stages.append(_stage("crag", started, score=crag_score, reason=crag_reason[:80]))
+
+    # ── Stage 3.9: Self-RAG retry on low CRAG score ──────────────────────────
+    # Self-RAG (Asai et al. 2024, arXiv 2310.11511): when retrieval looks weak,
+    # ask the LLM to reformulate the query based on what the (weak) chunks
+    # told us, then re-run retrieval ONCE with the new query. Keep whichever
+    # result has the better CRAG score. Bounded: max 1 retry per request.
+    selfrag_threshold = float(pipeline.get(cfg, "retrieve.selfrag_threshold", 0.4))
+    if (
+        bool(pipeline.get(cfg, "retrieve.selfrag_enabled", True))
+        and serializable_hits
+        and crag_score < selfrag_threshold
+    ):
+        from kb.query.rewriter import reformulate_for_self_rag
+
+        started = time.time()
+        # Build a terse summary of what we got so the reformulator can pivot.
+        weak_summary = "\n".join(
+            f"- {(h.get('text') or '')[:200]}" for h in serializable_hits[:4]
+        )
+        new_query = await reformulate_for_self_rag(
+            body.question, weak_summary, model=pipeline.get(cfg, "llm.synthesize.model")
+        )
+        if new_query != body.question:
+            # Single re-issue of the hybrid search (no MMR / rerank chain
+            # again — keep the retry cheap).
+            retry_hits = await store.hybrid_search(
+                domain=body.domain,
+                query=new_query,
+                top_k_dense=top_k_dense,
+                top_k_sparse=top_k_sparse,
+                rerank_top_k=rerank_top_k,
+                filters=payload_filters or None,
+            )
+            retry_serial = [
+                {"id": h.id, "text": h.text, "score": h.score, "metadata": h.metadata}
+                for h in retry_hits
+            ]
+            new_crag_score, new_crag_reason = await evaluate_retrieval(
+                question=body.question,
+                chunks=retry_serial,
+                model=pipeline.get(cfg, "llm.synthesize.model"),
+            )
+            if new_crag_score > crag_score:
+                hits = retry_hits
+                serializable_hits = retry_serial
+                crag_score, crag_reason = new_crag_score, new_crag_reason
+                stages.append(
+                    _stage(
+                        "self_rag",
+                        started,
+                        triggered=True,
+                        improved=True,
+                        new_query=new_query[:120],
+                        new_crag=new_crag_score,
+                    )
+                )
+            else:
+                stages.append(
+                    _stage(
+                        "self_rag",
+                        started,
+                        triggered=True,
+                        improved=False,
+                        new_query=new_query[:120],
+                    )
+                )
 
     # Map chunk_id -> [primary file_id, ...also_in_files] for multi-source citations.
     sources_by_chunk = consolidate_sources(hits)
