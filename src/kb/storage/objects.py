@@ -126,8 +126,32 @@ async def put_parse_artifact(content_hash: str, elements: list[dict[str, Any]]) 
     return key
 
 
+class ParseArtifactCorruptError(RuntimeError):
+    """Raised when a cached parse artifact in the object store can't be parsed.
+
+    The job runner treats this as a cache miss and re-parses from raw bytes.
+    """
+
+
 async def get_parse_artifact(object_key: str) -> list[dict[str, Any]]:
-    return json.loads(await _get_backend().get(object_key))
+    """Load a cached parse artifact. Grok Issue 5: a corrupted blob in the
+    object store used to crash the whole extract stage with no recovery; now
+    we raise a typed error the job runner can treat as a cache miss.
+    """
+    raw = await _get_backend().get(object_key)
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, ValueError) as e:
+        import logging
+
+        logging.getLogger("kb.storage.objects").warning(
+            "parse artifact corrupt at %s (%s) — caller should treat as cache miss",
+            object_key, e,
+        )
+        raise ParseArtifactCorruptError(f"corrupt parse artifact at {object_key}: {e}") from e
+    if not isinstance(data, list):
+        raise ParseArtifactCorruptError(f"parse artifact at {object_key} is not a list")
+    return data
 
 
 async def parse_artifact_exists(content_hash: str) -> bool:

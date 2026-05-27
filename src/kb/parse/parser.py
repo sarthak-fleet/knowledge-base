@@ -170,12 +170,21 @@ def _element_from_unstructured(e: Any, idx: int, default_page: int = 1) -> Eleme
 
 
 async def parse_file(*, file_id: str, content_hash: str, object_key: str, filename: str, mime: str | None) -> list[Element]:
-    """Return cached elements if present; otherwise parse, cache, return."""
+    """Return cached elements if present; otherwise parse, cache, return.
+
+    Grok Issue 5: a corrupted parse artifact (network mid-write, manual MinIO
+    tampering, format change) is now treated as a cache miss rather than
+    crashing the extract stage.
+    """
     cached = await repo.get_parse_artifact(content_hash)
     if cached:
-        logger.info("parse cache hit for %s", content_hash[:12])
-        raw = await objects.get_parse_artifact(cached["object_key"])
-        return [Element(**r) for r in raw]
+        try:
+            raw = await objects.get_parse_artifact(cached["object_key"])
+            logger.info("parse cache hit for %s", content_hash[:12])
+            return [Element(**r) for r in raw]
+        except objects.ParseArtifactCorruptError:
+            logger.warning("parse cache for %s is corrupt; re-parsing", content_hash[:12])
+            # Fall through to fresh parse below.
 
     blob = await objects.get_raw_file(object_key)
     settings = get_settings()

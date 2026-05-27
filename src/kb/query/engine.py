@@ -7,7 +7,6 @@ reviewer / user can inspect `/query/trace/{id}` to see exactly what happened.
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 import time
@@ -365,15 +364,23 @@ async def answer_query(body: QueryIn) -> QueryOut:
         token_usage[k] += int(syn_usage.get(k, 0))
 
     confidence_value, confidence_reason = 0.5, "default"
-    m = re.search(r"\{[^{}]*confidence[^{}]*\}\s*$", answer_text, flags=re.S)
+    # Grok Issue 3: route the confidence-JSON parse through the same robust
+    # _coerce_json helper used everywhere else. Earlier code matched the LAST
+    # {...} on the line with `\s*$`, which could either fail silently (leaving
+    # the answer with a stray JSON trailer) or accept a non-confidence JSON
+    # block. Now we explicitly look for a confidence-shaped object at EOF and
+    # only strip when the parse succeeds AND the object has the expected keys.
+    from kb.extract.llm import _coerce_json
+    m = re.search(r"(\{[^{}]*?\"confidence\"[^{}]*?\})\s*$", answer_text, flags=re.S)
     if m:
-        try:
-            j = json.loads(m.group(0))
-            confidence_value = float(j.get("confidence", confidence_value))
-            confidence_reason = str(j.get("confidence_reason", confidence_reason))
-            answer_text = answer_text[: m.start()].rstrip()
-        except Exception:
-            pass
+        j = _coerce_json(m.group(1))
+        if isinstance(j, dict) and "confidence" in j:
+            try:
+                confidence_value = float(j.get("confidence", confidence_value))
+                confidence_reason = str(j.get("confidence_reason", confidence_reason))
+                answer_text = answer_text[: m.start()].rstrip()
+            except (TypeError, ValueError):
+                pass
 
     # CRAG: if retrieval was scored low, cap confidence proactively.
     crag_min = float(pipeline.get(cfg, "retrieve.crag_min_score", 0.3))

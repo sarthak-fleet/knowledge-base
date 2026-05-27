@@ -189,7 +189,9 @@ async def extract_for_file(*, file_id: str, domain: str) -> ExtractionResult:
                 rows.append(vals)
         if rows:
             for rec in extract_financial_metrics_from_xlsx(rows):
-                prov = rec.pop("_provenance")
+                # Grok Issue 4: defensive default — any future or direct caller
+                # that omits `_provenance` no longer raises KeyError mid-ingest.
+                prov = rec.pop("_provenance", {}) or {}
                 records.append(ExtractedRecord(
                     entity_type="FinancialMetric",
                     fields=rec,
