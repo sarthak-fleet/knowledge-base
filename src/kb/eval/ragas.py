@@ -158,7 +158,10 @@ async def score_ragas(
         system=_FAITHFULNESS_SYSTEM,
         user=f"ANSWER:\n{answer}\n\nSOURCES:\n{chunks_block}",
     )
-    claims = fa.get("claims") or []
+    # Defensive guard: some weaker models (e.g. gemini-2.5-flash-lite) return
+    # `chunks: ["..", ".."]` (list of strings) instead of `[{"relevant": ...}]`.
+    # Skip non-dict items rather than crashing the whole eval.
+    claims = [c for c in (fa.get("claims") or []) if isinstance(c, dict)]
     faithfulness = (
         sum(1 for c in claims if c.get("supported")) / len(claims)
         if claims else 0.0
@@ -170,7 +173,7 @@ async def score_ragas(
         system=_CONTEXT_PRECISION_SYSTEM,
         user=f"QUESTION:\n{question}\n\nCHUNKS:\n{chunks_block}",
     )
-    items = cp.get("chunks") or []
+    items = [c for c in (cp.get("chunks") or []) if isinstance(c, dict)]
     context_precision = (
         sum(1 for c in items if c.get("relevant")) / len(items)
         if items else 0.0
@@ -183,7 +186,7 @@ async def score_ragas(
             system=_CONTEXT_RECALL_SYSTEM,
             user=f"KEY_FACTS:\n{json.dumps(key_facts)}\n\nCHUNKS:\n{chunks_block}",
         )
-        facts = cr.get("facts") or []
+        facts = [f for f in (cr.get("facts") or []) if isinstance(f, dict)]
         context_recall = (
             sum(1 for f in facts if f.get("recoverable")) / len(facts)
             if facts else 0.0
