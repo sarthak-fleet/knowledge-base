@@ -374,6 +374,7 @@ async def chat_text(*, system: str, user: str, model: str | None = None, tempera
     return text
 
 
+@retry(stop=stop_after_attempt(3), wait=wait_exponential_jitter(initial=1, max=10))
 async def chat_text_with_usage(
     *,
     system: str,

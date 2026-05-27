@@ -86,7 +86,7 @@ services:
     command:
       - sh
       - -c
-      - "python -m kb.cli db init && uvicorn kb.api.app:app --host 0.0.0.0 --port 8000"
+      - "python -m kb.cli db init && uvicorn kb.api.app:app --host 0.0.0.0 --port 8000 --loop uvloop --http httptools"
 
   worker:
     build:

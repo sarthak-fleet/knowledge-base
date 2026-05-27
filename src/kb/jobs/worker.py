@@ -74,4 +74,6 @@ async def _main() -> None:
 
 
 if __name__ == "__main__":
+    from kb.observability import install_uvloop
+    install_uvloop()  # must run before asyncio.run
     asyncio.run(_main())

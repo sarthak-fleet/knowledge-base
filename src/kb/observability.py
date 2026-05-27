@@ -24,6 +24,21 @@ import sys
 import structlog
 
 
+def install_uvloop() -> None:
+    """Use uvloop as the asyncio event loop on Unix. ~10-20% faster than
+    stdlib `asyncio` for IO-heavy workloads (which is exactly us — Postgres,
+    Qdrant, LLM gateway, all I/O bound). No-op on Windows.
+
+    Call once at process startup, BEFORE any `asyncio.run(...)` call.
+    """
+    try:
+        import uvloop
+        uvloop.install()
+    except (ImportError, RuntimeError):
+        # ImportError on Windows; RuntimeError if the loop is already running.
+        pass
+
+
 def configure_logging(level: str | None = None) -> None:
     """Configure stdlib logging + structlog with a sensible processor chain.
 

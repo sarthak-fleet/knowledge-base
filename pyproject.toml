@@ -25,6 +25,8 @@ dependencies = [
   "aiolimiter>=1.1",      # Async rate-limiter; smooths gateway 429s before tenacity retries fire
   "cachetools>=5.3",      # LRU caches; replaces hand-rolled FIFO in vector/embed.py (Grok #9)
   "structlog>=24.1",      # Structured logging; stdlib-compat, contextvar binding, JSON in prod
+  "orjson>=3.10",         # Fast JSON; FastAPI ORJSONResponse, handles datetime/UUID/Decimal natively
+  "uvloop>=0.21; sys_platform != 'win32'",  # ~10-20% faster event loop than stdlib asyncio
   "tiktoken>=0.7",
   "unstructured[pdf,xlsx]>=0.15",
   "pypdf>=4.3",
