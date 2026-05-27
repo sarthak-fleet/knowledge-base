@@ -70,7 +70,7 @@ synthesize:
   excerpt_chars: 400
   refuse_if_no_citations: true
   verify_citations: true             # per-claim entailment check (AIS/FActScore pattern)
-  contextual_retrieval: true         # Anthropic Sep-2024: prefix each chunk with a 1-sentence
+  contextual_retrieval: false         # Anthropic Sep-2024: prefix each chunk with a 1-sentence
                                      # "where this chunk sits in the doc" context before embedding.
                                      # Trades extra LLM calls at INGEST for −49% retrieval failures.
   contextual_max_concurrent: 8

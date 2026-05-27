@@ -57,20 +57,49 @@ _SYSTEM = (
 
 
 async def _gen_one(chunk_text: str, *, model: str | None = None) -> _GenQ:
-    """LLM-generate a (question, key_facts) tuple for a single chunk."""
+    """LLM-generate a (question, key_facts) tuple for a single chunk.
+
+    Uses `chat_text` + manual JSON parse rather than `chat_structured` so we
+    don't depend on the model supporting OpenAI tool_choice — some routes
+    in the free gateway don't.
+    """
+    import json
+    import re
+
+    prompt = (
+        f"CHUNK:\n{chunk_text[:2000]}\n\n"
+        'Reply with ONLY a JSON object matching this shape:\n'
+        '{"question": "...", "key_facts": ["...", "..."], "skip": false}\n'
+        "Use skip=true ONLY if the chunk has no useful question (pure boilerplate / "
+        "isolated number / template). No prose, no markdown fence."
+    )
     try:
-        return await llm.chat_structured(
+        raw, _usage = await llm.chat_text_with_usage(
             system=_SYSTEM,
-            user=f"CHUNK:\n{chunk_text[:2000]}",
-            response_model=_GenQ,
+            user=prompt,
             model=model,
             temperature=0.3,
-            max_tokens=300,
-            timeout_s=30,
+            max_tokens=400,
         )
     except Exception as e:
-        logger.warning("gen failed", error=str(e)[:200])
+        logger.warning("gen call failed", error=str(e)[:200])
         return _GenQ(skip=True)
+
+    # Liberal parse: strip markdown fences, find first {...}, fall back to skip.
+    text = (raw or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```\s*$", "", text)
+    try:
+        return _GenQ.model_validate(json.loads(text))
+    except Exception:
+        m = re.search(r"\{.*\}", text, flags=re.S)
+        if m:
+            try:
+                return _GenQ.model_validate(json.loads(m.group(0)))
+            except Exception:
+                pass
+    return _GenQ(skip=True)
 
 
 def _sample_chunks(hits: list[dict[str, Any]], n: int) -> list[dict[str, Any]]:
