@@ -10,16 +10,17 @@ Note: requires `SEC_USER_AGENT` env (EDGAR requires identification).
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
+import structlog
+
 from kb.sources.base import IngestedDoc, Source
 from kb.sources.registry import register_source
 
-logger = logging.getLogger("kb.sources.edgar")
+logger = structlog.get_logger("kb.sources.edgar")
 
 
 def _filing_html(filing: object) -> str | None:

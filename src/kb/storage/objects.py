@@ -15,6 +15,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import structlog
+
 from kb.config import get_settings
 
 
@@ -150,9 +152,8 @@ async def get_parse_artifact(object_key: str) -> list[dict[str, Any]]:
     try:
         data = json.loads(raw)
     except (json.JSONDecodeError, ValueError) as e:
-        import logging
 
-        logging.getLogger("kb.storage.objects").warning(
+        structlog.get_logger("kb.storage.objects").warning(
             "parse artifact corrupt at %s (%s) — caller should treat as cache miss",
             object_key, e,
         )

@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from typing import Any
 
+import structlog
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models as qm
 
@@ -13,7 +13,7 @@ from kb.config import get_settings
 from kb.vector.base import Chunk, SearchHit, VectorStore
 from kb.vector.embed import embed_dense, embed_sparse
 
-logger = logging.getLogger("kb.vector.qdrant")
+logger = structlog.get_logger("kb.vector.qdrant")
 
 
 def _collection(domain: str) -> str:

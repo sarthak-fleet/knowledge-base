@@ -10,11 +10,12 @@ Falls back to fixed-size chunking on any embedding failure or short documents.
 
 from __future__ import annotations
 
-import logging
 import re
 from dataclasses import dataclass
 
-logger = logging.getLogger("kb.vector.semantic_chunking")
+import structlog
+
+logger = structlog.get_logger("kb.vector.semantic_chunking")
 
 _SENT = re.compile(r"(?<=[\.\!\?])\s+")
 

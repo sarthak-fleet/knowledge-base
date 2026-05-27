@@ -12,12 +12,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import os
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
+import structlog
 from aiolimiter import AsyncLimiter
 from openai import AsyncOpenAI
 from pydantic import BaseModel
@@ -37,7 +37,7 @@ _gateway_limiter = AsyncLimiter(max_rate=8, time_period=1.0)
 if TYPE_CHECKING:
     import instructor
 
-logger = logging.getLogger("kb.extract.llm")
+logger = structlog.get_logger("kb.extract.llm")
 
 
 def make_client() -> AsyncOpenAI:

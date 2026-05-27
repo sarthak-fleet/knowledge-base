@@ -13,13 +13,14 @@ import sys
 from pathlib import Path
 
 import httpx
+import structlog
 from rich import print
 
 from kb.sources.base import IngestedDoc
 from kb.sources.ingest import ingest_source
 from kb.sources.registry import build_source
 
-logger = logging.getLogger("kb.seed.sec")
+logger = structlog.get_logger("kb.seed.sec")
 
 
 def _build_summary_xlsx() -> bytes:

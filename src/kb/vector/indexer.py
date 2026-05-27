@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any
+
+import structlog
 
 from kb.config import pipeline
 from kb.extract.runner import ExtractionResult
@@ -14,7 +15,7 @@ from kb.vector.contextual import contextualize_chunks, prefix_chunk
 from kb.vector.dedup import content_hash
 from kb.vector.factory import get_store
 
-logger = logging.getLogger("kb.vector.indexer")
+logger = structlog.get_logger("kb.vector.indexer")
 
 
 def _entity_id_for_element(

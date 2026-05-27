@@ -17,13 +17,12 @@ References:
 
 from __future__ import annotations
 
-import logging
-
+import structlog
 from pydantic import BaseModel, Field
 
 from kb.extract import llm
 
-logger = logging.getLogger("kb.query.rewriter")
+logger = structlog.get_logger("kb.query.rewriter")
 
 _REWRITE_SYSTEM = (
     "You expand one user question into multiple search-friendly rephrasings. "

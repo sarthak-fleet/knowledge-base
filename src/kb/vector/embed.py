@@ -9,14 +9,14 @@ dense-only fusion (still hybrid-style via RRF among dense ranks, just degraded).
 from __future__ import annotations
 
 import asyncio
-import logging
 from functools import lru_cache
 
+import structlog
 from cachetools import LRUCache
 
 from kb.config import get_settings
 
-logger = logging.getLogger("kb.vector.embed")
+logger = structlog.get_logger("kb.vector.embed")
 
 _sparse_disabled = False
 

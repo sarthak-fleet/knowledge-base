@@ -15,9 +15,9 @@ Algorithm per record:
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
+import structlog
 from rapidfuzz import fuzz
 
 from kb.config import pipeline
@@ -28,7 +28,7 @@ from kb.schema.model import DomainSchema, EntityType
 from kb.storage import repo
 from kb.vector.embed import embed_dense
 
-logger = logging.getLogger("kb.resolve")
+logger = structlog.get_logger("kb.resolve")
 
 
 def _summary_value(et: EntityType, fields: dict[str, Any]) -> str:

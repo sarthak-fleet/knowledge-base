@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -11,13 +10,15 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from kb.api.routes import register_routes
 from kb.config import get_settings
+from kb.observability import configure_logging, get_logger
 from kb.storage.db import close_engine, init_engine
 
-logger = logging.getLogger("kb.api")
+logger = get_logger("kb.api")
 
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    configure_logging()  # structlog + stdlib bridge; idempotent
     settings = get_settings()
     await init_engine(settings.postgres_dsn)
     # Pre-create vector collections for every known domain so workers don't race

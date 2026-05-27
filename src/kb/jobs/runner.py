@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import logging
+import structlog
 
 from kb.extract import extract_for_file
 from kb.resolve import resolve_extraction
 from kb.storage import repo
 from kb.vector.indexer import index_extraction
 
-logger = logging.getLogger("kb.jobs.runner")
+logger = structlog.get_logger("kb.jobs.runner")
 
 
 async def run_job(job: dict) -> None:

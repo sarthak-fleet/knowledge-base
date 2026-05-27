@@ -21,10 +21,11 @@ classifier mentions numeric/comparison shapes. Lookup questions stay on RAG.
 
 from __future__ import annotations
 
-import logging
 import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+
+import structlog
 
 # duckdb is an optional dep at import time so the pure helpers below
 # (_ticker_from_filename, _metric_canonical) are unit-testable without
@@ -98,7 +99,8 @@ def _metric_canonical(raw_name: str | None) -> str | None:
             return canon
     return None
 
-logger = logging.getLogger("kb.query.duckdb")
+
+logger = structlog.get_logger("kb.query.duckdb")
 
 
 @dataclass

@@ -14,16 +14,16 @@ If the structured query returns nothing, the caller falls back to RAG.
 from __future__ import annotations
 
 import json
-import logging
 import operator
 from typing import Any
 
+import structlog
 from sqlalchemy import text
 
 from kb.query.intent import QueryIntent
 from kb.storage.db import session
 
-logger = logging.getLogger("kb.query.structured")
+logger = structlog.get_logger("kb.query.structured")
 
 
 # Map of simple comparison operators we accept in NL-parsed numeric filters.

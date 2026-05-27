@@ -11,12 +11,12 @@ the response against DomainSchema, return it for human review.
 
 from __future__ import annotations
 
-import logging
+import structlog
 
 from kb.extract import llm
 from kb.schema.model import DomainSchema
 
-logger = logging.getLogger("kb.schema.infer")
+logger = structlog.get_logger("kb.schema.infer")
 
 
 _SYSTEM = (

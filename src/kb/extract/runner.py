@@ -8,9 +8,10 @@ schema's JSON Schema. Each record carries its own provenance.
 from __future__ import annotations
 
 import asyncio
-import logging
 from dataclasses import dataclass
 from typing import Any
+
+import structlog
 
 from kb.config import get_settings, pipeline
 from kb.extract import llm
@@ -21,7 +22,7 @@ from kb.schema.loader import schema_from_dict
 from kb.schema.model import DomainSchema
 from kb.storage import repo
 
-logger = logging.getLogger("kb.extract")
+logger = structlog.get_logger("kb.extract")
 
 
 @dataclass

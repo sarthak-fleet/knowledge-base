@@ -12,12 +12,13 @@ once and pass through the original ranking.
 from __future__ import annotations
 
 import asyncio
-import logging
 from functools import lru_cache
+
+import structlog
 
 from kb.vector.base import SearchHit
 
-logger = logging.getLogger("kb.query.rerank")
+logger = structlog.get_logger("kb.query.rerank")
 
 _disabled = False
 

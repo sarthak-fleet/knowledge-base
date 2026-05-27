@@ -10,16 +10,16 @@ Failed pairs get flagged on the trace and downgrade the response confidence.
 
 from __future__ import annotations
 
-import logging
 import re
 from dataclasses import dataclass
 from typing import Any
 
+import structlog
 from pydantic import BaseModel, Field
 
 from kb.extract import llm
 
-logger = logging.getLogger("kb.query.verify")
+logger = structlog.get_logger("kb.query.verify")
 
 _CITE_RE = re.compile(r"\[(\d+)\]")
 

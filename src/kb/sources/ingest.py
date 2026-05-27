@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import logging
-
 import httpx
+import structlog
 
 from kb.sources.base import Source
 
-logger = logging.getLogger("kb.sources.ingest")
+logger = structlog.get_logger("kb.sources.ingest")
 
 
 async def ingest_source(*, api_base: str, domain: str, source: Source) -> list[dict]:

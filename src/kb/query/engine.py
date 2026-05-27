@@ -7,10 +7,11 @@ reviewer / user can inspect `/query/trace/{id}` to see exactly what happened.
 
 from __future__ import annotations
 
-import logging
 import re
 import time
 from typing import Any
+
+import structlog
 
 from kb.config import pipeline
 from kb.extract import llm
@@ -34,7 +35,7 @@ from kb.schema.loader import schema_from_dict
 from kb.storage import repo
 from kb.vector.factory import get_store
 
-logger = logging.getLogger("kb.query")
+logger = structlog.get_logger("kb.query")
 
 _CITE_RE = re.compile(r"\[(\d+)\]")
 

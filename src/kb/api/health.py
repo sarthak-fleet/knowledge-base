@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import logging
 from typing import Any
 
+import structlog
 from sqlalchemy import text
 
 from kb.config import get_settings
@@ -14,7 +14,7 @@ from kb.storage.db import session
 from kb.storage.objects import _get_backend
 from kb.vector.factory import get_store
 
-logger = logging.getLogger("kb.api.health")
+logger = structlog.get_logger("kb.api.health")
 
 
 async def _probe_db() -> dict[str, Any]:

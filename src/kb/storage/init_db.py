@@ -4,14 +4,14 @@ needed because our migrations are plain DDL, no PL/pgSQL).
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 
+import structlog
 from sqlalchemy import text
 
 from kb.storage.db import init_engine, session
 
-logger = logging.getLogger("kb.storage.init_db")
+logger = structlog.get_logger("kb.storage.init_db")
 
 MIGRATIONS_DIR_CANDIDATES = [
     Path("/app/migrations"),

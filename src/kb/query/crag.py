@@ -12,14 +12,14 @@ signal is used to:
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
+import structlog
 from pydantic import BaseModel, Field
 
 from kb.extract import llm
 
-logger = logging.getLogger("kb.query.crag")
+logger = structlog.get_logger("kb.query.crag")
 
 
 _EVAL_SYSTEM = (

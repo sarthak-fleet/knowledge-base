@@ -7,12 +7,13 @@ or two within. We pick the best span via dense cosine to the query.
 
 from __future__ import annotations
 
-import logging
 import re
+
+import structlog
 
 from kb.vector.embed import embed_dense
 
-logger = logging.getLogger("kb.query.spans")
+logger = structlog.get_logger("kb.query.spans")
 
 # Sentence splitter: prefer NLTK-style boundaries but keep it dependency-free.
 _SENT = re.compile(r"(?<=[\.\!\?])\s+(?=[A-Z\(])")

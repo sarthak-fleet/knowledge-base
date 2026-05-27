@@ -16,11 +16,12 @@ attaching the source file_id as the mention.
 
 from __future__ import annotations
 
-import logging
 import re
 from typing import Any
 
-logger = logging.getLogger("kb.extract.xlsx_bridge")
+import structlog
+
+logger = structlog.get_logger("kb.extract.xlsx_bridge")
 
 # Field-name hints. Order matters: the first match wins.
 _IDENT_COLS = {"ticker", "symbol", "company", "issuer"}

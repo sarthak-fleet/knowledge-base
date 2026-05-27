@@ -12,13 +12,14 @@ end up as distinct chunks.
 
 from __future__ import annotations
 
-import logging
 from typing import Any
+
+import structlog
 
 from kb.vector.base import SearchHit
 from kb.vector.embed import embed_dense
 
-logger = logging.getLogger("kb.query.mmr")
+logger = structlog.get_logger("kb.query.mmr")
 
 
 def _cosine(a: list[float], b: list[float]) -> float:

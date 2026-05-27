@@ -6,17 +6,18 @@ Run with `python -m kb.jobs.worker`. Concurrency from KB_WORKER_CONCURRENCY.
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 import signal
 import socket
 import uuid
 
+import structlog
+
 from kb.config import get_settings
 from kb.storage import repo
 from kb.storage.db import init_engine
 
-logger = logging.getLogger("kb.jobs.worker")
+logger = structlog.get_logger("kb.jobs.worker")
 _running = True
 
 
@@ -36,7 +37,8 @@ async def _worker_loop(worker_id: str, idle_sleep: float) -> None:
 
 
 async def _main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    from kb.observability import configure_logging
+    configure_logging()
     settings = get_settings()
     await init_engine(settings.postgres_dsn)
     hostname = socket.gethostname()

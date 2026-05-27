@@ -24,6 +24,7 @@ dependencies = [
   "instructor>=1.6",      # Pydantic-typed LLM outputs; replaces hand-rolled chat_json
   "aiolimiter>=1.1",      # Async rate-limiter; smooths gateway 429s before tenacity retries fire
   "cachetools>=5.3",      # LRU caches; replaces hand-rolled FIFO in vector/embed.py (Grok #9)
+  "structlog>=24.1",      # Structured logging; stdlib-compat, contextvar binding, JSON in prod
   "tiktoken>=0.7",
   "unstructured[pdf,xlsx]>=0.15",
   "pypdf>=4.3",

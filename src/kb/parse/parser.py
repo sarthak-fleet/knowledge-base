@@ -11,16 +11,17 @@ This is the "parse once, re-extract many" boundary called out in DESIGN.md.
 from __future__ import annotations
 
 import asyncio
-import logging
 import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+import structlog
+
 from kb.config import get_settings
 from kb.storage import objects, repo
 
-logger = logging.getLogger("kb.parse")
+logger = structlog.get_logger("kb.parse")
 
 
 @dataclass

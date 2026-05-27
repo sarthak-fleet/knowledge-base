@@ -25,12 +25,13 @@ Implementation notes (deviating from Anthropic's blog for reasons):
 from __future__ import annotations
 
 import asyncio
-import logging
 from dataclasses import dataclass
+
+import structlog
 
 from kb.extract import llm
 
-logger = logging.getLogger("kb.vector.contextual")
+logger = structlog.get_logger("kb.vector.contextual")
 
 # How much of the parent document to show the contextualiser. Anthropic relies on
 # prompt caching to make the parent doc essentially free; we cap it for cost +

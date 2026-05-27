@@ -18,13 +18,14 @@ import sys
 from pathlib import Path
 
 import httpx
+import structlog
 from rich import print
 
 from kb.sources.base import IngestedDoc
 from kb.sources.ingest import ingest_source
 from kb.sources.registry import build_source
 
-logger = logging.getLogger("kb.seed.legal")
+logger = structlog.get_logger("kb.seed.legal")
 
 # SPDX license texts as canonical sources (raw text from the SPDX license list).
 LICENSE_URLS = {

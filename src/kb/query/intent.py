@@ -14,16 +14,16 @@ filter extraction. Swap the schema, swap the available filter keys.
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+import structlog
 from pydantic import BaseModel, Field
 
 from kb.extract import llm
 from kb.schema.model import DomainSchema
 
-logger = logging.getLogger("kb.query.intent")
+logger = structlog.get_logger("kb.query.intent")
 
 IntentKind = Literal["lookup", "aggregate", "compare", "negative"]
 

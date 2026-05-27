@@ -12,11 +12,11 @@ which is exactly the seam the PRD calls out. This module:
 
 from __future__ import annotations
 
-import logging
+import structlog
 
 from kb.storage import repo
 
-logger = logging.getLogger("kb.schema.migrate")
+logger = structlog.get_logger("kb.schema.migrate")
 
 
 async def reindex_domain_with_schema(*, domain: str, schema_id: str) -> int:
