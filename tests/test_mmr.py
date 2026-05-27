@@ -9,7 +9,9 @@ from kb.query.mmr import _cosine, consolidate_sources, mmr_rerank
 from kb.vector.base import SearchHit
 
 
-def _hit(id_: str, text: str, score: float, file_id: str = "", also: list[str] | None = None) -> SearchHit:
+def _hit(
+    id_: str, text: str, score: float, file_id: str = "", also: list[str] | None = None
+) -> SearchHit:
     meta = {"file_id": file_id}
     if also is not None:
         meta["also_in_files"] = also
@@ -31,6 +33,7 @@ def test_mmr_returns_input_when_fewer_than_k() -> None:
 def test_mmr_seeds_with_most_relevant(monkeypatch) -> None:
     async def fake_embed(texts):
         return [[1.0, 0.0, 0.0]] * len(texts)  # all identical → diversity penalty maxes
+
     monkeypatch.setattr(mmr_mod, "embed_dense", fake_embed)
 
     hits = [
@@ -45,12 +48,14 @@ def test_mmr_seeds_with_most_relevant(monkeypatch) -> None:
 def test_mmr_prefers_diversity_when_similar(monkeypatch) -> None:
     """Given 3 candidates where #1 and #2 are near-duplicates and #3 is different,
     MMR with lambda=0.5 should pick #1, then #3 (skipping the near-duplicate)."""
+
     async def fake_embed(texts):
         return [
-            [1.0, 0.0, 0.0],    # very similar to next
+            [1.0, 0.0, 0.0],  # very similar to next
             [0.99, 0.01, 0.0],  # near-duplicate of first
-            [0.0, 1.0, 0.0],    # orthogonal — diverse
+            [0.0, 1.0, 0.0],  # orthogonal — diverse
         ]
+
     monkeypatch.setattr(mmr_mod, "embed_dense", fake_embed)
 
     hits = [
@@ -60,13 +65,14 @@ def test_mmr_prefers_diversity_when_similar(monkeypatch) -> None:
     ]
     out = asyncio.run(mmr_rerank(hits, query="q", top_k=2, lambda_=0.5))
     ids = [h.id for h in out]
-    assert ids[0] == "a"           # most relevant first
+    assert ids[0] == "a"  # most relevant first
     assert "c" in ids and "b" not in ids  # diversity beats marginal relevance
 
 
 def test_mmr_falls_back_on_embedding_error(monkeypatch) -> None:
     async def fake_embed(texts):
         raise RuntimeError("simulated outage")
+
     monkeypatch.setattr(mmr_mod, "embed_dense", fake_embed)
 
     hits = [_hit(c, "x", 1.0 - i * 0.1) for i, c in enumerate("abcdef")]

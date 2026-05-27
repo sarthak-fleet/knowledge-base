@@ -33,12 +33,12 @@ class QueryIntent:
     """Result of intent + filter extraction."""
 
     kind: IntentKind = "lookup"
-    entity_type: str | None = None      # which entity type the question is mostly about
+    entity_type: str | None = None  # which entity type the question is mostly about
     filters: dict[str, Any] = field(default_factory=dict)  # facet → value (e.g. {"ticker": "AAPL"})
-    sort_by: str | None = None          # field to order by (e.g. "filed_date")
+    sort_by: str | None = None  # field to order by (e.g. "filed_date")
     sort_dir: Literal["asc", "desc"] = "desc"
     limit: int | None = None
-    reason: str = ""                    # short rationale (kept on the trace)
+    reason: str = ""  # short rationale (kept on the trace)
 
 
 def _enum_values(schema: DomainSchema, type_name: str, field_name: str) -> list[str]:
@@ -114,7 +114,9 @@ class _IntentResponse(BaseModel):
     reason: str = ""
 
 
-async def extract_intent(question: str, schema: DomainSchema, *, model: str | None = None) -> QueryIntent:
+async def extract_intent(
+    question: str, schema: DomainSchema, *, model: str | None = None
+) -> QueryIntent:
     """Best-effort intent extraction. Falls back to lookup-with-no-filters on any error.
 
     Uses `instructor` to enforce Pydantic-typed output via tool-call. Few-shot
@@ -171,9 +173,21 @@ def intent_to_payload_filter(intent: QueryIntent, schema: DomainSchema) -> dict[
 # heuristic, and `looks_aggregate` now logs when the fallback would override
 # a `lookup` classification so operators can see classifier drift in logs.
 _AGGREGATE_KEYWORDS = (
-    "which compan", "how many", "highest", "lowest", "compare ", "across all",
-    "exceed", "above $", "more than $", "greater than", "less than $",
-    "average ", "median ", "total ", "sum ",
+    "which compan",
+    "how many",
+    "highest",
+    "lowest",
+    "compare ",
+    "across all",
+    "exceed",
+    "above $",
+    "more than $",
+    "greater than",
+    "less than $",
+    "average ",
+    "median ",
+    "total ",
+    "sum ",
 )
 
 

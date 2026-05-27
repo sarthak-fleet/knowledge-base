@@ -27,7 +27,10 @@ def _field_to_json_schema(f: FieldSpec) -> dict[str, Any]:
         spec = {"type": "string", "enum": f.enum or []}
     elif f.type == "array":
         item_type = f.item_type or "string"
-        spec = {"type": "array", "items": _field_to_json_schema(FieldSpec(name="item", type=item_type))}
+        spec = {
+            "type": "array",
+            "items": _field_to_json_schema(FieldSpec(name="item", type=item_type)),
+        }
     else:
         spec = {"type": "string"}
     if f.description:
@@ -46,10 +49,23 @@ def entity_record_schema(et: EntityType) -> dict[str, Any]:
         "type": "object",
         "description": "REQUIRED. Source evidence for this record.",
         "properties": {
-            "page_start": {"type": "integer", "description": "First source page supporting this record"},
-            "page_end": {"type": "integer", "description": "Last source page supporting this record"},
-            "excerpt": {"type": "string", "description": "Verbatim excerpt (<= 400 chars) supporting this record"},
-            "element_ids": {"type": "array", "items": {"type": "string"}, "description": "Source element ids if known"},
+            "page_start": {
+                "type": "integer",
+                "description": "First source page supporting this record",
+            },
+            "page_end": {
+                "type": "integer",
+                "description": "Last source page supporting this record",
+            },
+            "excerpt": {
+                "type": "string",
+                "description": "Verbatim excerpt (<= 400 chars) supporting this record",
+            },
+            "element_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Source element ids if known",
+            },
             "confidence": {"type": "number", "description": "0.0–1.0 self-rated confidence"},
         },
         "required": ["page_start", "page_end", "excerpt", "confidence"],
@@ -64,7 +80,9 @@ def entity_record_schema(et: EntityType) -> dict[str, Any]:
     }
 
 
-def extraction_envelope_schema(schema: DomainSchema, type_subset: list[str] | None = None) -> dict[str, Any]:
+def extraction_envelope_schema(
+    schema: DomainSchema, type_subset: list[str] | None = None
+) -> dict[str, Any]:
     """Top-level shape we ask the LLM to return: {entities: {Type: [records...]}}."""
     types = type_subset or [e.name for e in schema.entities]
     return {
@@ -72,7 +90,10 @@ def extraction_envelope_schema(schema: DomainSchema, type_subset: list[str] | No
         "properties": {
             "entities": {
                 "type": "object",
-                "properties": {t: {"type": "array", "items": entity_record_schema(schema.entity(t))} for t in types},
+                "properties": {
+                    t: {"type": "array", "items": entity_record_schema(schema.entity(t))}
+                    for t in types
+                },
                 "required": [],
                 "additionalProperties": False,
             }

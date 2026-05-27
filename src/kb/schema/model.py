@@ -12,7 +12,9 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
 # Field types are intentionally minimal and JSON-mappable.
-FieldType = Literal["string", "text", "integer", "number", "boolean", "date", "datetime", "enum", "array"]
+FieldType = Literal[
+    "string", "text", "integer", "number", "boolean", "date", "datetime", "enum", "array"
+]
 
 
 class FieldSpec(BaseModel):
@@ -22,9 +24,9 @@ class FieldSpec(BaseModel):
     type: FieldType = "string"
     description: str = ""
     required: bool = False
-    identity: bool = False                # part of the entity's identity key (used for ER)
+    identity: bool = False  # part of the entity's identity key (used for ER)
     enum: list[str] | None = None
-    item_type: FieldType | None = None    # for arrays
+    item_type: FieldType | None = None  # for arrays
     examples: list[Any] = Field(default_factory=list)
 
     @field_validator("name")
@@ -51,7 +53,7 @@ class EntityType(BaseModel):
     name: str
     description: str = ""
     fields: list[FieldSpec] = Field(default_factory=list)
-    summary_field: str | None = None      # field used for embedding tiebreak in ER
+    summary_field: str | None = None  # field used for embedding tiebreak in ER
     aliases: list[str] = Field(default_factory=list)
 
     def identity_fields(self) -> list[FieldSpec]:
@@ -87,7 +89,9 @@ class DomainSchema(BaseModel):
                 raise ValueError(f"relationship {rel.name}: unknown to_type '{rel.to_type}'")
         for e in self.entities:
             if e.summary_field and not any(f.name == e.summary_field for f in e.fields):
-                raise ValueError(f"entity {e.name}: summary_field '{e.summary_field}' not in fields")
+                raise ValueError(
+                    f"entity {e.name}: summary_field '{e.summary_field}' not in fields"
+                )
             if not e.identity_fields():
                 # Warn (don't fail) — ER falls back to display_name + content hash
                 pass

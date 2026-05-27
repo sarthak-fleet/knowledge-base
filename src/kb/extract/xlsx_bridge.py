@@ -27,8 +27,18 @@ logger = structlog.get_logger("kb.extract.xlsx_bridge")
 _IDENT_COLS = {"ticker", "symbol", "company", "issuer"}
 _PERIOD_COLS = {"period", "quarter", "fiscal year", "year", "date"}
 _NAME_COLS = {"name", "metric", "indicator"}
-_VALUE_COLS = {"revenue", "net income", "income", "eps", "eps diluted", "eps-diluted",
-               "gross profit", "operating income", "cash", "total assets"}
+_VALUE_COLS = {
+    "revenue",
+    "net income",
+    "income",
+    "eps",
+    "eps diluted",
+    "eps-diluted",
+    "gross profit",
+    "operating income",
+    "cash",
+    "total assets",
+}
 
 
 def _norm(s: str) -> str:
@@ -111,19 +121,21 @@ def extract_financial_metrics_from_xlsx(
                 unit_guess = "USD"
             elif "margin" in col_name:
                 unit_guess = "%"
-            out.append({
-                "ticker": ticker,
-                "name": col_name.title(),
-                "value": num,
-                "period": period or "",
-                "unit": unit_guess,
-                "_provenance": {
-                    "page_start": 0,
-                    "page_end": 0,
-                    "excerpt": f"Row {r_idx}: {ticker} | {period} | {col_name} = {num}",
-                    "confidence": 1.0,
-                },
-            })
+            out.append(
+                {
+                    "ticker": ticker,
+                    "name": col_name.title(),
+                    "value": num,
+                    "period": period or "",
+                    "unit": unit_guess,
+                    "_provenance": {
+                        "page_start": 0,
+                        "page_end": 0,
+                        "excerpt": f"Row {r_idx}: {ticker} | {period} | {col_name} = {num}",
+                        "confidence": 1.0,
+                    },
+                }
+            )
     if out:
         logger.info("xlsx_bridge: extracted %d FinancialMetric records", len(out))
     return out

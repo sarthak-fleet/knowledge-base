@@ -41,8 +41,24 @@ def _schema_dict() -> dict:
 def test_extract_window_returns_records(monkeypatch) -> None:
     schema = schema_from_dict(_schema_dict())
     elements = [
-        Element(id="el-0", type="Title", text="Apple Inc. (AAPL) 10-K filing", page=1, bbox=None, parent_id=None, metadata={}),
-        Element(id="el-1", type="NarrativeText", text="Filed 2024-09-30 under accession 000032019324000123.", page=1, bbox=None, parent_id=None, metadata={}),
+        Element(
+            id="el-0",
+            type="Title",
+            text="Apple Inc. (AAPL) 10-K filing",
+            page=1,
+            bbox=None,
+            parent_id=None,
+            metadata={},
+        ),
+        Element(
+            id="el-1",
+            type="NarrativeText",
+            text="Filed 2024-09-30 under accession 000032019324000123.",
+            page=1,
+            bbox=None,
+            parent_id=None,
+            metadata={},
+        ),
     ]
 
     mock_response = {
@@ -79,8 +95,21 @@ def test_extract_window_returns_records(monkeypatch) -> None:
 
     monkeypatch.setattr(runner.llm, "chat_json", fake_chat_json)
 
-    cfg = {"extract": {"confidence_floor": 0.4}, "llm": {"extract": {"model": None, "temperature": 0, "max_tokens": 1024, "request_timeout_s": 60}}, "prompts": {"extract_system": "x"}}
-    out: list[ExtractedRecord] = asyncio.run(runner._extract_window(schema, (1, 1), elements, cfg=cfg))
+    cfg = {
+        "extract": {"confidence_floor": 0.4},
+        "llm": {
+            "extract": {
+                "model": None,
+                "temperature": 0,
+                "max_tokens": 1024,
+                "request_timeout_s": 60,
+            }
+        },
+        "prompts": {"extract_system": "x"},
+    }
+    out: list[ExtractedRecord] = asyncio.run(
+        runner._extract_window(schema, (1, 1), elements, cfg=cfg)
+    )
     types = sorted(r.entity_type for r in out)
     assert types == ["Company", "Filing"]
     company = next(r for r in out if r.entity_type == "Company")
@@ -91,18 +120,35 @@ def test_extract_window_returns_records(monkeypatch) -> None:
 
 def test_extract_window_drops_low_confidence(monkeypatch) -> None:
     schema = schema_from_dict(_schema_dict())
-    elements = [Element(id="el-0", type="Title", text="noise", page=1, bbox=None, parent_id=None, metadata={})]
+    elements = [
+        Element(
+            id="el-0", type="Title", text="noise", page=1, bbox=None, parent_id=None, metadata={}
+        )
+    ]
 
     async def fake_chat_json(**kwargs):
         return {
             "entities": {
                 "Company": [
-                    {"ticker": "X", "name": "X", "_provenance": {"page_start": 1, "page_end": 1, "excerpt": "x", "confidence": 0.1}},
+                    {
+                        "ticker": "X",
+                        "name": "X",
+                        "_provenance": {
+                            "page_start": 1,
+                            "page_end": 1,
+                            "excerpt": "x",
+                            "confidence": 0.1,
+                        },
+                    },
                 ]
             }
         }
 
     monkeypatch.setattr(runner.llm, "chat_json", fake_chat_json)
-    cfg = {"extract": {"confidence_floor": 0.4}, "llm": {"extract": {"request_timeout_s": 60}}, "prompts": {"extract_system": "x"}}
+    cfg = {
+        "extract": {"confidence_floor": 0.4},
+        "llm": {"extract": {"request_timeout_s": 60}},
+        "prompts": {"extract_system": "x"},
+    }
     out = asyncio.run(runner._extract_window(schema, (1, 1), elements, cfg=cfg))
     assert out == []

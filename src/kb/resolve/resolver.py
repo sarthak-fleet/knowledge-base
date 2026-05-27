@@ -57,7 +57,9 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return dot / (na * nb)
 
 
-async def _embedding_tiebreak(target: str, candidates: list[dict[str, Any]]) -> tuple[float, dict | None]:
+async def _embedding_tiebreak(
+    target: str, candidates: list[dict[str, Any]]
+) -> tuple[float, dict | None]:
     """Return (best_score, best_candidate) by cosine over summary text embeddings."""
     if not candidates:
         return 0.0, None
@@ -108,7 +110,12 @@ async def _resolve_one(
 
         if best_lex[0] >= confident_threshold and best_lex[1]:
             canonical = best_lex[1]
-            logger.info("ER lex-confident %.2f %r -> %r", best_lex[0], display, canonical.get("display_name"))
+            logger.info(
+                "ER lex-confident %.2f %r -> %r",
+                best_lex[0],
+                display,
+                canonical.get("display_name"),
+            )
             ik = canonical.get("identity_key") or ik
         elif best_lex[0] >= ambiguous_floor:
             # Ambiguous band → embedding tiebreak
@@ -117,7 +124,10 @@ async def _resolve_one(
                 canonical = emb_match
                 logger.info(
                     "ER embedding-tiebreak lex=%.2f emb=%.2f %r -> %r",
-                    best_lex[0], emb_score, display, canonical.get("display_name"),
+                    best_lex[0],
+                    emb_score,
+                    display,
+                    canonical.get("display_name"),
                 )
                 ik = canonical.get("identity_key") or ik
 
@@ -132,9 +142,9 @@ async def _resolve_one(
         if rel.kind == "parent" and rel.to_type == et.name:
             parent_type = rel.from_type
             break
-    parent_id = (
-        parent_index.get(parent_type) if parent_type else None
-    ) or (canonical or {}).get("parent_id")
+    parent_id = (parent_index.get(parent_type) if parent_type else None) or (canonical or {}).get(
+        "parent_id"
+    )
 
     entity = await repo.upsert_entity(
         domain=domain,

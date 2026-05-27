@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     # for tenancy/billing. Set this only when the upstream demands it; it's
     # ignored by vanilla OpenAI/DeepSeek/Together/vLLM.
     ai_project_id: str = Field(default="", alias="AI_PROJECT_ID")
-    extract_model: str | None = None     # KB_EXTRACT_MODEL  (defaults to ai_model)
+    extract_model: str | None = None  # KB_EXTRACT_MODEL  (defaults to ai_model)
     synthesize_model: str | None = None  # KB_SYNTHESIZE_MODEL
 
     # --- LLM response cache (deterministic eval replay) ---

@@ -26,6 +26,7 @@ _disabled = False
 @lru_cache(maxsize=1)
 def _model():
     from fastembed.rerank.cross_encoder import TextCrossEncoder
+
     return TextCrossEncoder(model_name="Xenova/ms-marco-MiniLM-L-6-v2")
 
 

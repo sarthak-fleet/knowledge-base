@@ -66,9 +66,13 @@ def _citation_pr(predicted: list[dict], expected_files: list[str]) -> tuple[floa
         return 1.0, 1.0, 1.0
     if not predicted:
         return 0.0, 0.0, 0.0
-    matched_predicted = sum(1 for c in predicted if _file_match(c.get("filename", ""), expected_files))
+    matched_predicted = sum(
+        1 for c in predicted if _file_match(c.get("filename", ""), expected_files)
+    )
     precision = matched_predicted / len(predicted)
-    matched_expected = sum(1 for e in expected_files if any(_file_match(c.get("filename", ""), [e]) for c in predicted))
+    matched_expected = sum(
+        1 for e in expected_files if any(_file_match(c.get("filename", ""), [e]) for c in predicted)
+    )
     recall = matched_expected / max(len(expected_files), 1)
     f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) else 0.0
     return precision, recall, f1
@@ -105,12 +109,23 @@ def _coerce_judge_json(text: str) -> dict:
             pass
     # Last resort: regex for pass + reason
     lower = t.lower()
-    passed = "true" in lower[lower.find("pass"):lower.find("pass") + 32] if "pass" in lower else False
+    passed = (
+        "true" in lower[lower.find("pass") : lower.find("pass") + 32] if "pass" in lower else False
+    )
     rm = re.search(r'reason["\s:]+([^"]{1,200})', t, flags=re.I)
     return {"pass": passed, "reason": rm.group(1) if rm else "could not parse judge output"}
 
 
-async def _judge(client: httpx.AsyncClient, *, base: str, key: str | None, model: str, question: str, answer: str, key_facts: list[str]) -> tuple[bool, str]:
+async def _judge(
+    client: httpx.AsyncClient,
+    *,
+    base: str,
+    key: str | None,
+    model: str,
+    question: str,
+    answer: str,
+    key_facts: list[str],
+) -> tuple[bool, str]:
     payload = {
         "model": model,
         "temperature": 0.0,
@@ -132,6 +147,7 @@ async def _judge(client: httpx.AsyncClient, *, base: str, key: str | None, model
     headers = {"Authorization": f"Bearer {key}"} if key else {}
 
     from kb.extract.llm import cache_get, cache_key, cache_put
+
     ck = cache_key(
         model=model,
         system=JUDGE_SYSTEM,
@@ -143,7 +159,9 @@ async def _judge(client: httpx.AsyncClient, *, base: str, key: str | None, model
         return bool(hit.get("pass")), str(hit.get("reason", ""))[:300]
 
     try:
-        r = await client.post(f"{base}/chat/completions", json=payload, headers=headers, timeout=120)
+        r = await client.post(
+            f"{base}/chat/completions", json=payload, headers=headers, timeout=120
+        )
         r.raise_for_status()
         body = r.json()
         content = body["choices"][0]["message"]["content"] or ""
@@ -177,14 +195,21 @@ async def _run(args: argparse.Namespace) -> int:
             try:
                 r = await client.post(
                     f"{api}/query",
-                    json={"domain": args.domain, "question": question, "scope": scope, "filters": filters},
+                    json={
+                        "domain": args.domain,
+                        "question": question,
+                        "scope": scope,
+                        "filters": filters,
+                    },
                     timeout=180,
                 )
                 r.raise_for_status()
                 out = r.json()
             except Exception as e:
                 print(f"[red]{qid} request error: {e}[/red]")
-                scores.append(Score(qid, question, tags, 0, 0, 0, False, 0.0, f"query_error: {e}", "", []))
+                scores.append(
+                    Score(qid, question, tags, 0, 0, 0, False, 0.0, f"query_error: {e}", "", [])
+                )
                 continue
 
             citations = out.get("citations", [])
@@ -192,15 +217,29 @@ async def _run(args: argparse.Namespace) -> int:
             p, rec, f1 = _citation_pr(citations, expected_files)
             ok, reason = (False, "no key_facts provided")
             if key_facts:
-                ok, reason = await _judge(client, base=ai_base, key=ai_key, model=ai_model, question=question, answer=out.get("answer", ""), key_facts=key_facts)
+                ok, reason = await _judge(
+                    client,
+                    base=ai_base,
+                    key=ai_key,
+                    model=ai_model,
+                    question=question,
+                    answer=out.get("answer", ""),
+                    key_facts=key_facts,
+                )
 
             ragas_scores = None
             if args.ragas:
                 from kb.eval.ragas import score_ragas
+
                 ragas_scores = await score_ragas(
-                    client=client, base=ai_base, key=ai_key, model=ai_model,
-                    question=question, answer=out.get("answer", ""),
-                    chunks=retrieved, key_facts=key_facts,
+                    client=client,
+                    base=ai_base,
+                    key=ai_key,
+                    model=ai_model,
+                    question=question,
+                    answer=out.get("answer", ""),
+                    chunks=retrieved,
+                    key_facts=key_facts,
                 )
 
             scores.append(
@@ -232,13 +271,20 @@ async def _run(args: argparse.Namespace) -> int:
     table.add_column("ans", justify="center")
     table.add_column("conf", justify="right")
     for s in scores:
-        table.add_row(s.qid, f"{s.citation_precision:.2f}", f"{s.citation_recall:.2f}", f"{s.citation_f1:.2f}", "✓" if s.answer_pass else "✗", f"{s.confidence:.2f}")
+        table.add_row(
+            s.qid,
+            f"{s.citation_precision:.2f}",
+            f"{s.citation_recall:.2f}",
+            f"{s.citation_f1:.2f}",
+            "✓" if s.answer_pass else "✗",
+            f"{s.confidence:.2f}",
+        )
     print(table)
 
     # Per-tag breakdown — surfaces strengths/weaknesses per question category.
     by_tag: dict[str, dict[str, float]] = {}
     for s in scores:
-        for t in (s.tags or ["untagged"]):
+        for t in s.tags or ["untagged"]:
             slot = by_tag.setdefault(t, {"n": 0, "pass": 0, "cit_f1_sum": 0.0})
             slot["n"] += 1
             slot["pass"] += 1 if s.answer_pass else 0
@@ -258,13 +304,17 @@ async def _run(args: argparse.Namespace) -> int:
     tag_tbl.add_column("pass %", justify="right")
     tag_tbl.add_column("cit F1", justify="right")
     for t, v in sorted(per_tag.items(), key=lambda x: -x[1]["n"]):
-        tag_tbl.add_row(t, str(v["n"]), f"{v['pass_rate']*100:.1f}", f"{v['mean_citation_f1']:.2f}")
+        tag_tbl.add_row(
+            t, str(v["n"]), f"{v['pass_rate'] * 100:.1f}", f"{v['mean_citation_f1']:.2f}"
+        )
     print(tag_tbl)
 
     summary = {
         "domain": args.domain,
         "n": len(scores),
-        "mean_citation_precision": statistics.mean(s.citation_precision for s in scores) if scores else 0,
+        "mean_citation_precision": statistics.mean(s.citation_precision for s in scores)
+        if scores
+        else 0,
         "mean_citation_recall": statistics.mean(s.citation_recall for s in scores) if scores else 0,
         "mean_citation_f1": statistics.mean(s.citation_f1 for s in scores) if scores else 0,
         "answer_pass_rate": sum(1 for s in scores if s.answer_pass) / max(len(scores), 1),
@@ -274,10 +324,10 @@ async def _run(args: argparse.Namespace) -> int:
     }
     if args.ragas and scores:
         summary["ragas"] = {
-            "faithfulness":      statistics.mean(s.ragas_faithfulness for s in scores),
+            "faithfulness": statistics.mean(s.ragas_faithfulness for s in scores),
             "context_precision": statistics.mean(s.ragas_context_precision for s in scores),
-            "context_recall":    statistics.mean(s.ragas_context_recall for s in scores),
-            "answer_relevance":  statistics.mean(s.ragas_answer_relevance for s in scores),
+            "context_recall": statistics.mean(s.ragas_context_recall for s in scores),
+            "answer_relevance": statistics.mean(s.ragas_answer_relevance for s in scores),
         }
         ragas_tbl = Table(title="RAGAS-style metrics")
         ragas_tbl.add_column("metric", style="cyan")
@@ -298,7 +348,11 @@ def main() -> None:
     p.add_argument("--domain", required=True)
     p.add_argument("--dataset", required=True)
     p.add_argument("--output", default="eval_report.json")
-    p.add_argument("--ragas", action="store_true", help="Compute RAGAS-style metrics (faithfulness, context_precision, context_recall, answer_relevance)")
+    p.add_argument(
+        "--ragas",
+        action="store_true",
+        help="Compute RAGAS-style metrics (faithfulness, context_precision, context_recall, answer_relevance)",
+    )
     args = p.parse_args()
     raise SystemExit(asyncio.run(_run(args)))
 

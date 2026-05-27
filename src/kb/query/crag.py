@@ -45,7 +45,10 @@ def _format_chunks(chunks: list[dict[str, Any]], max_n: int = 6, max_chars: int 
 
 
 async def evaluate_retrieval(
-    *, question: str, chunks: list[dict[str, Any]], model: str | None = None,
+    *,
+    question: str,
+    chunks: list[dict[str, Any]],
+    model: str | None = None,
 ) -> tuple[float, str]:
     """Score retrieval quality. Returns (score, reason). On failure: (1.0, "skipped")."""
     if not chunks:

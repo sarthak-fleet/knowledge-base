@@ -15,9 +15,11 @@ def get_store() -> VectorStore:
     s = get_settings()
     if s.vector_store == "qdrant":
         from kb.vector.qdrant_store import QdrantStore
+
         _store = QdrantStore()
     elif s.vector_store == "pgvector":
         from kb.vector.pgvector_store import PgvectorStore
+
         _store = PgvectorStore()
     else:
         raise RuntimeError(f"unknown vector store: {s.vector_store}")

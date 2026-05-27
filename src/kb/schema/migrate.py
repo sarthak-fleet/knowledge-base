@@ -37,5 +37,7 @@ async def reindex_domain_with_schema(*, domain: str, schema_id: str) -> int:
             stage="extract",  # skip parse: cache will be hit
         )
         enq += 1
-    logger.info("schema migrate: enqueued %d files for domain %s under schema %s", enq, domain, schema_id)
+    logger.info(
+        "schema migrate: enqueued %d files for domain %s under schema %s", enq, domain, schema_id
+    )
     return enq

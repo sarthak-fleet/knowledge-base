@@ -33,6 +33,7 @@ def install_uvloop() -> None:
     """
     try:
         import uvloop
+
         uvloop.install()
     except (ImportError, RuntimeError):
         # ImportError on Windows; RuntimeError if the loop is already running.

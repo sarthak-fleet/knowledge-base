@@ -24,6 +24,7 @@ _sparse_disabled = False
 @lru_cache(maxsize=1)
 def _dense():
     from fastembed import TextEmbedding
+
     s = get_settings()
     return TextEmbedding(model_name=s.embed_model)
 
@@ -31,6 +32,7 @@ def _dense():
 @lru_cache(maxsize=1)
 def _sparse():
     from fastembed import SparseTextEmbedding
+
     s = get_settings()
     return SparseTextEmbedding(model_name=s.sparse_model)
 
@@ -38,6 +40,7 @@ def _sparse():
 async def embed_dense(texts: list[str]) -> list[list[float]]:
     def _do() -> list[list[float]]:
         return [list(map(float, v)) for v in _dense().embed(texts)]
+
     return await asyncio.to_thread(_do)
 
 
@@ -69,7 +72,9 @@ async def embed_sparse(texts: list[str]) -> list[dict[str, list]]:
     def _do() -> list[dict[str, list]]:
         out = []
         for sv in _sparse().embed(texts):
-            out.append({"indices": list(map(int, sv.indices)), "values": list(map(float, sv.values))})
+            out.append(
+                {"indices": list(map(int, sv.indices)), "values": list(map(float, sv.values))}
+            )
         return out
 
     try:

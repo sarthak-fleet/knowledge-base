@@ -105,14 +105,16 @@ logger = structlog.get_logger("kb.query.duckdb")
 
 @dataclass
 class DuckResult:
-    rows: list[dict[str, Any]]      # query result rows
+    rows: list[dict[str, Any]]  # query result rows
     columns: list[str]
-    sql: str                        # the LLM-generated SQL we ran
+    sql: str  # the LLM-generated SQL we ran
     mentions: list[dict[str, Any]]  # provenance for the cited entities
-    summary: str                    # natural-language summary the synthesizer can cite
+    summary: str  # natural-language summary the synthesizer can cite
 
 
-def _build_duckdb_from_entities(entities_by_type: dict[str, list[dict]]) -> duckdb.DuckDBPyConnection:
+def _build_duckdb_from_entities(
+    entities_by_type: dict[str, list[dict]],
+) -> duckdb.DuckDBPyConnection:
     """Materialise the entities table into DuckDB views, one per entity type.
 
     For each entity type, we expose:
@@ -121,6 +123,7 @@ def _build_duckdb_from_entities(entities_by_type: dict[str, list[dict]]) -> duck
     """
     import duckdb  # lazy-import; see top-of-file comment
     import pandas as pd
+
     conn = duckdb.connect(":memory:")
     for etype, rows in entities_by_type.items():
         if not rows:
@@ -160,7 +163,9 @@ def _build_duckdb_from_entities(entities_by_type: dict[str, list[dict]]) -> duck
 def _list_views(conn: duckdb.DuckDBPyConnection) -> dict[str, list[str]]:
     """Return {view_name: [column_names]} so we can describe the schema to the LLM."""
     out: dict[str, list[str]] = {}
-    for row in conn.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='main'").fetchall():
+    for row in conn.execute(
+        "SELECT table_name FROM information_schema.tables WHERE table_schema='main'"
+    ).fetchall():
         name = row[0]
         cols = conn.execute(f'DESCRIBE "{name}"').fetchall()
         out[name] = [c[0] for c in cols]
@@ -195,7 +200,9 @@ def _sql_user_prompt(question: str, views: dict[str, list[str]]) -> str:
     return "\n".join(lines)
 
 
-async def maybe_duckdb_answer(*, intent: QueryIntent, domain: str, question: str) -> DuckResult | None:
+async def maybe_duckdb_answer(
+    *, intent: QueryIntent, domain: str, question: str
+) -> DuckResult | None:
     """Try the DuckDB route. Returns None if it finds nothing or SQL fails.
 
     The caller decides when to fire (intent.kind in {aggregate,compare} OR a
@@ -255,7 +262,9 @@ async def maybe_duckdb_answer(*, intent: QueryIntent, domain: str, question: str
                         r["fields"] = fields
                         backfilled += 1
         if backfilled:
-            logger.info("duckdb: backfilled ticker on %d entities via filename fallback", backfilled)
+            logger.info(
+                "duckdb: backfilled ticker on %d entities via filename fallback", backfilled
+            )
 
     conn = _build_duckdb_from_entities(entities_by_type)
     try:

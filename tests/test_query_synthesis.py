@@ -18,7 +18,7 @@ def test_cite_re_ignores_text() -> None:
 def test_format_sources_includes_index_and_page() -> None:
     hits = [
         {"text": "alpha", "metadata": {"file_id": "abcdef0123", "page_start": 5, "page_end": 5}},
-        {"text": "beta",  "metadata": {"file_id": "ffffffffff", "page_start": 8, "page_end": 10}},
+        {"text": "beta", "metadata": {"file_id": "ffffffffff", "page_start": 8, "page_end": 10}},
     ]
     out = _format_sources(hits)
     assert "[1]" in out and "[2]" in out
@@ -31,5 +31,6 @@ def test_trailing_confidence_json_pattern() -> None:
     m = re.search(r"\{[^{}]*confidence[^{}]*\}\s*$", sample)
     assert m
     import json
+
     j = json.loads(m.group(0))
     assert j["confidence"] == 0.83

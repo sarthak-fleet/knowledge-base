@@ -30,9 +30,9 @@ class ExtractedRecord:
     """One LLM-extracted record before entity resolution."""
 
     entity_type: str
-    fields: dict[str, Any]            # schema fields minus _provenance
-    provenance: dict[str, Any]        # page_start, page_end, excerpt, element_ids, confidence
-    window: tuple[int, int]           # source window for traceability
+    fields: dict[str, Any]  # schema fields minus _provenance
+    provenance: dict[str, Any]  # page_start, page_end, excerpt, element_ids, confidence
+    window: tuple[int, int]  # source window for traceability
 
 
 @dataclass
@@ -80,8 +80,8 @@ async def _extract_window(
         pipeline.get(cfg, "prompts.extract_system", "")
         + _vocabulary_block(schema)
         + "\n\nReturn entities ONLY when the context supports them. "
-          "For every record, fill _provenance with page numbers and a verbatim excerpt (<=400 chars) "
-          "from the context that supports the record."
+        "For every record, fill _provenance with page numbers and a verbatim excerpt (<=400 chars) "
+        "from the context that supports the record."
     )
     user_prompt = _render_window(elements, window)
     floor: float = float(pipeline.get(cfg, "extract.confidence_floor", 0.4))
@@ -169,6 +169,7 @@ async def extract_for_file(*, file_id: str, domain: str) -> ExtractionResult:
     # The LLM extractor often misses dense tabular content; this is the safety net.
     if file_row["filename"].lower().endswith((".xlsx", ".xls")):
         from kb.extract.xlsx_bridge import extract_financial_metrics_from_xlsx
+
         # Reconstruct rows from elements: each ListItem element is one row;
         # the Title element is the header.
         rows: list[list[str]] = []
@@ -193,16 +194,23 @@ async def extract_for_file(*, file_id: str, domain: str) -> ExtractionResult:
                 # Grok Issue 4: defensive default — any future or direct caller
                 # that omits `_provenance` no longer raises KeyError mid-ingest.
                 prov = rec.pop("_provenance", {}) or {}
-                records.append(ExtractedRecord(
-                    entity_type="FinancialMetric",
-                    fields=rec,
-                    provenance=prov,
-                    window=(0, 0),
-                ))
+                records.append(
+                    ExtractedRecord(
+                        entity_type="FinancialMetric",
+                        fields=rec,
+                        provenance=prov,
+                        window=(0, 0),
+                    )
+                )
             logger.info("file %s: xlsx_bridge added rows for tabular extraction", file_id)
 
     settings = get_settings()  # noqa: F841 (kept for symmetry / future tuning)
-    logger.info("file %s: extracted %d candidate records across %d windows", file_id, len(records), len(tasks))
+    logger.info(
+        "file %s: extracted %d candidate records across %d windows",
+        file_id,
+        len(records),
+        len(tasks),
+    )
     return ExtractionResult(
         file_id=file_id,
         schema_id=schema_row["id"],

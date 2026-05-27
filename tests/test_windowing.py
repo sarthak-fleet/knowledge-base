@@ -5,7 +5,15 @@ from kb.parse import Element
 
 
 def _el(page: int, i: int) -> Element:
-    return Element(id=f"el-{i}", type="NarrativeText", text=f"page {page} text", page=page, bbox=None, parent_id=None, metadata={})
+    return Element(
+        id=f"el-{i}",
+        type="NarrativeText",
+        text=f"page {page} text",
+        page=page,
+        bbox=None,
+        parent_id=None,
+        metadata={},
+    )
 
 
 def test_paged_windows_cover_all_pages_with_overlap() -> None:

@@ -42,14 +42,18 @@ class PgvectorStore(VectorStore):
         if hashes:
             async with session() as s:
                 rows = (
-                    await s.execute(
-                        text(
-                            "SELECT id, content_hash, file_id, COALESCE(also_in_files, '{}') AS also "
-                            "FROM chunks WHERE domain = :d AND content_hash = ANY(:hashes)"
-                        ),
-                        {"d": domain, "hashes": list(set(hashes))},
+                    (
+                        await s.execute(
+                            text(
+                                "SELECT id, content_hash, file_id, COALESCE(also_in_files, '{}') AS also "
+                                "FROM chunks WHERE domain = :d AND content_hash = ANY(:hashes)"
+                            ),
+                            {"d": domain, "hashes": list(set(hashes))},
+                        )
                     )
-                ).mappings().all()
+                    .mappings()
+                    .all()
+                )
                 for r in rows:
                     existing[r["content_hash"]] = dict(r)
 
@@ -108,7 +112,10 @@ class PgvectorStore(VectorStore):
 
     async def delete_by_file(self, domain: str, file_id: str) -> None:
         async with session() as s:
-            await s.execute(text("DELETE FROM chunks WHERE domain = :d AND file_id = :f"), {"d": domain, "f": file_id})
+            await s.execute(
+                text("DELETE FROM chunks WHERE domain = :d AND file_id = :f"),
+                {"d": domain, "f": file_id},
+            )
             await s.commit()
 
     async def hybrid_search(
@@ -136,9 +143,10 @@ class PgvectorStore(VectorStore):
 
         async with session() as s:
             dense_rows = (
-                await s.execute(
-                    text(
-                        f"""
+                (
+                    await s.execute(
+                        text(
+                            f"""
                         SELECT id::text, text, file_id::text, entity_id::text, parent_chunk::text,
                                1 - (embedding <=> CAST(:qv AS vector)) AS score
                         FROM chunks
@@ -146,14 +154,18 @@ class PgvectorStore(VectorStore):
                         ORDER BY embedding <=> CAST(:qv AS vector)
                         LIMIT :k
                         """
-                    ),
-                    {**params, "qv": _vec_literal(qv), "k": top_k_dense},
+                        ),
+                        {**params, "qv": _vec_literal(qv), "k": top_k_dense},
+                    )
                 )
-            ).mappings().all()
+                .mappings()
+                .all()
+            )
             lex_rows = (
-                await s.execute(
-                    text(
-                        f"""
+                (
+                    await s.execute(
+                        text(
+                            f"""
                         SELECT id::text, text, file_id::text, entity_id::text, parent_chunk::text,
                                ts_rank(tsv, plainto_tsquery('english', :q)) AS score
                         FROM chunks
@@ -161,10 +173,13 @@ class PgvectorStore(VectorStore):
                         ORDER BY score DESC
                         LIMIT :k
                         """
-                    ),
-                    {**params, "q": query, "k": top_k_sparse},
+                        ),
+                        {**params, "q": query, "k": top_k_sparse},
+                    )
                 )
-            ).mappings().all()
+                .mappings()
+                .all()
+            )
 
         # Reciprocal Rank Fusion
         ranks: dict[str, float] = {}

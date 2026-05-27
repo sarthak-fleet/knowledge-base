@@ -64,8 +64,7 @@ async def list_entities_matching(
 
     sql = (
         "SELECT id::text, type, identity_key, display_name, fields, parent_id::text "
-        "FROM entities WHERE " + " AND ".join(conds) +
-        " ORDER BY updated_at DESC LIMIT :_limit"
+        "FROM entities WHERE " + " AND ".join(conds) + " ORDER BY updated_at DESC LIMIT :_limit"
     )
     async with session() as s:
         rows = (await s.execute(text(sql), params)).mappings().all()
@@ -78,9 +77,10 @@ async def mentions_for(entity_ids: list[str]) -> list[dict[str, Any]]:
         return []
     async with session() as s:
         rows = (
-            await s.execute(
-                text(
-                    """
+            (
+                await s.execute(
+                    text(
+                        """
                     SELECT m.entity_id::text, m.file_id::text, f.filename,
                            p.page_start, p.page_end, p.excerpt
                     FROM entity_mentions m
@@ -90,10 +90,13 @@ async def mentions_for(entity_ids: list[str]) -> list[dict[str, Any]]:
                     ORDER BY m.created_at DESC
                     LIMIT 200
                     """
-                ),
-                {"ids": entity_ids},
+                    ),
+                    {"ids": entity_ids},
+                )
             )
-        ).mappings().all()
+            .mappings()
+            .all()
+        )
         return [dict(r) for r in rows]
 
 
@@ -148,14 +151,21 @@ async def maybe_structured_answer(
         filters["value"] = (threshold[0], threshold[1])
 
     entities = await list_entities_matching(
-        domain=domain, entity_type=et, filters=filters, limit=50,
+        domain=domain,
+        entity_type=et,
+        filters=filters,
+        limit=50,
     )
     if not entities:
         return None
     mentions = await mentions_for([e["id"] for e in entities])
-    summary_lines = [f"Found {len(entities)} {et or 'entities'} matching filters {json.dumps(filters)}:"]
+    summary_lines = [
+        f"Found {len(entities)} {et or 'entities'} matching filters {json.dumps(filters)}:"
+    ]
     for e in entities[:10]:
-        summary_lines.append(f"  - {e['display_name'] or e['identity_key']}: {json.dumps(e['fields'])}")
+        summary_lines.append(
+            f"  - {e['display_name'] or e['identity_key']}: {json.dumps(e['fields'])}"
+        )
     return {
         "entities": entities,
         "mentions": mentions,

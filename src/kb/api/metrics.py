@@ -30,7 +30,9 @@ def record_query(latency_ms: int, token_total: int, stages: list[dict[str, Any]]
     _queries_total.inc()
     _tokens.observe(float(token_total or 0))
     for s in stages or []:
-        _stage_latency.labels(stage=s.get("stage", "unknown")).observe(float(s.get("latency_ms", 0)))
+        _stage_latency.labels(stage=s.get("stage", "unknown")).observe(
+            float(s.get("latency_ms", 0))
+        )
 
 
 def record_ingest(file_count: int) -> None:

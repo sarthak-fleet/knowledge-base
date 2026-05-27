@@ -49,6 +49,7 @@ async def init_db(dsn: str | None = None) -> dict[str, int]:
         await init_engine(dsn)
     else:
         from kb.config import get_settings
+
         await init_engine(get_settings().postgres_dsn)
     mdir = _migrations_dir()
     files = sorted(mdir.glob("*.sql"))

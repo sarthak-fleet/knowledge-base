@@ -11,7 +11,9 @@ from kb.schema.model import DomainSchema
 def _sec_schema() -> DomainSchema:
     from pathlib import Path
 
-    spec = yaml.safe_load((Path(__file__).resolve().parents[1] / "domains/sec/schema.yaml").read_text())
+    spec = yaml.safe_load(
+        (Path(__file__).resolve().parents[1] / "domains/sec/schema.yaml").read_text()
+    )
     s = DomainSchema.model_validate(spec)
     s.validate_self()
     return s

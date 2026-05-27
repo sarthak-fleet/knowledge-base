@@ -32,7 +32,9 @@ def schema_apply(path: Path) -> None:
     from kb.schema.loader import apply_schema_file
 
     result = asyncio.run(apply_schema_file(path))
-    print(f"[green]Applied[/green] schema [bold]{result.name}[/bold] v{result.version} for domain [bold]{result.domain}[/bold]")
+    print(
+        f"[green]Applied[/green] schema [bold]{result.name}[/bold] v{result.version} for domain [bold]{result.domain}[/bold]"
+    )
 
 
 @schema_app.command("list")

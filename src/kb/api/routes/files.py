@@ -30,7 +30,9 @@ async def upload_file(
     blob = await file.read()
     if not blob:
         raise HTTPException(400, "empty file")
-    object_key, content_hash = await put_raw_file(domain=domain, filename=file.filename or "file", blob=blob)
+    object_key, content_hash = await put_raw_file(
+        domain=domain, filename=file.filename or "file", blob=blob
+    )
     row = await repo.register_file(
         domain=domain,
         filename=file.filename or "file",

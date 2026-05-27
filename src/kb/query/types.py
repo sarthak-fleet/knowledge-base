@@ -44,8 +44,8 @@ class QueryIn(BaseModel):
     domain: str
     question: str
     session_id: str | None = None
-    scope: dict | None = None      # e.g. {"entity_id": "..."} or {"parent_id": "..."}
-    filters: dict | None = None    # e.g. {"date_gte": "2024-01-01", "filing_type": "10-K"}
+    scope: dict | None = None  # e.g. {"entity_id": "..."} or {"parent_id": "..."}
+    filters: dict | None = None  # e.g. {"date_gte": "2024-01-01", "filing_type": "10-K"}
 
 
 class QueryOut(BaseModel):

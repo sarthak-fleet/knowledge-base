@@ -51,6 +51,7 @@ def make_client() -> AsyncOpenAI:
 # (model, system, user, params) and written atomically.
 # --------------------------------------------------------------------------
 
+
 def _cache_dir() -> Path | None:
     s = get_settings()
     if not s.llm_cache_dir:
@@ -203,6 +204,7 @@ def _instructor_client() -> instructor.AsyncInstructor:
     `extra_body` plumb continue to work.
     """
     import instructor
+
     return instructor.from_openai(make_client(), mode=instructor.Mode.TOOLS)
 
 
@@ -231,7 +233,9 @@ async def chat_structured(
 
     schema_dict = response_model.model_json_schema()
     ck = cache_key(
-        model=mdl, system=system, user=user,
+        model=mdl,
+        system=system,
+        user=user,
         params={"kind": "structured", "schema": schema_dict, "t": temperature, "max": max_tokens},
     )
     hit = cache_get(ck)
@@ -294,7 +298,9 @@ async def chat_json(
 
     # Cache lookup (eval replay).
     ck = cache_key(
-        model=mdl, system=system, user=user,
+        model=mdl,
+        system=system,
+        user=user,
         params={"kind": "json", "schema": schema, "t": temperature, "max": max_tokens},
     )
     hit = cache_get(ck)
@@ -347,7 +353,11 @@ async def chat_json(
                 resp = await client.chat.completions.create(
                     model=mdl,
                     messages=[
-                        {"role": "system", "content": system + "\n\nReturn ONLY a JSON object matching the schema."},
+                        {
+                            "role": "system",
+                            "content": system
+                            + "\n\nReturn ONLY a JSON object matching the schema.",
+                        },
                         {"role": "user", "content": user + "\n\nSchema: " + json.dumps(schema)},
                     ],
                     response_format={"type": "json_object"},
@@ -367,9 +377,20 @@ async def chat_json(
             return {}
 
 
-async def chat_text(*, system: str, user: str, model: str | None = None, temperature: float = 0.2, max_tokens: int = 1024) -> str:
+async def chat_text(
+    *,
+    system: str,
+    user: str,
+    model: str | None = None,
+    temperature: float = 0.2,
+    max_tokens: int = 1024,
+) -> str:
     text, _usage = await chat_text_with_usage(
-        system=system, user=user, model=model, temperature=temperature, max_tokens=max_tokens,
+        system=system,
+        user=user,
+        model=model,
+        temperature=temperature,
+        max_tokens=max_tokens,
     )
     return text
 
@@ -394,7 +415,9 @@ async def chat_text_with_usage(
     mdl = model or s.synthesize_model or s.ai_model
 
     ck = cache_key(
-        model=mdl, system=system, user=user,
+        model=mdl,
+        system=system,
+        user=user,
         params={"kind": "text", "t": temperature, "max": max_tokens},
     )
     hit = cache_get(ck)
@@ -403,7 +426,10 @@ async def chat_text_with_usage(
         # across replays; if the cached payload predates that field we degrade
         # gracefully.
         return hit.get("text", ""), hit.get("usage") or {
-            "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "model": mdl,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "model": mdl,
         }
 
     try:

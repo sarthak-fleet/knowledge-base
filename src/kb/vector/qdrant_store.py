@@ -23,7 +23,9 @@ def _collection(domain: str) -> str:
 class QdrantStore(VectorStore):
     def __init__(self) -> None:
         s = get_settings()
-        self._client = AsyncQdrantClient(url=s.qdrant_url, api_key=s.qdrant_api_key or None, prefer_grpc=False)
+        self._client = AsyncQdrantClient(
+            url=s.qdrant_url, api_key=s.qdrant_api_key or None, prefer_grpc=False
+        )
         # Honour KB_EMBED_DIM so swapping embed model (bge-base = 768, etc.) just works.
         self._dim = int(getattr(s, "embed_dim", 384))
         self._ensured: set[str] = set()
@@ -61,7 +63,11 @@ class QdrantStore(VectorStore):
         held = False
         try:
             async with _db_session() as s:
-                got = (await s.execute(_sql("SELECT pg_try_advisory_lock(:k)"), {"k": self._VEC_BOOTSTRAP_LOCK_KEY})).scalar()
+                got = (
+                    await s.execute(
+                        _sql("SELECT pg_try_advisory_lock(:k)"), {"k": self._VEC_BOOTSTRAP_LOCK_KEY}
+                    )
+                ).scalar()
                 held = bool(got)
         except Exception as e:
             # If the DB isn't available we still want to make a best effort
@@ -82,12 +88,20 @@ class QdrantStore(VectorStore):
                 try:
                     await self._client.create_collection(
                         collection_name=name,
-                        vectors_config={"dense": qm.VectorParams(size=self._dim, distance=qm.Distance.COSINE)},
-                        sparse_vectors_config={"sparse": qm.SparseVectorParams(index=qm.SparseIndexParams(on_disk=False))},
+                        vectors_config={
+                            "dense": qm.VectorParams(size=self._dim, distance=qm.Distance.COSINE)
+                        },
+                        sparse_vectors_config={
+                            "sparse": qm.SparseVectorParams(
+                                index=qm.SparseIndexParams(on_disk=False)
+                            )
+                        },
                     )
                     for fld in ("file_id", "entity_id", "parent_id", "entity_type", "content_hash"):
                         await self._client.create_payload_index(
-                            name, field_name=fld, field_schema=qm.PayloadSchemaType.KEYWORD,
+                            name,
+                            field_name=fld,
+                            field_schema=qm.PayloadSchemaType.KEYWORD,
                         )
                     logger.info("created qdrant collection %s", name)
                     async with self._lock:
@@ -104,7 +118,10 @@ class QdrantStore(VectorStore):
             if held:
                 try:
                     async with _db_session() as s:
-                        await s.execute(_sql("SELECT pg_advisory_unlock(:k)"), {"k": self._VEC_BOOTSTRAP_LOCK_KEY})
+                        await s.execute(
+                            _sql("SELECT pg_advisory_unlock(:k)"),
+                            {"k": self._VEC_BOOTSTRAP_LOCK_KEY},
+                        )
                 except Exception:
                     pass
 
@@ -150,7 +167,11 @@ class QdrantStore(VectorStore):
             scroll, _ = await self._client.scroll(
                 collection_name=_collection(domain),
                 scroll_filter=qm.Filter(
-                    must=[qm.FieldCondition(key="content_hash", match=qm.MatchAny(any=list(set(hashes))))]
+                    must=[
+                        qm.FieldCondition(
+                            key="content_hash", match=qm.MatchAny(any=list(set(hashes)))
+                        )
+                    ]
                 ),
                 limit=len(hashes) * 2,
                 with_payload=True,
@@ -185,7 +206,9 @@ class QdrantStore(VectorStore):
             )
 
         if not new_chunks:
-            logger.info("dedup: %d chunks merged into existing points (no new vectors)", len(to_update))
+            logger.info(
+                "dedup: %d chunks merged into existing points (no new vectors)", len(to_update)
+            )
             return
 
         # Use text_to_embed() so Contextual Retrieval prefixes ride only on the
@@ -214,10 +237,13 @@ class QdrantStore(VectorStore):
             await self._client.delete(
                 collection_name=_collection(domain),
                 points_selector=qm.FilterSelector(
-                    filter=qm.Filter(must=[qm.FieldCondition(key="file_id", match=qm.MatchValue(value=file_id))])
+                    filter=qm.Filter(
+                        must=[qm.FieldCondition(key="file_id", match=qm.MatchValue(value=file_id))]
+                    )
                 ),
             )
             return None
+
         await self._ensure_and_retry_op(domain, _op)
 
     @staticmethod

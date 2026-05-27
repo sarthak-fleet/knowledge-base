@@ -87,7 +87,9 @@ async def _ensure_schema(*, api: str) -> None:
         schema_path = Path(__file__).resolve().parents[3] / "domains/sec/schema.yaml"
     spec = yaml.safe_load(schema_path.read_text())
     async with httpx.AsyncClient(timeout=60) as client:
-        r = await client.post(f"{api}/schemas", json={"domain": "sec", "name": spec["name"], "spec": spec})
+        r = await client.post(
+            f"{api}/schemas", json={"domain": "sec", "name": spec["name"], "spec": spec}
+        )
         r.raise_for_status()
         print(f"[green]schema applied[/green] {r.json()}")
 
@@ -118,7 +120,9 @@ async def _main() -> int:
     print(f"[green]ingested {len(pulled)} edgar docs[/green]")
 
     if not pulled:
-        print("[yellow]No EDGAR docs ingested (SEC_USER_AGENT may be missing). Continuing with XLSX-only.[/yellow]")
+        print(
+            "[yellow]No EDGAR docs ingested (SEC_USER_AGENT may be missing). Continuing with XLSX-only.[/yellow]"
+        )
 
     # 2) Add a digital PDF + scanned (image-only) PDF + summary XLSX.
     # Digital PDF: real EDGAR content rendered to a PDF with a text layer.
@@ -139,28 +143,34 @@ async def _main() -> int:
         "operations would have a material adverse effect on our business."
     )
     digital_pdf = _text_to_digital_pdf(sample_text, title="NVDA-RiskFactors-Sample")
-    extras.append(IngestedDoc(
-        filename="NVDA_riskfactors_sample_digital.pdf",
-        bytes_=digital_pdf,
-        mime="application/pdf",
-        metadata={"source": "sample", "format": "digital_pdf"},
-    ))
+    extras.append(
+        IngestedDoc(
+            filename="NVDA_riskfactors_sample_digital.pdf",
+            bytes_=digital_pdf,
+            mime="application/pdf",
+            metadata={"source": "sample", "format": "digital_pdf"},
+        )
+    )
     try:
         scanned = _scan_a_pdf(digital_pdf)
-        extras.append(IngestedDoc(
-            filename="NVDA_riskfactors_sample_scanned.pdf",
-            bytes_=scanned,
-            mime="application/pdf",
-            metadata={"source": "sample", "format": "scanned_pdf"},
-        ))
+        extras.append(
+            IngestedDoc(
+                filename="NVDA_riskfactors_sample_scanned.pdf",
+                bytes_=scanned,
+                mime="application/pdf",
+                metadata={"source": "sample", "format": "scanned_pdf"},
+            )
+        )
     except Exception as e:
         print(f"[yellow]scanned variant skipped: {e}[/yellow]")
 
-    extras.append(IngestedDoc(
-        filename="summary_financials.xlsx",
-        bytes_=_build_summary_xlsx(),
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    ))
+    extras.append(
+        IngestedDoc(
+            filename="summary_financials.xlsx",
+            bytes_=_build_summary_xlsx(),
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+    )
     if extras:
         upload = build_source("upload", docs=extras)
         await ingest_source(api_base=api, domain="sec", source=upload)

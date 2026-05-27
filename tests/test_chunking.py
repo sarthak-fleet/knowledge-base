@@ -5,11 +5,19 @@ from kb.vector.chunking import build_chunks
 
 
 def _el(page: int, i: int, text: str) -> Element:
-    return Element(id=f"el-{i}", type="NarrativeText", text=text, page=page, bbox=None, parent_id=None, metadata={})
+    return Element(
+        id=f"el-{i}",
+        type="NarrativeText",
+        text=text,
+        page=page,
+        bbox=None,
+        parent_id=None,
+        metadata={},
+    )
 
 
 def test_chunks_have_parents_and_pages() -> None:
-    text = "Sentence one. " * 80   # forces multiple parents
+    text = "Sentence one. " * 80  # forces multiple parents
     elements = [_el(1, i, text) for i in range(5)]
     parents, children = build_chunks(elements, parent_size=400, child_size=100, overlap=0)
     assert parents and children

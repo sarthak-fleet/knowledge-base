@@ -12,5 +12,5 @@ def test_defaults_load() -> None:
 
 def test_sec_override_applies() -> None:
     cfg = pipeline.pipeline_config("sec")
-    assert pipeline.get(cfg, "extract.window_pages") == 12   # override
-    assert pipeline.get(cfg, "chunk.parent_size") == 2048     # inherited
+    assert pipeline.get(cfg, "extract.window_pages") == 12  # override
+    assert pipeline.get(cfg, "chunk.parent_size") == 2048  # inherited

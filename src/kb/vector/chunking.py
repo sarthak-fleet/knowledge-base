@@ -147,14 +147,16 @@ async def build_chunks_semantic(
     for p in parents:
         pieces = await _semantic_split(p.text, child_size)
         for piece in pieces:
-            children.append(HChunk(
-                text=piece,
-                page_start=p.page_start,
-                page_end=p.page_end,
-                parent_id=p.id,
-                element_ids=p.element_ids,
-                metadata={**p.metadata, "parent_chunk_id": p.id, "semantic": True},
-            ))
+            children.append(
+                HChunk(
+                    text=piece,
+                    page_start=p.page_start,
+                    page_end=p.page_end,
+                    parent_id=p.id,
+                    element_ids=p.element_ids,
+                    metadata={**p.metadata, "parent_chunk_id": p.id, "semantic": True},
+                )
+            )
 
     if overlap > 0 and len(children) > 1:
         for i in range(1, len(children)):

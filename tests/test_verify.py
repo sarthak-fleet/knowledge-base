@@ -36,7 +36,8 @@ def test_summary_empty() -> None:
 
 def test_confidence_downgraded_when_unsupported() -> None:
     val, reason = adjust_confidence_with_verification(
-        0.95, "synthesizer confident",
+        0.95,
+        "synthesizer confident",
         {"checked": 4, "supported": 2, "pass_rate": 0.5},
     )
     assert val == 0.5  # pulled to the pass_rate floor
@@ -45,7 +46,8 @@ def test_confidence_downgraded_when_unsupported() -> None:
 
 def test_confidence_preserved_when_all_supported() -> None:
     val, reason = adjust_confidence_with_verification(
-        0.9, "ok",
+        0.9,
+        "ok",
         {"checked": 2, "supported": 2, "pass_rate": 1.0},
     )
     assert val == 0.9
@@ -54,7 +56,9 @@ def test_confidence_preserved_when_all_supported() -> None:
 
 def test_confidence_unchanged_when_no_checks() -> None:
     val, reason = adjust_confidence_with_verification(
-        0.7, "ok", {"checked": 0, "supported": 0, "pass_rate": None},
+        0.7,
+        "ok",
+        {"checked": 0, "supported": 0, "pass_rate": None},
     )
     assert val == 0.7
     assert reason == "ok"

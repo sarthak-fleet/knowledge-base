@@ -14,7 +14,7 @@ router = APIRouter(prefix="/ingest", tags=["ingest"])
 class RunIn(BaseModel):
     domain: str
     file_ids: list[str] | None = None  # None = all pending in domain
-    force: bool = False                 # re-run even if already indexed
+    force: bool = False  # re-run even if already indexed
 
 
 class RunOut(BaseModel):

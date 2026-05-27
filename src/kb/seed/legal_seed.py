@@ -29,12 +29,12 @@ logger = structlog.get_logger("kb.seed.legal")
 
 # SPDX license texts as canonical sources (raw text from the SPDX license list).
 LICENSE_URLS = {
-    "MIT.txt":          "https://raw.githubusercontent.com/spdx/license-list-data/main/text/MIT.txt",
-    "Apache-2.0.txt":   "https://raw.githubusercontent.com/spdx/license-list-data/main/text/Apache-2.0.txt",
+    "MIT.txt": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/MIT.txt",
+    "Apache-2.0.txt": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/Apache-2.0.txt",
     "GPL-3.0-only.txt": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/GPL-3.0-only.txt",
     "BSD-3-Clause.txt": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/BSD-3-Clause.txt",
-    "MPL-2.0.txt":      "https://raw.githubusercontent.com/spdx/license-list-data/main/text/MPL-2.0.txt",
-    "ISC.txt":          "https://raw.githubusercontent.com/spdx/license-list-data/main/text/ISC.txt",
+    "MPL-2.0.txt": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/MPL-2.0.txt",
+    "ISC.txt": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/ISC.txt",
 }
 
 
@@ -58,7 +58,9 @@ async def _ensure_schema(*, api: str) -> None:
         schema_path = Path(__file__).resolve().parents[3] / "domains/legal/schema.yaml"
     spec = yaml.safe_load(schema_path.read_text())
     async with httpx.AsyncClient(timeout=60) as client:
-        r = await client.post(f"{api}/schemas", json={"domain": "legal", "name": spec["name"], "spec": spec})
+        r = await client.post(
+            f"{api}/schemas", json={"domain": "legal", "name": spec["name"], "spec": spec}
+        )
         r.raise_for_status()
         print(f"[green]schema applied[/green] {r.json()}")
 
@@ -70,12 +72,14 @@ async def _fetch_licenses() -> list[IngestedDoc]:
             try:
                 r = await client.get(url)
                 r.raise_for_status()
-                out.append(IngestedDoc(
-                    filename=name,
-                    bytes_=r.content,
-                    mime="text/plain",
-                    metadata={"source": "spdx", "url": url},
-                ))
+                out.append(
+                    IngestedDoc(
+                        filename=name,
+                        bytes_=r.content,
+                        mime="text/plain",
+                        metadata={"source": "spdx", "url": url},
+                    )
+                )
                 print(f"[green]downloaded[/green] {name} ({len(r.content)} bytes)")
             except Exception as e:
                 print(f"[yellow]skip {name}: {e}[/yellow]")

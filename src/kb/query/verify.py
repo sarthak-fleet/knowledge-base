@@ -59,7 +59,9 @@ def _build_user_prompt(answer: str, sources: list[dict[str, Any]]) -> str:
     return "\n".join(blocks)
 
 
-async def verify_citations(*, answer: str, sources: list[dict[str, Any]], model: str | None = None) -> list[ClaimCheck]:
+async def verify_citations(
+    *, answer: str, sources: list[dict[str, Any]], model: str | None = None
+) -> list[ClaimCheck]:
     """Return per-claim verification results.
 
     Falls back to a no-op (empty list) on any error — verification is advisory.
@@ -102,7 +104,8 @@ def verification_summary(checks: list[ClaimCheck]) -> dict[str, Any]:
         "pass_rate": supported / len(checks),
         "failed_claims": [
             {"claim": c.claim, "cited": c.cited_indices, "reason": c.reason}
-            for c in checks if not c.supported
+            for c in checks
+            if not c.supported
         ],
     }
 

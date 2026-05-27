@@ -28,7 +28,7 @@ _SYSTEM = (
     '  "description": "<2-3 sentence summary of this domain>",\n'
     '  "vocabulary": { "<term>": "<definition>", ... },\n'
     '  "entities": [\n'
-    '    {\n'
+    "    {\n"
     '      "name": "<EntityName>",\n'
     '      "description": "<one sentence>",\n'
     '      "summary_field": "<field name used for embedding tiebreak>",\n'
@@ -36,14 +36,14 @@ _SYSTEM = (
     '        { "name": "<field>", "type": "string|text|integer|number|boolean|date|datetime|enum|array",\n'
     '          "description": "<one sentence>", "identity": <bool>, "required": <bool>,\n'
     '          "enum": [...], "item_type": "<for arrays>" }\n'
-    '      ]\n'
-    '    }\n'
-    '  ],\n'
+    "      ]\n"
+    "    }\n"
+    "  ],\n"
     '  "relationships": [\n'
     '    { "name": "<rel_name>", "kind": "parent|ref",\n'
     '      "from_type": "<EntityName>", "to_type": "<EntityName>",\n'
     '      "description": "<one sentence>" }\n'
-    '  ]\n'
+    "  ]\n"
     "}\n\n"
     "Rules:\n"
     "  - Identify 3-6 entity types that recurrently appear across the corpus.\n"
@@ -130,10 +130,7 @@ async def collect_samples_from_domain(domain: str, *, n: int = 12) -> list[str]:
     async with session() as s:
         rows = (
             await s.execute(
-                _sql(
-                    "SELECT text FROM chunks WHERE domain = :d "
-                    "ORDER BY random() LIMIT :n"
-                ),
+                _sql("SELECT text FROM chunks WHERE domain = :d ORDER BY random() LIMIT :n"),
                 {"d": domain, "n": n},
             )
         ).all()

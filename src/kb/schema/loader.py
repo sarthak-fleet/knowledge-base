@@ -13,7 +13,9 @@ from kb.storage import repo
 
 async def apply_schema_file(path: Path) -> DomainSchema:
     spec = yaml.safe_load(Path(path).read_text())
-    return await apply_schema_dict(domain=spec["domain"], name=spec.get("name", "default"), spec=spec)
+    return await apply_schema_dict(
+        domain=spec["domain"], name=spec.get("name", "default"), spec=spec
+    )
 
 
 async def apply_schema_dict(*, domain: str, name: str, spec: dict[str, Any]) -> DomainSchema:
@@ -23,7 +25,9 @@ async def apply_schema_dict(*, domain: str, name: str, spec: dict[str, Any]) -> 
     schema = DomainSchema.model_validate(spec)
     schema.validate_self()
     await repo.upsert_domain(schema.domain)
-    saved = await repo.insert_schema_version(domain=schema.domain, name=schema.name, spec=schema.model_dump())
+    saved = await repo.insert_schema_version(
+        domain=schema.domain, name=schema.name, spec=schema.model_dump()
+    )
     schema.version = saved["version"]
     return schema
 

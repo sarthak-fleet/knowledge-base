@@ -115,7 +115,9 @@ async def index_extraction(result: ExtractionResult, parent_index: dict[str, str
         if len(full_parent) > ctx_limit:
             logger.warning(
                 "contextual retrieval: parent for file %s is %d chars; truncating to %d (%.0f%% dropped)",
-                result.file_id, len(full_parent), ctx_limit,
+                result.file_id,
+                len(full_parent),
+                ctx_limit,
                 100.0 * (len(full_parent) - ctx_limit) / len(full_parent),
             )
         parent_text = full_parent[:ctx_limit]
@@ -131,7 +133,9 @@ async def index_extraction(result: ExtractionResult, parent_index: dict[str, str
                     c.embed_text = prefix_chunk(p, c.text)
             logger.info(
                 "contextual retrieval: prefixed %d/%d child chunks for file %s",
-                sum(1 for p in prefixes if p), len(prefixes), result.file_id,
+                sum(1 for p in prefixes if p),
+                len(prefixes),
+                result.file_id,
             )
         except Exception as e:
             logger.warning("contextual retrieval failed (%s); falling back to bare chunk text", e)
@@ -140,6 +144,11 @@ async def index_extraction(result: ExtractionResult, parent_index: dict[str, str
     await store.delete_by_file(result.domain, result.file_id)
     await store.upsert(result.domain, parent_chunks)
     await store.upsert(result.domain, child_chunks)
-    logger.info("indexed file %s: %d parents, %d children (contextual=%s)",
-                result.file_id, len(parents), len(children), use_ctx)
+    logger.info(
+        "indexed file %s: %d parents, %d children (contextual=%s)",
+        result.file_id,
+        len(parents),
+        len(children),
+        use_ctx,
+    )
     return len(children)

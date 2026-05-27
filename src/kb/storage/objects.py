@@ -50,9 +50,13 @@ class _MinioBackend(_Backend):
     async def put(self, key: str, blob: bytes, mime: str | None = None) -> None:
         def _do() -> None:
             self._client.put_object(
-                self._bucket, key, io.BytesIO(blob), length=len(blob),
+                self._bucket,
+                key,
+                io.BytesIO(blob),
+                length=len(blob),
                 content_type=mime or "application/octet-stream",
             )
+
         await asyncio.to_thread(_do)
 
     async def get(self, key: str) -> bytes:
@@ -63,6 +67,7 @@ class _MinioBackend(_Backend):
             finally:
                 resp.close()
                 resp.release_conn()
+
         return await asyncio.to_thread(_do)
 
     async def exists(self, key: str) -> bool:
@@ -74,6 +79,7 @@ class _MinioBackend(_Backend):
                 return True
             except S3Error:
                 return False
+
         return await asyncio.to_thread(_do)
 
     async def delete(self, key: str) -> None:
@@ -152,10 +158,10 @@ async def get_parse_artifact(object_key: str) -> list[dict[str, Any]]:
     try:
         data = json.loads(raw)
     except (json.JSONDecodeError, ValueError) as e:
-
         structlog.get_logger("kb.storage.objects").warning(
             "parse artifact corrupt at %s (%s) — caller should treat as cache miss",
-            object_key, e,
+            object_key,
+            e,
         )
         raise ParseArtifactCorruptError(f"corrupt parse artifact at {object_key}: {e}") from e
     if not isinstance(data, list):

@@ -41,8 +41,15 @@ eval-legal: up
 test:
 	uv run pytest -q
 
+cover:
+	uv run pytest --cov=kb --cov-report=term-missing --cov-report=html
+
+typecheck:
+	uv run mypy src/kb --ignore-missing-imports --no-strict-optional
+
 lint:
 	uv run ruff check src tests
+	uv run ruff format --check src tests
 
 fmt:
 	uv run ruff format src tests

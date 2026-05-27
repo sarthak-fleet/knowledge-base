@@ -28,13 +28,13 @@ logger = structlog.get_logger("kb.parse")
 class Element:
     """Stable in-house element shape — independent of Unstructured's version."""
 
-    id: str                      # parser-assigned element id
-    type: str                    # Title | NarrativeText | Table | ListItem | ...
+    id: str  # parser-assigned element id
+    type: str  # Title | NarrativeText | Table | ListItem | ...
     text: str
-    page: int                    # 1-based page index, 0 when N/A (e.g. xlsx)
-    bbox: list[float] | None     # [x0, y0, x1, y1] when known
-    parent_id: str | None        # heuristic hierarchy from Unstructured
-    metadata: dict[str, Any]     # passthrough (filetype, languages, table HTML, etc.)
+    page: int  # 1-based page index, 0 when N/A (e.g. xlsx)
+    bbox: list[float] | None  # [x0, y0, x1, y1] when known
+    parent_id: str | None  # heuristic hierarchy from Unstructured
+    metadata: dict[str, Any]  # passthrough (filetype, languages, table HTML, etc.)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -49,7 +49,9 @@ def _strategy_for(filename: str, mime: str | None, default: str) -> str:
     return "auto"  # unstructured.partition.auto handles everything else (txt, md, docx, html, ...)
 
 
-def _parse_pdf_sync(blob: bytes, filename: str, strategy: str, languages: list[str]) -> list[Element]:
+def _parse_pdf_sync(
+    blob: bytes, filename: str, strategy: str, languages: list[str]
+) -> list[Element]:
     from unstructured.partition.pdf import partition_pdf
 
     with tempfile.NamedTemporaryFile(suffix=Path(filename).suffix or ".pdf", delete=False) as tf:
@@ -109,29 +111,33 @@ def _parse_xlsx_sync(blob: bytes, filename: str) -> list[Element]:
                     continue
                 if not header:
                     header = values
-                    out.append(Element(
-                        id=f"xlsx-{sheet.title}-header",
-                        type="Title",
-                        text=f"Sheet '{sheet.title}' header: " + " | ".join(header),
-                        page=0,
-                        bbox=None,
-                        parent_id=None,
-                        metadata={"sheet": sheet.title, "row": row_i, "is_header": True},
-                    ))
+                    out.append(
+                        Element(
+                            id=f"xlsx-{sheet.title}-header",
+                            type="Title",
+                            text=f"Sheet '{sheet.title}' header: " + " | ".join(header),
+                            page=0,
+                            bbox=None,
+                            parent_id=None,
+                            metadata={"sheet": sheet.title, "row": row_i, "is_header": True},
+                        )
+                    )
                     idx += 1
                     continue
                 # Render row as "Col1=Val1 | Col2=Val2 ..." for retrieval-friendly text.
                 pairs = [f"{h}: {v}" for h, v in zip(header, values, strict=False) if h]
                 text = f"[{sheet.title}] " + " | ".join(pairs)
-                out.append(Element(
-                    id=f"xlsx-{sheet.title}-r{row_i}",
-                    type="ListItem",
-                    text=text,
-                    page=0,
-                    bbox=None,
-                    parent_id=f"xlsx-{sheet.title}-header",
-                    metadata={"sheet": sheet.title, "row": row_i, "is_header": False},
-                ))
+                out.append(
+                    Element(
+                        id=f"xlsx-{sheet.title}-r{row_i}",
+                        type="ListItem",
+                        text=text,
+                        page=0,
+                        bbox=None,
+                        parent_id=f"xlsx-{sheet.title}-header",
+                        metadata={"sheet": sheet.title, "row": row_i, "is_header": False},
+                    )
+                )
                 idx += 1
     finally:
         tmp.unlink(missing_ok=True)
@@ -170,7 +176,9 @@ def _element_from_unstructured(e: Any, idx: int, default_page: int = 1) -> Eleme
     )
 
 
-async def parse_file(*, file_id: str, content_hash: str, object_key: str, filename: str, mime: str | None) -> list[Element]:
+async def parse_file(
+    *, file_id: str, content_hash: str, object_key: str, filename: str, mime: str | None
+) -> list[Element]:
     """Return cached elements if present; otherwise parse, cache, return.
 
     Grok Issue 5: a corrupted parse artifact (network mid-write, manual MinIO
@@ -211,5 +219,7 @@ async def parse_file(*, file_id: str, content_hash: str, object_key: str, filena
         object_key=artifact_key,
         page_count=page_count,
     )
-    logger.info("parsed %s: %d elements across %d pages", content_hash[:12], len(elements), page_count)
+    logger.info(
+        "parsed %s: %d elements across %d pages", content_hash[:12], len(elements), page_count
+    )
     return elements

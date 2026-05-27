@@ -42,6 +42,7 @@ def engine() -> AsyncEngine:
 async def session() -> AsyncIterator[AsyncSession]:
     if _Session is None:
         from kb.config import get_settings
+
         await init_engine(get_settings().postgres_dsn)
     assert _Session is not None
     async with _Session() as s:

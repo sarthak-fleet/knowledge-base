@@ -38,7 +38,9 @@ class RagasScores:
     answer_relevance: float
 
     def overall(self) -> float:
-        return (self.faithfulness + self.context_precision + self.context_recall + self.answer_relevance) / 4
+        return (
+            self.faithfulness + self.context_precision + self.context_recall + self.answer_relevance
+        ) / 4
 
 
 _FAITHFULNESS_SYSTEM = (
@@ -74,6 +76,7 @@ _ANSWER_RELEVANCE_SYSTEM = (
 def _coerce_json(text: str) -> dict:
     """Be liberal: strip fences, find first {...}, default to {}."""
     import re
+
     t = (text or "").strip()
     if t.startswith("```"):
         t = re.sub(r"^```(?:json)?\s*", "", t)
@@ -90,8 +93,11 @@ def _coerce_json(text: str) -> dict:
     return {}
 
 
-async def _call(client: httpx.AsyncClient, *, base: str, key: str | None, model: str, system: str, user: str) -> dict:
+async def _call(
+    client: httpx.AsyncClient, *, base: str, key: str | None, model: str, system: str, user: str
+) -> dict:
     import os as _os
+
     payload = {
         "model": model,
         "temperature": 0.0,
@@ -108,13 +114,18 @@ async def _call(client: httpx.AsyncClient, *, base: str, key: str | None, model:
     headers = {"Authorization": f"Bearer {key}"} if key else {}
 
     from kb.extract.llm import cache_get, cache_key, cache_put
-    ck = cache_key(model=model, system=system, user=user, params={"kind": "ragas", "t": 0.0, "max": 800})
+
+    ck = cache_key(
+        model=model, system=system, user=user, params={"kind": "ragas", "t": 0.0, "max": 800}
+    )
     hit = cache_get(ck)
     if hit is not None:
         return hit.get("data", {})
 
     try:
-        r = await client.post(f"{base}/chat/completions", json=payload, headers=headers, timeout=120)
+        r = await client.post(
+            f"{base}/chat/completions", json=payload, headers=headers, timeout=120
+        )
         r.raise_for_status()
         body = r.json()
         out = _coerce_json(body["choices"][0]["message"]["content"] or "")
@@ -127,7 +138,7 @@ async def _call(client: httpx.AsyncClient, *, base: str, key: str | None, model:
 
 def _format_chunks(chunks: list[dict[str, Any]]) -> str:
     return "\n\n".join(
-        f"[{i+1}] {c.get('text','') or c.get('excerpt','')}"[:1200]
+        f"[{i + 1}] {c.get('text', '') or c.get('excerpt', '')}"[:1200]
         for i, c in enumerate(chunks)
     )
 
@@ -154,7 +165,10 @@ async def score_ragas(
 
     # 1) Faithfulness
     fa = await _call(
-        client, base=base, key=key, model=model,
+        client,
+        base=base,
+        key=key,
+        model=model,
         system=_FAITHFULNESS_SYSTEM,
         user=f"ANSWER:\n{answer}\n\nSOURCES:\n{chunks_block}",
     )
@@ -162,41 +176,43 @@ async def score_ragas(
     # `chunks: ["..", ".."]` (list of strings) instead of `[{"relevant": ...}]`.
     # Skip non-dict items rather than crashing the whole eval.
     claims = [c for c in (fa.get("claims") or []) if isinstance(c, dict)]
-    faithfulness = (
-        sum(1 for c in claims if c.get("supported")) / len(claims)
-        if claims else 0.0
-    )
+    faithfulness = sum(1 for c in claims if c.get("supported")) / len(claims) if claims else 0.0
 
     # 2) Context precision
     cp = await _call(
-        client, base=base, key=key, model=model,
+        client,
+        base=base,
+        key=key,
+        model=model,
         system=_CONTEXT_PRECISION_SYSTEM,
         user=f"QUESTION:\n{question}\n\nCHUNKS:\n{chunks_block}",
     )
     items = [c for c in (cp.get("chunks") or []) if isinstance(c, dict)]
-    context_precision = (
-        sum(1 for c in items if c.get("relevant")) / len(items)
-        if items else 0.0
-    )
+    context_precision = sum(1 for c in items if c.get("relevant")) / len(items) if items else 0.0
 
     # 3) Context recall — only meaningful when key_facts are provided
     if key_facts and chunks:
         cr = await _call(
-            client, base=base, key=key, model=model,
+            client,
+            base=base,
+            key=key,
+            model=model,
             system=_CONTEXT_RECALL_SYSTEM,
             user=f"KEY_FACTS:\n{json.dumps(key_facts)}\n\nCHUNKS:\n{chunks_block}",
         )
         facts = [f for f in (cr.get("facts") or []) if isinstance(f, dict)]
         context_recall = (
-            sum(1 for f in facts if f.get("recoverable")) / len(facts)
-            if facts else 0.0
+            sum(1 for f in facts if f.get("recoverable")) / len(facts) if facts else 0.0
         )
     else:
         context_recall = 1.0 if not key_facts else 0.0
 
     # 4) Answer relevance
     ar = await _call(
-        client, base=base, key=key, model=model,
+        client,
+        base=base,
+        key=key,
+        model=model,
         system=_ANSWER_RELEVANCE_SYSTEM,
         user=f"QUESTION:\n{question}\n\nANSWER:\n{answer}",
     )

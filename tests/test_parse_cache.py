@@ -12,7 +12,15 @@ def test_cache_hit_uses_artifact(monkeypatch) -> None:
     calls = {"parsed": 0}
 
     cached_elements = [
-        {"id": "el-1", "type": "Title", "text": "hello", "page": 1, "bbox": None, "parent_id": None, "metadata": {}},
+        {
+            "id": "el-1",
+            "type": "Title",
+            "text": "hello",
+            "page": 1,
+            "bbox": None,
+            "parent_id": None,
+            "metadata": {},
+        },
     ]
 
     async def fake_get_parse_artifact_db(content_hash):

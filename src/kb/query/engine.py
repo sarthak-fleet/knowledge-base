@@ -66,7 +66,7 @@ def _format_sources(hits: list[dict[str, Any]]) -> str:
         page = md.get("page_start", "?")
         if md.get("page_end") and md.get("page_end") != page:
             page = f"{md['page_start']}-{md['page_end']}"
-        out.append(f"[{i}] (file={md.get('file_id','?')[:8]} page={page})\n{h['text']}")
+        out.append(f"[{i}] (file={md.get('file_id', '?')[:8]} page={page})\n{h['text']}")
     return "\n\n".join(out)
 
 
@@ -80,7 +80,7 @@ def _bookend_reorder(hits: list[Any]) -> list[Any]:
     """
     if len(hits) <= 2:
         return hits
-    odds = hits[1::2]   # 2nd, 4th, ... ranked
+    odds = hits[1::2]  # 2nd, 4th, ... ranked
     evens = hits[0::2]  # 1st, 3rd, 5th, ...
     return evens + list(reversed(odds))
 
@@ -113,7 +113,7 @@ async def answer_query(body: QueryIn) -> QueryOut:
     if history:
         last = history[-3:]
         history_block = "\n\nPrior turns:\n" + "\n".join(
-            f"Q: {t.get('q','')}\nA: {t.get('a','')[:200]}" for t in last
+            f"Q: {t.get('q', '')}\nA: {t.get('a', '')[:200]}" for t in last
         )
 
     schema_row = await repo.get_active_schema(body.domain)
@@ -123,15 +123,26 @@ async def answer_query(body: QueryIn) -> QueryOut:
 
     started = time.time()
     intent: QueryIntent = await extract_intent(body.question, schema)
-    stages.append(_stage("intent", started, kind=intent.kind, filters=intent.filters, reason=intent.reason))
+    stages.append(
+        _stage("intent", started, kind=intent.kind, filters=intent.filters, reason=intent.reason)
+    )
     logger.info("intent: kind=%s filters=%s", intent.kind, intent.filters)
 
     # ── Stage 1a: structured-query path (fuzzy SQL over entities table) ─────
     structured: dict[str, Any] | None = None
     if intent.kind in ("aggregate", "compare"):
         started = time.time()
-        structured = await maybe_structured_answer(intent=intent, domain=body.domain, question=body.question)
-        stages.append(_stage("structured", started, hit=bool(structured), count=len(structured["entities"]) if structured else 0))
+        structured = await maybe_structured_answer(
+            intent=intent, domain=body.domain, question=body.question
+        )
+        stages.append(
+            _stage(
+                "structured",
+                started,
+                hit=bool(structured),
+                count=len(structured["entities"]) if structured else 0,
+            )
+        )
 
     # ── Stage 1b: DuckDB text-to-SQL route — heavier hammer for aggregation ─
     # Used when the structured route returned nothing or for more complex queries.
@@ -143,6 +154,7 @@ async def answer_query(body: QueryIn) -> QueryOut:
     # the DuckDB route still fires. Centralised in kb.query.intent.looks_aggregate
     # (Grok Issue 8).
     from kb.query.intent import looks_aggregate as _looks_aggregate
+
     looks_agg = _looks_aggregate(body.question)
     if looks_agg and intent.kind == "lookup":
         # Grok Issue 8: surface classifier drift so operators see when
@@ -161,7 +173,10 @@ async def answer_query(body: QueryIn) -> QueryOut:
         # when duckdb wasn't yet in pyproject.toml.
         try:
             from kb.query.duckdb_route import maybe_duckdb_answer
-            dr = await maybe_duckdb_answer(intent=intent, domain=body.domain, question=body.question)
+
+            dr = await maybe_duckdb_answer(
+                intent=intent, domain=body.domain, question=body.question
+            )
         except Exception as e:
             logger.warning("duckdb route failed: %s", e)
             dr = None
@@ -183,8 +198,11 @@ async def answer_query(body: QueryIn) -> QueryOut:
     queries = [body.question]
     if bool(pipeline.get(cfg, "retrieve.query_decomposition", True)):
         from kb.query.rewriter import decompose_query
+
         started = time.time()
-        is_compound, subs = await decompose_query(body.question, model=pipeline.get(cfg, "llm.synthesize.model"))
+        is_compound, subs = await decompose_query(
+            body.question, model=pipeline.get(cfg, "llm.synthesize.model")
+        )
         if is_compound and len(subs) > 1:
             queries = subs[:]
             stages.append(_stage("decompose", started, kind="compound", sub_count=len(subs)))
@@ -192,11 +210,14 @@ async def answer_query(body: QueryIn) -> QueryOut:
             stages.append(_stage("decompose", started, kind="single"))
     if bool(pipeline.get(cfg, "retrieve.query_rewriting", True)):
         from kb.query.rewriter import rewrite_query
+
         started = time.time()
         n = int(pipeline.get(cfg, "retrieve.query_rewriting_variants", 3))
         expanded: list[str] = []
         for q in queries:
-            expanded.extend(await rewrite_query(q, n=n, model=pipeline.get(cfg, "llm.synthesize.model")))
+            expanded.extend(
+                await rewrite_query(q, n=n, model=pipeline.get(cfg, "llm.synthesize.model"))
+            )
         # Dedupe, cap at 6 to keep retrieval cost reasonable
         seen: set[str] = set()
         queries = []
@@ -210,6 +231,7 @@ async def answer_query(body: QueryIn) -> QueryOut:
         stages.append(_stage("rewrite", started, variants=len(queries)))
     if bool(pipeline.get(cfg, "retrieve.hyde", False)):
         from kb.query.rewriter import hyde_passage
+
         started = time.time()
         hyde = await hyde_passage(body.question, model=pipeline.get(cfg, "llm.synthesize.model"))
         if hyde and hyde != body.question:
@@ -237,6 +259,7 @@ async def answer_query(body: QueryIn) -> QueryOut:
     else:
         # Multi-query: run each, fuse via RRF on the chunk IDs.
         from kb.query.rewriter import fuse_rrf
+
         per_query: list[list[Any]] = []
         rankings: list[list[str]] = []
         for q in queries:
@@ -265,9 +288,16 @@ async def answer_query(body: QueryIn) -> QueryOut:
                 h.score = float(rrf_score)
                 hits.append(h)
     intent_entity_ids = await intent_to_entity_ids(intent, body.domain)
-    stages.append(_stage("retrieve", started, candidates=len(hits),
-                         queries=len(queries), filters=payload_filters or {},
-                         intent_entities=len(intent_entity_ids)))
+    stages.append(
+        _stage(
+            "retrieve",
+            started,
+            candidates=len(hits),
+            queries=len(queries),
+            filters=payload_filters or {},
+            intent_entities=len(intent_entity_ids),
+        )
+    )
 
     # Soft boost: if the intent resolved to specific entity ids (by ticker/form_type),
     # promote hits whose entity_id matches. Pure ordering — never drops candidates.
@@ -306,8 +336,7 @@ async def answer_query(body: QueryIn) -> QueryOut:
         hits = _bookend_reorder(hits)
 
     serializable_hits = [
-        {"id": h.id, "text": h.text, "score": h.score, "metadata": h.metadata}
-        for h in hits
+        {"id": h.id, "text": h.text, "score": h.score, "metadata": h.metadata} for h in hits
     ]
 
     # ── Stage 3.8: CRAG retrieval evaluator ──────────────────────────────────
@@ -317,6 +346,7 @@ async def answer_query(body: QueryIn) -> QueryOut:
     crag_reason: str = ""
     if bool(pipeline.get(cfg, "retrieve.crag_evaluator", True)) and serializable_hits:
         from kb.query.crag import evaluate_retrieval
+
         started = time.time()
         crag_score, crag_reason = await evaluate_retrieval(
             question=body.question,
@@ -365,7 +395,9 @@ async def answer_query(body: QueryIn) -> QueryOut:
     except Exception as e:
         logger.warning("synthesis failed: %s", e)
         answer_text = "I could not synthesize an answer due to a transient error."
-    stages.append(_stage("synthesize", started, **{k: v for k, v in syn_usage.items() if k != "model"}))
+    stages.append(
+        _stage("synthesize", started, **{k: v for k, v in syn_usage.items() if k != "model"})
+    )
     for k in ("prompt_tokens", "completion_tokens", "total_tokens"):
         token_usage[k] += int(syn_usage.get(k, 0))
 
@@ -377,6 +409,7 @@ async def answer_query(body: QueryIn) -> QueryOut:
     # block. Now we explicitly look for a confidence-shaped object at EOF and
     # only strip when the parse succeeds AND the object has the expected keys.
     from kb.extract.llm import _coerce_json
+
     m = re.search(r"(\{[^{}]*?\"confidence\"[^{}]*?\})\s*$", answer_text, flags=re.S)
     if m:
         j = _coerce_json(m.group(1))
@@ -415,9 +448,17 @@ async def answer_query(body: QueryIn) -> QueryOut:
         )
         verify_summary = verification_summary(checks)
         confidence_value, confidence_reason = adjust_confidence_with_verification(
-            confidence_value, confidence_reason, verify_summary,
+            confidence_value,
+            confidence_reason,
+            verify_summary,
         )
-        stages.append(_stage("verify", started, **{k: v for k, v in verify_summary.items() if k != "failed_claims"}))
+        stages.append(
+            _stage(
+                "verify",
+                started,
+                **{k: v for k, v in verify_summary.items() if k != "failed_claims"},
+            )
+        )
 
     # ── Stage 5: span-level citations (multi-source aware) ───────────────────
     # Resolve filenames for the cited chunks + every file in their also_in_files.
@@ -506,6 +547,7 @@ async def answer_query(body: QueryIn) -> QueryOut:
     # sweep alongside the duckdb-route bug.
     try:
         from kb.api import metrics
+
         metrics.record_query(latency_ms, token_usage.get("total_tokens", 0), stages)
     except Exception as e:
         logger.info("metrics.record_query failed (non-fatal): %s", e)
