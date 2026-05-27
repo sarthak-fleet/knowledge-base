@@ -498,6 +498,17 @@ async def answer_query(body: QueryIn) -> QueryOut:
     )
     await repo.append_session_turn(session_id, {"q": body.question, "a": answer_text})
 
+    # Wire the request into the Prometheus aggregator. Previously this was a
+    # ghost feature — `kb.api.metrics.record_query` was defined and the
+    # `/metrics` endpoint served it, but nothing in the engine ever called it,
+    # so every counter stayed at 0 in production. Caught by post-eval defensive
+    # sweep alongside the duckdb-route bug.
+    try:
+        from kb.api import metrics
+        metrics.record_query(latency_ms, token_usage.get("total_tokens", 0), stages)
+    except Exception as e:
+        logger.info("metrics.record_query failed (non-fatal): %s", e)
+
     return QueryOut(
         answer=answer_text,
         citations=citations,
