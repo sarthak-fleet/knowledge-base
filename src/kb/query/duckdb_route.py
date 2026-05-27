@@ -24,9 +24,14 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import duckdb
+# duckdb is an optional dep at import time so the pure helpers below
+# (_ticker_from_filename, _metric_canonical) are unit-testable without
+# installing it. The runtime path that actually opens a DuckDB connection
+# imports duckdb lazily — see _build_duckdb_from_entities.
+if TYPE_CHECKING:
+    import duckdb
 
 from kb.extract import llm
 from kb.query.intent import QueryIntent
@@ -112,8 +117,8 @@ def _build_duckdb_from_entities(entities_by_type: dict[str, list[dict]]) -> duck
       - canonical columns: id, type, display_name, identity_key, parent_id
       - all keys present in any entity's `fields` JSON, flattened to columns
     """
+    import duckdb  # lazy-import; see top-of-file comment
     import pandas as pd
-
     conn = duckdb.connect(":memory:")
     for etype, rows in entities_by_type.items():
         if not rows:

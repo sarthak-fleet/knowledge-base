@@ -206,9 +206,9 @@ Each run: pick a synth model, set `AI_MODEL` in `.env`, force-recreate the api c
 | 7e | SEC | **groq-llama-3.1-8b** | 0.610 | **0.680** | **0.791** | **0.372** | **0.660** | **0.760** |
 | 7f | SEC | llama-8b + DuckDB ticker fix | 0.610 | 0.680 | 0.764 | 0.372 | 0.660 | 0.744 |
 | 7g | SEC | llama-8b + metric-canonical fix | 0.608 | 0.640 | 0.726 | 0.372 | 0.660 | 0.676 |
-| 7h | Legal | gemini-2.5-pro | _filling_ | | | | | |
-| 7i | Legal | gemini-2.5-flash-lite | _filling_ | | | | | |
-| 7j | Legal | groq-llama-3.1-8b | _filling_ | | | | | |
+| 7h | Legal | gemini-2.5-pro | **0.807** | 0.333 | 0.583 | 0.347 | 0.542 | 0.683 |
+| 7i | Legal | gemini-2.5-flash-lite | 0.514 | 0.083 | 0.117 | 0.319 | 0.458 | 0.375 |
+| 7j | Legal | groq-llama-3.1-8b | 0.672 | 0.417 | 0.632 | 0.361 | 0.625 | 0.608 |
 
 ### Findings
 
@@ -216,6 +216,13 @@ Each run: pick a synth model, set `AI_MODEL` in `.env`, force-recreate the api c
 2. **Bigger model ≠ better RAG synthesis when retrieval is solid.** Pro scored *lower* on pass than Flash and Flash-lite. Pro hedges more — more `confidence=0.00`, more refusals. Pro IS better on answer-relevance (more polished prose) but that doesn't translate to pass-rate.
 3. **The cheapest, smallest model dominates.** `llama-3.1-8b` on Groq scored 0.680 pass — 24pts above Pro. The user's intuition "lower models should work fine" was *understated*. They actively *outperform* when retrieval is solid because they don't over-hedge.
 4. **Cross-domain works AND scores higher.** Legal × Flash scores 0.787 F1 / 0.667 pass, beating SEC across the board. Schema swap; no code changes.
+
+5. **The best model is domain-dependent.** Once the full 4×2 matrix was filled, a second structural finding emerged: **no universally best synth model**.
+   - SEC wins: **llama-3.1-8b** (0.680 pass). Decisive cheap models commit to answers in financial-text retrieval.
+   - Legal wins: **gemini-2.5-flash** (0.667 pass). License-text questions punish paraphrasing — flash-lite collapsed to 0.083 pass here; llama-8b only managed 0.417.
+   - Pro hedges in both domains regardless.
+   - flash-lite is *SEC-survivable but Legal-fatal* — a brittleness no single-domain bench catches.
+   - **Production implication**: per-domain config (which we already have via `domains/<name>/config.yaml`) or per-question routing is necessary. A "pick one model" policy is wrong; the right model depends on what kind of grounding the answer needs.
 
 ### What the eval ceiling means
 

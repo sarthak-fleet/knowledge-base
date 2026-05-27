@@ -262,9 +262,9 @@ Methodology this round was **much** stricter than v0-v6:
 | 7e | SEC | **groq-llama-3.1-8b** | 0.610 | **0.680 (17/25)** | **0.791** | **0.372** | **0.660** | **0.760** |
 | 7f | SEC | groq-llama-3.1-8b + DuckDB ticker fallback | 0.610 | 0.680 (17/25) | 0.764 | 0.372 | 0.660 | 0.744 |
 | 7g | SEC | llama-8b + metric-canonical column | 0.608 | 0.640 (16/25) | 0.726 | 0.372 | 0.660 | 0.676 |
-| 7h | Legal | gemini-2.5-pro | 0.807 | 0.333 (4/12) | 0.583 | 0.347 | 0.542 | 0.683 |
-| 7i | Legal | gemini-2.5-flash-lite | _running_ | | | | | |
-| 7j | Legal | groq-llama-3.1-8b | _queued_ | | | | | |
+| 7h | Legal | gemini-2.5-pro | **0.807** | 0.333 (4/12) | 0.583 | 0.347 | 0.542 | 0.683 |
+| 7i | Legal | gemini-2.5-flash-lite | 0.514 | 0.083 (1/12) | 0.117 | 0.319 | 0.458 | 0.375 |
+| 7j | Legal | groq-llama-3.1-8b | 0.672 | 0.417 (5/12) | 0.632 | 0.361 | 0.625 | 0.608 |
 
 **The four big findings to talk about in interview:**
 
@@ -290,14 +290,31 @@ comparable** — the only thing that varied is the synthesizer:
 | groq-llama-3.1-8b   | SEC   | 0.610 | 0.680 | 0.791 | 0.372 | 0.660 | 0.760 |
 | gemini-2.5-flash    | Legal | 0.787 | 0.667 | 0.741 | 0.361 | 0.458 | 0.650 |
 | gemini-2.5-pro      | Legal | 0.807 | 0.333 | 0.583 | 0.347 | 0.542 | 0.683 |
-| gemini-2.5-flash-lite | Legal | _filling_ | | | | | |
-| groq-llama-3.1-8b   | Legal | _filling_ | | | | | |
+| gemini-2.5-flash-lite | Legal | 0.514 | 0.083 | 0.117 | 0.319 | 0.458 | 0.375 |
+| groq-llama-3.1-8b   | Legal | 0.672 | 0.417 | 0.632 | 0.361 | 0.625 | 0.608 |
 
 **Cross-domain confirmation of the Pro-hedging finding**: same direction on
 Legal as on SEC. Pro improved citation F1 (0.787 → 0.807) but tanked pass rate
 (0.667 → 0.333). The "bigger model hedges harder" effect is now replicated
 across two unrelated corpora and four schemas of questions. That moves it from
 "interesting one-off" to "actual structural finding."
+
+### § 4.7-final-2 — the **best model is domain-dependent**
+
+With the full 4-model × 2-domain matrix in hand, a second structural finding
+emerges: there is **no universally best synth model** in this corpus.
+
+| Best on | Winner | Pass rate | 2nd place | Pass |
+|---|---|---|---|---|
+| **SEC** | groq-llama-3.1-8b | **0.680** | flash / flash-lite (tie) | 0.480 |
+| **Legal** | gemini-2.5-flash | **0.667** | groq-llama-3.1-8b | 0.417 |
+
+- **SEC wants decisive cheap models.** llama-8b answers commit, often correctly. The questions are aggregate / lookup over financial text where over-hedging actively hurts.
+- **Legal wants precise-but-decisive mid-tier.** Flash strikes the sweet spot — it doesn't hedge like Pro but it doesn't paraphrase like flash-lite (which collapsed to 0.083 pass on Legal — license-text questions punish paraphrasing).
+- **Pro hedges everywhere**, costing pass rate even though citation F1 is sometimes higher (Legal: 0.807 cit-F1 vs 0.787 for Flash, but 0.333 vs 0.667 pass).
+- **flash-lite is SEC-survivable, Legal-fatal**. A single-domain test on SEC would have called flash-lite a fine choice; the cross-domain test reveals brittleness no single-domain bench catches.
+
+**Production implication**: any "pick one model" policy is wrong. Real systems need either a per-domain config (which we have via `domains/<name>/config.yaml`) or per-question routing — the cheap-decisive synth is a *retrieval-quality multiplier* when retrieval is solid, but the model that gives you that varies by what kind of grounding the answer needs.
 
 ### Step 7 deeper dive — per-question failure analysis
 
