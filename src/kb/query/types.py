@@ -25,6 +25,10 @@ class Citation(BaseModel):
     # (dedup at ingest) or near-duplicate chunks were collapsed via MMR,
     # `also_in` lists every additional source whose excerpt is the same.
     also_in: list[CitationSource] = []
+    # Provenance of the citation itself. "retrieval" = surfaced by hybrid
+    # search; "graph_route" = surfaced by the GraphRAG-shaped theme summary
+    # whose narrative themes shaped part of the answer.
+    via: str = "retrieval"
 
 
 class RetrievedNode(BaseModel):

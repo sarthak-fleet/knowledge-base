@@ -608,8 +608,45 @@ async def answer_query(body: QueryIn) -> QueryOut:
                 excerpt=excerpt,
                 also_in=also_files,
                 bbox=None,
+                via="retrieval",
             )
         )
+
+    # ── Graph-route citation backfill ──────────────────────────────────────
+    # When the GraphRAG-shaped theme route fired, its narrative summary
+    # influenced the answer's structure (themes, groupings) but its
+    # underlying entity_mentions weren't surfaced as citations above —
+    # because they came from the entity graph, not from retrieval. Backfill
+    # them here, deduped against retrieval-sourced citations by
+    # (file_id, page_start). Marked via="graph_route" so consumers can tell
+    # which evidence shaped the prose vs which directly grounds a [n] marker.
+    if graph_result and graph_result.get("mentions"):
+        seen_keys = {(c.file_id, c.page_start) for c in citations}
+        graph_filenames = await _resolve_filenames(
+            list({m["file_id"] for m in graph_result["mentions"] if m.get("file_id")})
+        )
+        for m in graph_result["mentions"]:
+            fid = m.get("file_id")
+            if not fid:
+                continue
+            ps = int(m.get("page_start") or 0)
+            key = (fid, ps)
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            citations.append(
+                Citation(
+                    file_id=fid,
+                    filename=graph_filenames.get(fid, "unknown"),
+                    page_start=ps,
+                    page_end=int(m.get("page_end") or ps),
+                    excerpt=(m.get("excerpt") or "")[:excerpt_chars],
+                    also_in=[],
+                    bbox=None,
+                    via="graph_route",
+                )
+            )
+
     stages.append(_stage("span_cite", started, citations=len(citations)))
 
     retrieved_nodes = [
