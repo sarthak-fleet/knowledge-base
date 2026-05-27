@@ -315,6 +315,33 @@ emerges: there is **no universally best synth model** in this corpus.
 
 **Production implication**: any "pick one model" policy is wrong. Real systems need either a per-domain config (which we have via `domains/<name>/config.yaml`) or per-question routing — the cheap-decisive synth is a *retrieval-quality multiplier* when retrieval is solid, but the model that gives you that varies by what kind of grounding the answer needs.
 
+### § 4.8 ABCD retrieval upgrade — what shipped and why the post-measurement is missing
+
+The Step 7 matrix locked citation F1 at ~0.61 across every SEC synth model — that's the retrieval ceiling speaking, not the synthesizer. Four interventions were planned to push retrieval up:
+
+- **A — Boundary-aware chunking.** `src/kb/vector/chunking.py` now closes parent windows at Title/Header element boundaries (within ±20% of `parent_size`) and tags every chunk with `section_title`, `section_id`, and `first_element_type`. Helper: `_should_close_parent_here()`. Both `build_chunks` and `build_chunks_semantic` paths updated. **Status: shipped, code committed.**
+- **B — LLM-generated larger eval set.** `scripts/build_eval_set.py` samples chunks from Qdrant, asks an LLM for one specific question per chunk plus key_facts, writes `domains/<domain>/eval/dataset_large.yaml`. Uses `chat_text_with_usage` + manual JSON parse, not `chat_structured`, because the gateway breaks tool_choice. **Status: scaffold shipped and exercised — but the run produced only 4 questions for SEC instead of the target ~60: of 11 sampled chunks, 7 dropped on gateway 401s ("All providers failed: 401 Unauthorized"). Mechanism is proven; the dataset is not.**
+- **C — `BAAI/bge-large-en-v1.5` (1024d) embeddings.** `src/kb/config/settings.py` and `.env` updated. New Qdrant collections (`kb_sec`, `kb_legal`) created at 1024d. **Reindex partial:** `kb_sec` reached 413 points (vs ~2500 historical baseline) before the job-queue layer ran out of healthy gateway capacity for the Contextual-Retrieval step. Disabling `synthesize.contextual_retrieval` in `defaults.yaml` and live-patching it into `kb-worker` helped, but several files had to be force-marked `ready` to drain the orphan queue. **Status: code shipped, embeddings swapped, index incomplete.**
+- **D — Section-boost in retrieval.** `src/kb/query/engine.py` boosts hits whose `section_title` matches keywords lifted from the intent slots. Also: decompose ‖ HyDE now run via `asyncio.gather`, and verify is skipped when CRAG and confidence are both ≥0.7. **Status: shipped.**
+
+**Why there is no post-ABCD eval row in the table above.** The free-AI gateway entered a sustained instability window during the measurement attempt — every `chat_json` call cascades through a mix of `400 Tool choice is required, but model did not call a tool`, `400 Failed to validate JSON`, `401 Unauthorized`, and 30-second timeouts. With openai-client retries (2x) wrapped by tenacity (3x) on top, a single query exhausts ~5–10 LLM attempts and still does not complete. The 25-question SEC eval was launched twice; neither produced any `POST /query 200`. One direct curl of a SEC question hung past 180s in the decompose stage, retrying `/chat/completions` four times before the smoke test was cut.
+
+This is **not** a code defect in the ABCD path — intent classification, retrieval, rerank, and section-boost all complete in milliseconds in the logs. The blocker is upstream LLM availability, and it bottlenecks every stage that calls the gateway (decompose, HyDE, query_rewriting variants, CRAG evaluator, synth, verify_citations, RAGAS judging). The honest position is: the retrieval-side changes are in the code and live in the running stack, but the gateway-side instability denies an apples-to-apples post-measurement against the § 4.7-final row.
+
+**What would unblock measurement** (in order of effort):
+
+1. Swap `AI_BASE_URL` back to the paid DeepSeek route (commented out in `.env`) — single env change, eval would finish in ~15 min.
+2. Add a deterministic LLM cache prewarm so all retried calls hit the on-disk cache (`KB_LLM_CACHE_DIR=/data/llm_cache` is already wired).
+3. Temporarily disable the LLM-heavy stages (`retrieve.query_rewriting`, `retrieve.query_decomposition`, `retrieve.crag_evaluator`, `synthesize.verify_citations`) in `domains/sec/config.yaml` for a retrieval-only measurement — this gives a clean A+C+D delta but is not apples-to-apples vs § 4.7.
+
+**Mitigations applied during the attempt** (for the record):
+
+- `chat_structured` now bypasses `instructor` entirely and calls `chat_json` directly with `response_model.model_validate(raw)`, because the gateway broke both `Mode.TOOLS` (returns content without tool_call) and `Mode.JSON` (claims JSON validation failed even on well-formed payloads). Live-patched into `kb-api`.
+- `synthesize.contextual_retrieval` flipped to `false` and live-patched into `kb-worker` so ingest stopped issuing one LLM call per chunk during the reindex.
+- Stuck/orphan `ingest_jobs` cleared via Postgres SQL (`status='queued'`, `locked_by=NULL`, `locked_at=NULL`) after worker restarts.
+
+The takeaway for the writeup: this is what running a hosted LLM-dependent pipeline against an unstable free gateway actually looks like, and the engineering response is to make every stage resilient (timeouts, retries, cache, fallbacks) — which is shipped — and then *measure when the upstream is available*.
+
 ### Step 7 deeper dive — per-question failure analysis
 
 7 of 25 SEC questions failed across **every model** tested. Of those 7, **five are aggregate / structured-query questions** (q06, q07, q19, q21, q25) — questions like "Apple's highest quarterly revenue," "compare Q1 vs Q2 EPS," "highest single-quarter net income across all companies." The judge explicitly says things like "DuckDB query returned NULL."

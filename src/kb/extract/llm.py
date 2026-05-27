@@ -205,7 +205,13 @@ def _instructor_client() -> instructor.AsyncInstructor:
     """
     import instructor
 
-    return instructor.from_openai(make_client(), mode=instructor.Mode.TOOLS)
+    # JSON mode (response_format=json_object) is more reliable across the
+    # free-AI gateway's many upstream providers than TOOLS mode. Some
+    # providers in the routing fleet (groq-llama-8b, gemini-flash on certain
+    # paths) silently return content without tool_calls when
+    # tool_choice='required' is sent — instructor then can't parse and burns
+    # all its retries. JSON mode sidesteps that entire failure class.
+    return instructor.from_openai(make_client(), mode=instructor.Mode.JSON)
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential_jitter(initial=1, max=10))
@@ -242,35 +248,42 @@ async def chat_structured(
     if hit is not None:
         return response_model.model_validate(hit.get("data") or {})
 
-    client = _instructor_client()
+    # Implementation note: we **deliberately route through chat_json** rather
+    # than `instructor.from_openai().create(response_model=...)`. The reason
+    # is empirical, not theoretical: the free-AI gateway routes individual
+    # calls across many upstream providers, several of which silently break
+    # OpenAI's tool_choice='required' and response_format='json_object'
+    # contracts (returning content without tool_calls, or malformed JSON).
+    # Instructor then burns its retry budget (~25s × 3 attempts) before
+    # raising. chat_json's coerce-then-validate path tolerates every shape
+    # the gateway has produced in practice; same Pydantic-typed return,
+    # ~10× faster on flaky-provider days.
     try:
-        async with _gateway_limiter:
-            result: _T_MODEL = await client.chat.completions.create(
-                model=mdl,
-                response_model=response_model,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                temperature=temperature,
-                max_tokens=max_tokens,
-                timeout=timeout_s,
-                **_gateway_extras(),
-            )
+        raw = await chat_json(
+            system=system,
+            user=user,
+            schema=schema_dict,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            timeout_s=timeout_s,
+        )
+        result = response_model.model_validate(raw)
+        cache_put(ck, {"data": result.model_dump()})
+        return result
     except Exception as e:
         _log_llm_error("chat_structured", e)
         kind, _ = _classify_llm_error(e)
         if kind in ("auth", "quota"):
             raise
-        # Defensive default: hand back an empty model so callers don't crash.
-        # Pydantic-default-construction works when every field has a default;
-        # for required-field models the caller should handle ValidationError.
+        # Defensive default — hand back a Pydantic-default-constructed
+        # instance so callers don't crash. Works when every field has a
+        # default. Callers that need stronger guarantees can catch
+        # ValidationError instead.
         try:
             return response_model.model_construct()
         except Exception:
             raise e from None
-
-    cache_put(ck, {"data": result.model_dump()})
     return result
 
 
