@@ -20,8 +20,21 @@ class Settings(BaseSettings):
     ai_base_url: str = Field(default="https://api.deepseek.com/v1", alias="AI_BASE_URL")
     ai_api_key: str = Field(default="", alias="AI_API_KEY")
     ai_model: str = Field(default="deepseek-chat", alias="AI_MODEL")
+    # Some OpenAI-compatible gateways (e.g. the free routing gateway used in
+    # cross-model eval) require an additional `project_id` in the request body
+    # for tenancy/billing. Set this only when the upstream demands it; it's
+    # ignored by vanilla OpenAI/DeepSeek/Together/vLLM.
+    ai_project_id: str = Field(default="", alias="AI_PROJECT_ID")
     extract_model: str | None = None     # KB_EXTRACT_MODEL  (defaults to ai_model)
     synthesize_model: str | None = None  # KB_SYNTHESIZE_MODEL
+
+    # --- LLM response cache (deterministic eval replay) ---
+    # Off by default. When set, every (model, system, user, params) tuple is
+    # hashed to a JSON file. Subsequent identical calls hit the cache.
+    # Intended for eval iteration where the same questions are asked many
+    # times against the same docs. Never use in prod paths that need fresh
+    # generations.
+    llm_cache_dir: str = Field(default="", alias="KB_LLM_CACHE_DIR")
 
     # --- Embeddings (fastembed, local) ---
     embed_model: str = "BAAI/bge-small-en-v1.5"

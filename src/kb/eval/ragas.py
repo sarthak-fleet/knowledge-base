@@ -91,6 +91,7 @@ def _coerce_json(text: str) -> dict:
 
 
 async def _call(client: httpx.AsyncClient, *, base: str, key: str | None, model: str, system: str, user: str) -> dict:
+    import os as _os
     payload = {
         "model": model,
         "temperature": 0.0,
@@ -101,12 +102,24 @@ async def _call(client: httpx.AsyncClient, *, base: str, key: str | None, model:
             {"role": "user", "content": user},
         ],
     }
+    project_id = _os.environ.get("AI_PROJECT_ID")
+    if project_id:
+        payload["project_id"] = project_id
     headers = {"Authorization": f"Bearer {key}"} if key else {}
+
+    from kb.extract.llm import cache_get, cache_key, cache_put
+    ck = cache_key(model=model, system=system, user=user, params={"kind": "ragas", "t": 0.0, "max": 800})
+    hit = cache_get(ck)
+    if hit is not None:
+        return hit.get("data", {})
+
     try:
         r = await client.post(f"{base}/chat/completions", json=payload, headers=headers, timeout=120)
         r.raise_for_status()
         body = r.json()
-        return _coerce_json(body["choices"][0]["message"]["content"] or "")
+        out = _coerce_json(body["choices"][0]["message"]["content"] or "")
+        cache_put(ck, {"data": out})
+        return out
     except Exception as e:
         logger.info("ragas LLM call failed: %s", e)
         return {}

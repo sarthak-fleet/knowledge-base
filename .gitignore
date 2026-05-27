@@ -23,6 +23,7 @@ data/cache/
 data/minio/
 data/postgres/
 data/qdrant/
+data/llm_cache/
 .DS_Store
 node_modules/
 .husky/_/

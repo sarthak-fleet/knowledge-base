@@ -126,14 +126,31 @@ async def _judge(client: httpx.AsyncClient, *, base: str, key: str | None, model
             },
         ],
     }
+    project_id = os.environ.get("AI_PROJECT_ID")
+    if project_id:
+        payload["project_id"] = project_id
     headers = {"Authorization": f"Bearer {key}"} if key else {}
+
+    from kb.extract.llm import cache_get, cache_key, cache_put
+    ck = cache_key(
+        model=model,
+        system=JUDGE_SYSTEM,
+        user=payload["messages"][1]["content"],
+        params={"kind": "judge", "t": 0.0, "max": 512},
+    )
+    hit = cache_get(ck)
+    if hit is not None:
+        return bool(hit.get("pass")), str(hit.get("reason", ""))[:300]
+
     try:
         r = await client.post(f"{base}/chat/completions", json=payload, headers=headers, timeout=120)
         r.raise_for_status()
         body = r.json()
         content = body["choices"][0]["message"]["content"] or ""
         j = _coerce_judge_json(content)
-        return bool(j.get("pass")), str(j.get("reason", ""))[:300]
+        result = (bool(j.get("pass")), str(j.get("reason", ""))[:300])
+        cache_put(ck, {"pass": result[0], "reason": result[1]})
+        return result
     except Exception as e:
         return False, f"judge_error: {e}"
 

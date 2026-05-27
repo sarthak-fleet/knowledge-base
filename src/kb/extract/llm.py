@@ -10,9 +10,12 @@ Grok review fixes (2026-05-26):
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import os
 import re
+from pathlib import Path
 from typing import Any
 
 from openai import AsyncOpenAI
@@ -26,6 +29,71 @@ logger = logging.getLogger("kb.extract.llm")
 def make_client() -> AsyncOpenAI:
     s = get_settings()
     return AsyncOpenAI(base_url=s.ai_base_url, api_key=s.ai_api_key or "no-key")
+
+
+# --------------------------------------------------------------------------
+# Deterministic LLM response cache (eval replay).
+# Off by default. Enabled via KB_LLM_CACHE_DIR. Files are keyed by sha256 of
+# (model, system, user, params) and written atomically.
+# --------------------------------------------------------------------------
+
+def _cache_dir() -> Path | None:
+    s = get_settings()
+    if not s.llm_cache_dir:
+        return None
+    p = Path(s.llm_cache_dir)
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def cache_key(*, model: str, system: str, user: str, params: dict[str, Any]) -> str:
+    """Stable cache key. Public so eval/* can share the same hash."""
+    h = hashlib.sha256()
+    h.update(model.encode("utf-8")); h.update(b"\x00")
+    h.update(system.encode("utf-8")); h.update(b"\x00")
+    h.update(user.encode("utf-8")); h.update(b"\x00")
+    h.update(json.dumps(params, sort_keys=True, default=str).encode("utf-8"))
+    return h.hexdigest()
+
+
+def cache_get(key: str) -> dict[str, Any] | None:
+    d = _cache_dir()
+    if not d:
+        return None
+    f = d / f"{key}.json"
+    if not f.exists():
+        return None
+    try:
+        return json.loads(f.read_text())
+    except Exception as e:
+        logger.warning("llm cache read failed for %s: %s", key[:12], e)
+        return None
+
+
+def cache_put(key: str, value: dict[str, Any]) -> None:
+    d = _cache_dir()
+    if not d:
+        return
+    f = d / f"{key}.json"
+    tmp = d / f"{key}.json.tmp"
+    try:
+        tmp.write_text(json.dumps(value))
+        os.replace(tmp, f)
+    except Exception as e:
+        logger.warning("llm cache write failed for %s: %s", key[:12], e)
+
+
+def _gateway_extras() -> dict[str, Any]:
+    """Return per-request extras a routing gateway may require.
+
+    The free-AI gateway demands `project_id` in the request body. We pass it via
+    OpenAI SDK's `extra_body=` so the same code path also works with vanilla
+    OpenAI/DeepSeek/Together/vLLM (which silently ignore unknown fields).
+    """
+    s = get_settings()
+    if s.ai_project_id:
+        return {"extra_body": {"project_id": s.ai_project_id}}
+    return {}
 
 
 def _coerce_json(text: str) -> dict[str, Any]:
@@ -108,6 +176,15 @@ async def chat_json(
     client = make_client()
     mdl = model or s.extract_model or s.ai_model
 
+    # Cache lookup (eval replay).
+    ck = cache_key(
+        model=mdl, system=system, user=user,
+        params={"kind": "json", "schema": schema, "t": temperature, "max": max_tokens},
+    )
+    hit = cache_get(ck)
+    if hit is not None:
+        return hit.get("data", {})
+
     tools = [
         {
             "type": "function",
@@ -119,6 +196,7 @@ async def chat_json(
         }
     ]
 
+    result: dict[str, Any] = {}
     try:
         resp = await client.chat.completions.create(
             model=mdl,
@@ -131,14 +209,16 @@ async def chat_json(
             temperature=temperature,
             max_tokens=max_tokens,
             timeout=timeout_s,
+            **_gateway_extras(),
         )
         choice = resp.choices[0]
         if choice.message.tool_calls:
             args = choice.message.tool_calls[0].function.arguments
-            if isinstance(args, str):
-                return _coerce_json(args)
-            return args or {}
-        return _coerce_json(choice.message.content or "")
+            result = _coerce_json(args) if isinstance(args, str) else (args or {})
+        else:
+            result = _coerce_json(choice.message.content or "")
+        cache_put(ck, {"data": result})
+        return result
     except Exception as e:
         _log_llm_error("chat_json:tool_call", e)
         # If the failure is unambiguous (auth/quota), bail loudly to the caller.
@@ -156,8 +236,11 @@ async def chat_json(
                 temperature=temperature,
                 max_tokens=max_tokens,
                 timeout=timeout_s,
+                **_gateway_extras(),
             )
-            return _coerce_json(resp.choices[0].message.content or "")
+            result = _coerce_json(resp.choices[0].message.content or "")
+            cache_put(ck, {"data": result})
+            return result
         except Exception as e2:
             _log_llm_error("chat_json:json_object", e2)
             kind2, _ = _classify_llm_error(e2)
@@ -190,12 +273,27 @@ async def chat_text_with_usage(
     s = get_settings()
     client = make_client()
     mdl = model or s.synthesize_model or s.ai_model
+
+    ck = cache_key(
+        model=mdl, system=system, user=user,
+        params={"kind": "text", "t": temperature, "max": max_tokens},
+    )
+    hit = cache_get(ck)
+    if hit is not None:
+        # Cached entries record usage so token-accounting stays consistent
+        # across replays; if the cached payload predates that field we degrade
+        # gracefully.
+        return hit.get("text", ""), hit.get("usage") or {
+            "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "model": mdl,
+        }
+
     try:
         resp = await client.chat.completions.create(
             model=mdl,
             messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
             temperature=temperature,
             max_tokens=max_tokens,
+            **_gateway_extras(),
         )
     except Exception as e:
         _log_llm_error("chat_text", e)
@@ -210,4 +308,5 @@ async def chat_text_with_usage(
         "total_tokens": int(getattr(resp.usage, "total_tokens", 0) or 0),
         "model": mdl,
     }
+    cache_put(ck, {"text": text, "usage": usage})
     return text, usage
