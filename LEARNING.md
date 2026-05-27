@@ -1,13 +1,29 @@
 # Learning doc — catch up on the full session
 
-This is the **one document** to read end-to-end and understand everything we did, every decision made, every bug found, every number recorded. It complements rather than replaces the other docs:
+This is the **one document** to read end-to-end and understand everything we did, every decision made, every bug found, every number recorded.
 
-- `README.md` — how to run
+- `README.md` — how to run + headline finding
 - `DESIGN.md` — architecture / trickiest decisions
 - `NOTES.md` — engineering notes, dense decision log
 - `LIVE_VERIFICATION.md` — snapshot of the last good eval
 - `GROK_FINDINGS.md` — external code review with 13 findings
 - **this file** — the *story*, in chronological session order, with the why behind every move
+
+---
+
+## Part 0 — Five design calls I'd defend hard in conversation
+
+Surfacing these up front because they're the moments a reviewer will most likely ask about, and the answers are non-obvious:
+
+1. **Postgres-only for metadata, even though everything else is pluggable.** The PRD asks for pluggable vector store, pluggable LLM, pluggable source. It does NOT ask for pluggable metadata DB. Postgres-specific features (JSONB `||`, recursive CTEs, `SKIP LOCKED`, advisory locks for cross-process bootstrap) earn their keep. Treating "pluggable everything" as dogma would make this worse, not better.
+
+2. **Wrap Unstructured, don't reinvent parsing.** They've solved 10 years of layout detection, OCR routing, and table extraction. The interesting layer is what goes ABOVE — schema-driven extraction with per-field provenance, entity resolution, retrieval-quality decisions. Reinventing the parser would have eaten 80% of the session for 0% of the differentiation.
+
+3. **Cherry-pick LlamaIndex's *patterns*, never depend on it.** LlamaIndex has real version churn (0.10 → 0.11 broke `ServiceContext`; 0.12 broke `WorkflowHandler.run_step`). I read their reference pipeline shapes (HierarchicalNodeParser, AutoMergingRetriever, CitationQueryEngine) and implemented the same shapes from scratch so the codebase stays version-stable. Same calculus for LangChain.
+
+4. **Two demo domains is the test of pluggability, not one.** One proves capability; two proves the system is actually domain-agnostic. 9 distinct entity types across SEC + Legal schemas, zero shared code between them. The cross-domain eval confirmed it empirically — Legal × Flash even *beat* SEC × Flash (F1 0.787 vs 0.618).
+
+5. **"Cited or it didn't happen" is non-negotiable, including through new routes.** When I added the GraphRAG-sketch route, its narrative themes were shaping the answer but its underlying `entity_mentions` weren't in the final `Citation` list. I caught this in self-review — the answer was technically cited but a theme could draw from entity #14 in the graph route while the citation list cited chunks #2 and #5 from retrieval. Backfilled `via="graph_route"` citations deduped against retrieval, dedup by `(file_id, page_start)`. Cited stays cited.
 
 ---
 
