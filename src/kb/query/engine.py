@@ -400,6 +400,46 @@ async def answer_query(body: QueryIn) -> QueryOut:
         )
         hits = boosted
 
+    # Section-boost: when the question references section-shape vocabulary
+    # (e.g. "risk factors", "results of operations", "management's discussion")
+    # promote hits whose chunk metadata's `section_title` matches. Uses the
+    # `section_title` field added by build_chunks (chunking.py). Pure ordering
+    # boost; the LLM rerank stage below has the final say.
+    if bool(pipeline.get(cfg, "retrieve.section_boost_enabled", True)) and hits:
+        q_low = body.question.lower()
+        # Tokenize the question into 2+ word phrases that often map to SEC
+        # section names. A future-proof version would derive these from the
+        # schema; this list is the 80% on SEC + Legal.
+        _section_phrases = (
+            "risk factor", "risk factors",
+            "results of operations", "management discussion", "md&a",
+            "supply chain", "customer concentration", "export control",
+            "climate", "cybersecurity",
+            "warranty", "indemnif", "license grant", "patent grant",
+            "copyleft", "redistribut",
+        )
+        matchers = [p for p in _section_phrases if p in q_low]
+        if matchers:
+            def _section_score(h: Any) -> float:
+                title = (h.metadata.get("section_title") or "").lower()
+                if not title:
+                    return 0.0
+                return float(sum(1 for p in matchers if p in title))
+
+            hits = sorted(
+                hits,
+                key=lambda h: (_section_score(h), h.score),
+                reverse=True,
+            )
+            stages.append(
+                {
+                    "stage": "section_boost",
+                    "latency_ms": 0,
+                    "matched_phrases": matchers[:3],
+                    "boosted_count": sum(1 for h in hits[:rerank_top_k] if _section_score(h) > 0),
+                }
+            )
+
     # ── Stage 3: cross-encoder rerank ────────────────────────────────────────
     mmr_pool = int(pipeline.get(cfg, "retrieve.mmr_pool", rerank_top_k * 2))
     if bool(pipeline.get(cfg, "retrieve.rerank_with_cross_encoder", True)) and hits:

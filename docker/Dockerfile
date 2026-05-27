@@ -44,7 +44,7 @@ ENV FASTEMBED_CACHE_DIR=/opt/fastembed_cache
 RUN python -c "\
 from fastembed import TextEmbedding, SparseTextEmbedding;\
 from fastembed.rerank.cross_encoder import TextCrossEncoder;\
-TextEmbedding(model_name='BAAI/bge-small-en-v1.5');\
+TextEmbedding(model_name='BAAI/bge-large-en-v1.5');\
 SparseTextEmbedding(model_name='Qdrant/bm42-all-minilm-l6-v2-attentions');\
 TextCrossEncoder(model_name='jinaai/jina-reranker-v2-base-multilingual');\
 print('fastembed cache primed')\

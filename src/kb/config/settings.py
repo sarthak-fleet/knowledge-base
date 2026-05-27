@@ -37,7 +37,11 @@ class Settings(BaseSettings):
     llm_cache_dir: str = Field(default="", alias="KB_LLM_CACHE_DIR")
 
     # --- Embeddings (fastembed, local) ---
-    embed_model: str = "BAAI/bge-small-en-v1.5"
+    # bge-large-en-v1.5 (1024d) beats bge-small (384d) by ~5-10 pts NDCG on
+    # BEIR. The size trade-off (model ~1.3GB vs ~130MB, embeddings ~2.6x
+    # bigger in Qdrant) is worth it for any non-toy KB. Override via env.
+    embed_model: str = "BAAI/bge-large-en-v1.5"
+    embed_dim: int = 1024
     sparse_model: str = "Qdrant/bm42-all-minilm-l6-v2-attentions"
 
     # --- Storage ---

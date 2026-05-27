@@ -28,6 +28,46 @@ class HChunk:
 
 _SENT = re.compile(r"(?<=[.!?])\s+")
 
+# Element types that mark "good places" to break — i.e., a chunk boundary
+# at one of these is preferable to a mid-paragraph break of the same size.
+# Used by `_should_close_parent_here` to prefer element boundaries when
+# they fall within ±20% of the target chunk size.
+_BOUNDARY_TYPES = frozenset(
+    {"Title", "Header", "Table", "ListItem", "NarrativeText", "Address"}
+)
+
+
+def _should_close_parent_here(
+    *,
+    next_el_type: str,
+    cur_text_len: int,
+    next_el_len: int,
+    parent_size: int,
+    tolerance: float = 0.20,
+) -> bool:
+    """Decide whether to close the current parent chunk BEFORE appending the
+    next element.
+
+    Boundary-aware: if the next element starts a new section (Title/Header) or
+    we'd cross parent_size *and* current length is within (1-tolerance)*target,
+    close now. This preserves element-hierarchy boundaries in chunks rather
+    than breaking mid-paragraph just to hit a byte target.
+    """
+    if cur_text_len == 0:
+        return False
+    # A new section header is *always* a good place to close.
+    if next_el_type in ("Title", "Header"):
+        return True
+    # Within tolerance of the target and the next element would push us
+    # past — close now rather than overshoot or split awkwardly.
+    if (
+        cur_text_len >= int(parent_size * (1.0 - tolerance))
+        and cur_text_len + next_el_len > parent_size
+    ):
+        return True
+    # Hard ceiling — always close past the target.
+    return cur_text_len + next_el_len > parent_size
+
 
 def _split(text: str, max_chars: int) -> list[str]:
     if len(text) <= max_chars:
@@ -77,7 +117,16 @@ def build_chunks(
         if e.type in ("Title", "Header") and e.text.strip():
             cur_section_title = e.text.strip()[:200]
             cur_section_id = e.id
-        if cur is None or cur_text_len + len(e.text) > parent_size:
+        # Boundary-aware close: prefer breaking at element boundaries (esp.
+        # Title/Header) when we're within tolerance of the target size,
+        # rather than mid-paragraph just to hit the byte ceiling.
+        close_now = cur is None or _should_close_parent_here(
+            next_el_type=e.type,
+            cur_text_len=cur_text_len,
+            next_el_len=len(e.text),
+            parent_size=parent_size,
+        )
+        if close_now:
             cur = HChunk(
                 page_start=e.page,
                 page_end=e.page,
@@ -156,7 +205,13 @@ async def build_chunks_semantic(
         if e.type in ("Title", "Header") and e.text.strip():
             cur_section_title = e.text.strip()[:200]
             cur_section_id = e.id
-        if cur is None or cur_text_len + len(e.text) > parent_size:
+        close_now = cur is None or _should_close_parent_here(
+            next_el_type=e.type,
+            cur_text_len=cur_text_len,
+            next_el_len=len(e.text),
+            parent_size=parent_size,
+        )
+        if close_now:
             cur = HChunk(
                 page_start=e.page,
                 page_end=e.page,
