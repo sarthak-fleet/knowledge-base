@@ -36,12 +36,22 @@ async def _probe_vector() -> dict[str, Any]:
 
 
 async def _probe_object() -> dict[str, Any]:
+    """Round-trip a tiny object, then delete it.
+
+    Grok Issue 10: the prior probe wrote `_healthz/probe.txt` on every check
+    and never deleted, slowly littering the bucket. We now delete after the
+    exists() check; failure to delete is non-fatal (probe still reports ok).
+    """
     try:
         backend = _get_backend()
-        # Round-trip a tiny object
         key = "_healthz/probe.txt"
         await backend.put(key, b"ok", mime="text/plain")
         ok = await backend.exists(key)
+        try:
+            await backend.delete(key)
+        except Exception:
+            # Cleanup is best-effort. A stale probe object isn't a probe failure.
+            pass
         return {"ok": ok, "backend": get_settings().object_store}
     except Exception as e:
         return {"ok": False, "backend": get_settings().object_store, "error": str(e)[:200]}

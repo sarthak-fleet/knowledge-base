@@ -27,6 +27,7 @@ class _Backend:
     async def put(self, key: str, blob: bytes, mime: str | None = None) -> None: ...
     async def get(self, key: str) -> bytes: ...
     async def exists(self, key: str) -> bool: ...
+    async def delete(self, key: str) -> None: ...
 
 
 class _MinioBackend(_Backend):
@@ -73,6 +74,9 @@ class _MinioBackend(_Backend):
                 return False
         return await asyncio.to_thread(_do)
 
+    async def delete(self, key: str) -> None:
+        await asyncio.to_thread(self._client.remove_object, self._bucket, key)
+
 
 class _LocalBackend(_Backend):
     def __init__(self) -> None:
@@ -92,6 +96,10 @@ class _LocalBackend(_Backend):
 
     async def exists(self, key: str) -> bool:
         return await asyncio.to_thread(self._path(key).exists)
+
+    async def delete(self, key: str) -> None:
+        p = self._path(key)
+        await asyncio.to_thread(p.unlink, True)  # missing_ok=True
 
 
 _backend: _Backend | None = None

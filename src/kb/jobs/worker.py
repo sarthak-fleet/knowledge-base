@@ -6,7 +6,6 @@ Run with `python -m kb.jobs.worker`. Concurrency from KB_WORKER_CONCURRENCY.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import os
 import signal
@@ -51,9 +50,19 @@ async def _main() -> None:
         _running = False
         logger.info("shutdown signal received")
 
+    # Graceful shutdown:
+    # - Unix: asyncio's `add_signal_handler` integrates SIGINT/SIGTERM into
+    #   the event loop.
+    # - Windows: `add_signal_handler` raises NotImplementedError. We fall back
+    #   to plain `signal.signal`, which fires from the main thread and flips
+    #   `_running`; the worker loop polls it. Docker on Linux is the prod
+    #   target, so this Windows path is for local dev only.
+    # (Grok Issue 11: previously the Windows fallback was silently a no-op.)
     for sig in (signal.SIGINT, signal.SIGTERM):
-        with contextlib.suppress(NotImplementedError):
+        try:
             loop.add_signal_handler(sig, _stop)
+        except NotImplementedError:
+            signal.signal(sig, lambda *_: _stop())
 
     tasks = [
         asyncio.create_task(_worker_loop(worker_id=f"{hostname}-{os.getpid()}-{i}-{uuid.uuid4().hex[:4]}", idle_sleep=2.0))

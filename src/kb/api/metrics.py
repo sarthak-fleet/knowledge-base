@@ -13,8 +13,16 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
-from threading import Lock
 from typing import Any
+
+
+# Grok Issue 7: previously gated by `threading.Lock`. The whole app runs on a
+# single asyncio event loop (FastAPI + asyncio workers) so there is at most
+# one Python thread executing user code. Counter increments and deque appends
+# are GIL-atomic at bytecode level, so an explicit lock here is pure overhead
+# and a category error (threading primitives in async code). If this module
+# is ever called from a real threadpool, swap in `asyncio.Lock` and make the
+# recorders async.
 
 
 @dataclass
@@ -38,7 +46,6 @@ class _Stats:
         return len(self.samples)
 
 
-_lock = Lock()
 _stage_latencies: dict[str, _Stats] = {}
 _tokens: _Stats = _Stats()
 _queries_total = {"value": 0}
@@ -46,17 +53,15 @@ _ingest_total = {"value": 0}
 
 
 def record_query(latency_ms: int, token_total: int, stages: list[dict[str, Any]]) -> None:
-    with _lock:
-        _queries_total["value"] += 1
-        _tokens.add(float(token_total or 0))
-        for s in stages or []:
-            name = s.get("stage", "unknown")
-            _stage_latencies.setdefault(name, _Stats()).add(float(s.get("latency_ms", 0)))
+    _queries_total["value"] += 1
+    _tokens.add(float(token_total or 0))
+    for s in stages or []:
+        name = s.get("stage", "unknown")
+        _stage_latencies.setdefault(name, _Stats()).add(float(s.get("latency_ms", 0)))
 
 
 def record_ingest(file_count: int) -> None:
-    with _lock:
-        _ingest_total["value"] += int(file_count or 0)
+    _ingest_total["value"] += int(file_count or 0)
 
 
 def render_prometheus() -> str:
@@ -75,9 +80,10 @@ def render_prometheus() -> str:
     out.append(f"kb_query_tokens_count {_tokens.count()}")
     out.append("# HELP kb_stage_latency_ms Per-stage latency in ms (rolling)")
     out.append("# TYPE kb_stage_latency_ms summary")
-    with _lock:
-        for stage, stats in _stage_latencies.items():
-            out.append(f'kb_stage_latency_ms{{stage="{stage}",quantile="0.5"}} {stats.p(0.5):.2f}')
-            out.append(f'kb_stage_latency_ms{{stage="{stage}",quantile="0.95"}} {stats.p(0.95):.2f}')
-            out.append(f'kb_stage_latency_ms_count{{stage="{stage}"}} {stats.count()}')
+    # Snapshot the dict to avoid mutation during iteration in a future world
+    # where recorders happen from a non-event-loop thread.
+    for stage, stats in list(_stage_latencies.items()):
+        out.append(f'kb_stage_latency_ms{{stage="{stage}",quantile="0.5"}} {stats.p(0.5):.2f}')
+        out.append(f'kb_stage_latency_ms{{stage="{stage}",quantile="0.95"}} {stats.p(0.95):.2f}')
+        out.append(f'kb_stage_latency_ms_count{{stage="{stage}"}} {stats.count()}')
     return "\n".join(out) + "\n"

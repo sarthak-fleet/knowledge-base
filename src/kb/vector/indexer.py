@@ -107,7 +107,17 @@ async def index_extraction(result: ExtractionResult, parent_index: dict[str, str
     # citation excerpt stays the verbatim text. Toggle: synthesize.contextual_retrieval.
     use_ctx = bool(pipeline.get(cfg, "synthesize.contextual_retrieval", False))
     if use_ctx and children:
-        parent_text = " ".join(e.text for e in result.elements if e.text)[:12000]
+        # Grok Issue 13: log when the 12k-char CR ceiling actually fires so we
+        # know which long filings are being trimmed before going to the LLM.
+        ctx_limit = 12000
+        full_parent = " ".join(e.text for e in result.elements if e.text)
+        if len(full_parent) > ctx_limit:
+            logger.warning(
+                "contextual retrieval: parent for file %s is %d chars; truncating to %d (%.0f%% dropped)",
+                result.file_id, len(full_parent), ctx_limit,
+                100.0 * (len(full_parent) - ctx_limit) / len(full_parent),
+            )
+        parent_text = full_parent[:ctx_limit]
         try:
             prefixes = await contextualize_chunks(
                 parent_text=parent_text,

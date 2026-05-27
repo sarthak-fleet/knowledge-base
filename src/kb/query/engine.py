@@ -139,16 +139,18 @@ async def answer_query(body: QueryIn) -> QueryOut:
     duckdb_result: dict[str, Any] | None = None
     # Keyword fallback: the intent classifier is non-deterministic and sometimes
     # labels "which X had Y > Z?" as `lookup`. Catch the obvious shapes here so
-    # the DuckDB route still fires.
-    q_low = body.question.lower()
-    looks_aggregate = any(
-        kw in q_low for kw in (
-            "which compan", "how many", "highest", "lowest", "compare ", "across all",
-            "exceed", "above $", "more than $", "greater than", "less than $",
-            "average ", "median ", "total ", "sum ",
+    # the DuckDB route still fires. Centralised in kb.query.intent.looks_aggregate
+    # (Grok Issue 8).
+    from kb.query.intent import looks_aggregate as _looks_aggregate
+    looks_agg = _looks_aggregate(body.question)
+    if looks_agg and intent.kind == "lookup":
+        # Grok Issue 8: surface classifier drift so operators see when
+        # the keyword fallback is overriding the LLM-assigned intent.
+        logger.info(
+            "intent fallback fired: classifier=lookup but keyword shape suggests aggregate (q=%r)",
+            body.question[:80],
         )
-    )
-    if (intent.kind in ("aggregate", "compare") or looks_aggregate) and bool(
+    if (intent.kind in ("aggregate", "compare") or looks_agg) and bool(
         pipeline.get(cfg, "retrieve.duckdb_route_enabled", True)
     ):
         from kb.query.duckdb_route import maybe_duckdb_answer

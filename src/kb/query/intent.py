@@ -197,6 +197,28 @@ def intent_to_payload_filter(intent: QueryIntent, schema: DomainSchema) -> dict[
     return {}
 
 
+# Single source of truth for the aggregate-keyword fallback.
+# Grok Issue 8: previously this regex was inlined in engine.py and duplicated
+# (in spirit) elsewhere. Centralising it lets every caller share the same
+# heuristic, and `looks_aggregate` now logs when the fallback would override
+# a `lookup` classification so operators can see classifier drift in logs.
+_AGGREGATE_KEYWORDS = (
+    "which compan", "how many", "highest", "lowest", "compare ", "across all",
+    "exceed", "above $", "more than $", "greater than", "less than $",
+    "average ", "median ", "total ", "sum ",
+)
+
+
+def looks_aggregate(question: str) -> bool:
+    """True if the question shape suggests an aggregate/structured query.
+
+    Used as a safety net when the LLM intent classifier mis-labels an
+    obvious aggregate as `lookup`.
+    """
+    q_low = (question or "").lower()
+    return any(kw in q_low for kw in _AGGREGATE_KEYWORDS)
+
+
 async def intent_to_entity_ids(intent: QueryIntent, domain: str) -> list[str]:
     """Resolve intent (entity_type + facet filters) -> matching entity IDs."""
     from kb.query.structured import list_entities_matching
