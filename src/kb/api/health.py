@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from typing import Any
 
@@ -47,11 +48,9 @@ async def _probe_object() -> dict[str, Any]:
         key = "_healthz/probe.txt"
         await backend.put(key, b"ok", mime="text/plain")
         ok = await backend.exists(key)
-        try:
+        # Cleanup is best-effort. A stale probe object isn't a probe failure.
+        with contextlib.suppress(Exception):
             await backend.delete(key)
-        except Exception:
-            # Cleanup is best-effort. A stale probe object isn't a probe failure.
-            pass
         return {"ok": ok, "backend": get_settings().object_store}
     except Exception as e:
         return {"ok": False, "backend": get_settings().object_store, "error": str(e)[:200]}

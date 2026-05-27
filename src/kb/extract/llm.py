@@ -49,9 +49,13 @@ def _cache_dir() -> Path | None:
 def cache_key(*, model: str, system: str, user: str, params: dict[str, Any]) -> str:
     """Stable cache key. Public so eval/* can share the same hash."""
     h = hashlib.sha256()
-    h.update(model.encode("utf-8")); h.update(b"\x00")
-    h.update(system.encode("utf-8")); h.update(b"\x00")
-    h.update(user.encode("utf-8")); h.update(b"\x00")
+    sep = b"\x00"
+    h.update(model.encode("utf-8"))
+    h.update(sep)
+    h.update(system.encode("utf-8"))
+    h.update(sep)
+    h.update(user.encode("utf-8"))
+    h.update(sep)
     h.update(json.dumps(params, sort_keys=True, default=str).encode("utf-8"))
     return h.hexdigest()
 

@@ -15,7 +15,6 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
-
 # Grok Issue 7: previously gated by `threading.Lock`. The whole app runs on a
 # single asyncio event loop (FastAPI + asyncio workers) so there is at most
 # one Python thread executing user code. Counter increments and deque appends
