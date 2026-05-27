@@ -1,0 +1,16 @@
+__pycache__
+*.py[cod]
+.venv/
+.uv/
+data/
+.git/
+.github/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.husky/_/
+node_modules/
+*.egg-info/
+dist/
+build/
+eval_report.json

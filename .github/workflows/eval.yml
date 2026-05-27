@@ -1,0 +1,109 @@
+name: eval-on-pr
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "domains/**"
+      - "pyproject.toml"
+      - "docker-compose.yml"
+  workflow_dispatch: {}
+
+jobs:
+  ragas-eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: kb
+          POSTGRES_USER: kb
+          POSTGRES_PASSWORD: kb
+        ports: ["5434:5432"]
+        options: >-
+          --health-cmd "pg_isready -U kb -d kb"
+          --health-interval 3s --health-timeout 3s --health-retries 20
+      qdrant:
+        image: qdrant/qdrant:v1.12.4
+        ports: ["6333:6333"]
+      minio:
+        image: minio/minio:RELEASE.2024-10-13T13-34-11Z
+        env:
+          MINIO_ROOT_USER: kbminio
+          MINIO_ROOT_PASSWORD: kbminio-secret
+        ports: ["9000:9000"]
+        options: --health-cmd "curl -fsS http://localhost:9000/minio/health/live" --health-interval 3s --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.4.30"
+      - run: uv python install 3.11
+      - run: uv sync --all-extras
+      - name: Lint + unit tests
+        run: |
+          uv run ruff check src tests
+          uv run pytest -q
+      - name: Skip live RAGAS without an API key
+        if: ${{ env.AI_API_KEY == '' }}
+        run: echo "AI_API_KEY not configured — skipping live RAGAS eval (lint + unit tests covered)"
+      - name: Bring up the API
+        if: ${{ env.AI_API_KEY != '' }}
+        env:
+          AI_API_KEY: ${{ secrets.AI_API_KEY }}
+          AI_BASE_URL: ${{ secrets.AI_BASE_URL }}
+          AI_MODEL: ${{ secrets.AI_MODEL }}
+          KB_JUDGE_MODEL: ${{ secrets.KB_JUDGE_MODEL }}
+          KB_POSTGRES_DSN: postgresql+asyncpg://kb:kb@localhost:5434/kb
+          KB_QDRANT_URL: http://localhost:6333
+          KB_OBJECT_STORE: local
+          KB_LOCAL_DATA_DIR: /tmp/kb-data
+        run: |
+          mkdir -p /tmp/kb-data
+          uv run python -m kb.cli db init
+          uv run uvicorn kb.api.app:app --host 127.0.0.1 --port 8000 &
+          sleep 8
+          curl -fsS http://127.0.0.1:8000/healthz
+      - name: Run eval with RAGAS
+        if: ${{ env.AI_API_KEY != '' }}
+        env:
+          KB_API_URL: http://127.0.0.1:8000
+          AI_API_KEY: ${{ secrets.AI_API_KEY }}
+          AI_BASE_URL: ${{ secrets.AI_BASE_URL }}
+          AI_MODEL: ${{ secrets.AI_MODEL }}
+          KB_JUDGE_MODEL: ${{ secrets.KB_JUDGE_MODEL }}
+        run: |
+          uv run python -m kb.cli schema apply domains/sec/schema.yaml
+          # Seed a minimal corpus for CI — just the synthetic XLSX + small PDFs (skip EDGAR network)
+          uv run python -m kb.seed.legal_seed
+          uv run python -m kb.cli ingest run --domain legal --force
+          sleep 60
+          uv run python -m kb.eval.run --domain legal --dataset domains/legal/eval/dataset.yaml --output eval_report.json --ragas
+      - name: Post eval result as PR comment
+        if: ${{ github.event_name == 'pull_request' && env.AI_API_KEY != '' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            if (!fs.existsSync('eval_report.json')) return;
+            const r = JSON.parse(fs.readFileSync('eval_report.json'));
+            const ragas = r.ragas || {};
+            const body = [
+              '## RAGAS eval (legal)',
+              '',
+              '| Metric | Value |',
+              '|---|---|',
+              `| Citation F1 | ${r.mean_citation_f1?.toFixed(3) ?? 'n/a'} |`,
+              `| Answer pass rate | ${(r.answer_pass_rate * 100)?.toFixed(1) ?? 'n/a'}% |`,
+              `| RAGAS faithfulness | ${ragas.faithfulness?.toFixed(3) ?? 'n/a'} |`,
+              `| RAGAS context_precision | ${ragas.context_precision?.toFixed(3) ?? 'n/a'} |`,
+              `| RAGAS context_recall | ${ragas.context_recall?.toFixed(3) ?? 'n/a'} |`,
+              `| RAGAS answer_relevance | ${ragas.answer_relevance?.toFixed(3) ?? 'n/a'} |`,
+            ].join('\n');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            });

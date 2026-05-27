@@ -1,0 +1,175 @@
+# Ground-truth Q&A for the SEC demo. `expected_files` matches by substring against
+# uploaded filenames. `key_facts` feeds the LLM-judge: every fact must be supported
+# (paraphrase OK) and the answer must not contradict any fact.
+#
+# This dataset is aligned with the seed corpus produced by `make seed`:
+#   - NVDA + AAPL 10-K, 10-Q, 8-K from EDGAR (HTML)
+#   - One digital PDF + one scanned (image-only) PDF derived from NVDA risk factors
+#   - One synthetic financial summary XLSX
+#
+# Includes negative-case questions (q05, q12) that the system should REFUSE
+# rather than fabricate.
+
+domain: sec
+questions:
+  - id: q01
+    question: "What does NVIDIA disclose about U.S. export controls affecting semiconductor sales?"
+    expected_files: ["NVDA_10-K", "NVDA_riskfactors_sample"]
+    key_facts:
+      - "U.S. export controls have imposed restrictions on certain semiconductor sales"
+      - "China or specific markets are mentioned as affected"
+
+  - id: q02
+    question: "What percentage of NVIDIA's revenue did its largest customer account for in fiscal 2024?"
+    expected_files: ["NVDA_riskfactors_sample", "NVDA_10-K"]
+    key_facts:
+      - "Approximately 13% (or a similar specific percentage) is reported"
+      - "The figure is for NVIDIA's largest customer in fiscal 2024"
+
+  - id: q03
+    question: "Which semiconductor foundry does NVIDIA rely on, and what is the risk if they are disrupted?"
+    expected_files: ["NVDA_riskfactors_sample", "NVDA_10-K"]
+    key_facts:
+      - "Taiwan Semiconductor Manufacturing Company (TSMC) is identified"
+      - "Disruption would have a material adverse effect"
+
+  - id: q04
+    question: "Summarize Apple's disclosed risks related to single-source or limited-source suppliers in its most recent 10-K."
+    expected_files: ["AAPL_10-K"]
+    key_facts:
+      - "Apple relies on single or limited sources for some components"
+      - "A business interruption affecting such sources could exacerbate negative consequences"
+
+  - id: q05
+    question: "What is Microsoft's largest revenue segment according to its filings in this knowledge base?"
+    expected_files: []  # negative case — Microsoft is NOT in the corpus
+    key_facts:
+      - "The answer must explicitly state that the corpus does not contain Microsoft filings"
+
+  - id: q06
+    question: "From the summary financials, what was NVIDIA's Q2 2024 revenue?"
+    expected_files: ["summary_financials.xlsx"]
+    key_facts:
+      - "NVIDIA Q2 2024 revenue figure is provided (around $30,040 in millions)"
+
+  - id: q07
+    question: "From the summary financials, compare NVIDIA's Q1 2024 and Q2 2024 EPS-Diluted."
+    expected_files: ["summary_financials.xlsx"]
+    key_facts:
+      - "Q1 2024 NVDA EPS-Diluted is reported (5.98)"
+      - "Q2 2024 NVDA EPS-Diluted is reported (6.66)"
+
+  - id: q08
+    question: "Which companies in the summary financials had quarterly revenue exceeding $60 billion in any single quarter?"
+    expected_files: ["summary_financials.xlsx"]
+    key_facts:
+      - "At least one company with quarterly revenue above $60B is identified (Apple or Microsoft)"
+
+  - id: q09
+    question: "What does NVIDIA's most recent 10-Q discuss about its results of operations?"
+    expected_files: ["NVDA_10-Q"]
+    key_facts:
+      - "Results of operations are discussed for NVIDIA"
+      - "The source is a 10-Q filing"
+
+  - id: q10
+    question: "What was disclosed in NVIDIA's most recent 8-K filing in the corpus?"
+    expected_files: ["NVDA_8-K"]
+    key_facts:
+      - "An item code from an 8-K is identified (e.g. 2.02, 5.02, 7.01, 8.01)"
+      - "NVIDIA is the filer"
+
+  - id: q11
+    question: "What does Apple disclose about climate change or environmental risks in its filings?"
+    expected_files: ["AAPL_10-K", "AAPL_10-Q"]
+    key_facts:
+      - "Climate change is identified as a risk or environmental commitments are described"
+
+  - id: q12
+    question: "List every Microsoft 10-K filing year present in the knowledge base."
+    expected_files: []  # negative case
+    key_facts:
+      - "The answer must explicitly state that no Microsoft filings are present"
+
+  - id: q13
+    question: "What customer concentration risks does NVIDIA disclose?"
+    expected_files: ["NVDA_10-K", "NVDA_riskfactors_sample"]
+    key_facts:
+      - "A small number of customers account for a large share of revenue"
+
+  - id: q14
+    question: "What technology-related risks does Apple identify in its most recent 10-K?"
+    expected_files: ["AAPL_10-K"]
+    key_facts:
+      - "At least one technology-related risk is identified (AI, software, security, etc.)"
+
+  - id: q15
+    question: "Summarize the supply-chain risks NVIDIA discloses across its 10-K and the sample risk-factors documents."
+    expected_files: ["NVDA_10-K", "NVDA_riskfactors_sample"]
+    key_facts:
+      - "Supply chain concentration is discussed"
+      - "At least one specific risk (TSMC, manufacturing, components) is mentioned"
+
+  - id: q16
+    question: "Across the corpus, what is the most recent Apple 10-Q period covered?"
+    expected_files: ["AAPL_10-Q"]
+    key_facts:
+      - "An Apple 10-Q with a specific fiscal period is identified"
+
+  - id: q17
+    question: "Does NVIDIA's manufacturing depend on a single Taiwanese chip fabricator? Explain."
+    expected_files: ["NVDA_10-K", "NVDA_riskfactors_sample"]
+    key_facts:
+      - "TSMC (Taiwan Semiconductor Manufacturing Company) is named"
+      - "NVIDIA's manufacturing is concentrated with this supplier"
+
+  - id: q18
+    question: "What was NVIDIA's first-ever 10-K filing year?"
+    expected_files: []
+    key_facts:
+      - "The answer must NOT fabricate a year"
+      - "The answer should acknowledge limited historical scope (corpus only contains recent filings)"
+
+  - id: q19
+    question: "What is Apple's highest quarterly revenue figure in the summary financials?"
+    expected_files: ["summary_financials.xlsx"]
+    key_facts:
+      - "An Apple quarterly revenue figure is given (highest is around $94,930M in Q4 2024)"
+
+  - id: q20
+    question: "Per the documents, how concentrated is NVIDIA's revenue base by customer?"
+    expected_files: ["NVDA_10-K", "NVDA_riskfactors_sample"]
+    key_facts:
+      - "A small number of customers represent a large share of revenue (e.g. ~13% from the largest customer)"
+
+  - id: q21
+    question: "Across NVIDIA's filings in the corpus, what consistent themes appear in their risk factor disclosures?"
+    expected_files: ["NVDA_10-K"]
+    key_facts:
+      - "Export controls or geopolitical risk is mentioned"
+      - "Customer concentration or supply chain concentration is mentioned"
+
+  - id: q22
+    question: "What types of products are subject to U.S. export restrictions per NVIDIA's disclosures?"
+    expected_files: ["NVDA_10-K", "NVDA_riskfactors_sample"]
+    key_facts:
+      - "Advanced semiconductors or GPUs are mentioned as subject to export restrictions"
+
+  - id: q23
+    question: "What is Tesla's CEO's compensation per its 10-K in this corpus?"
+    expected_files: []
+    key_facts:
+      - "Tesla is not present in the corpus; the system must refuse"
+
+  - id: q24
+    question: "What disclosure events appear in Apple's 8-K in this corpus?"
+    expected_files: ["AAPL_8-K"]
+    key_facts:
+      - "At least one disclosure event or item code from the Apple 8-K is identified"
+
+  - id: q25
+    question: "Across all companies in the financial summary, which had the highest single-quarter net income?"
+    expected_files: ["summary_financials.xlsx"]
+    key_facts:
+      - "Apple is identified as having a high net income (around $21,448M in Q3 2024)"
+      - "OR NVIDIA's net income is correctly compared (around $16,599M in Q2 2024)"

@@ -1,0 +1,98 @@
+# Default pipeline behavior — domain configs override piecewise.
+llm:
+  # `model: null` → fall back to AI_MODEL / KB_EXTRACT_MODEL / KB_SYNTHESIZE_MODEL env.
+  extract:
+    model: null
+    temperature: 0.0
+    max_tokens: 4096
+    request_timeout_s: 120
+  synthesize:
+    model: null
+    temperature: 0.2
+    max_tokens: 1024
+    request_timeout_s: 60
+
+embedding:
+  dense: BAAI/bge-small-en-v1.5
+  dense_dim: 384
+  sparse: Qdrant/bm42-all-minilm-l6-v2-attentions
+  batch_size: 32
+
+parse:
+  default_strategy: auto
+  hi_res_pages_max: 200
+  ocr_languages: [eng]
+
+chunk:
+  parent_size: 2048
+  child_size: 512
+  overlap: 64
+  semantic_chunking: true     # LlamaIndex SemanticSplitterNodeParser pattern:
+                              # split at sentence pairs where embedding distance
+                              # exceeds 85th percentile. Fall back to fixed-size.
+
+extract:
+  window_pages: 8
+  window_overlap_pages: 1
+  max_concurrent_calls: 4
+  confidence_floor: 0.4
+
+resolve:
+  confident_threshold: 0.90               # lexical score >= this → merge without embedding
+  ambiguous_floor: 0.70                   # lexical score in [floor, confident) → use embedding tiebreak
+  embedding_tiebreak_threshold: 0.86      # embedding cosine >= this → merge
+  block_on_normalized_key: true
+
+retrieve:
+  top_k_dense: 60                      # bumped from 20: bigger pool for cross-encoder
+  top_k_sparse: 60
+  candidate_k: 100                     # union size BEFORE cross-encoder rerank
+  rerank_top_k: 8                      # final size returned to synthesis
+  rerank_with_cross_encoder: true      # toggle the second-stage reranker
+  mmr_enabled: false                   # diversity rerank. OFF by default; opt-in per domain.
+                                       # Eval impact: helps corpora with near-duplicate boilerplate
+                                       # (Legal +0.08 F1), hurts corpora where retrieval needs
+                                       # multiple closely-related chunks (SEC -0.13 F1).
+  mmr_pool: 16                         # candidate pool MMR chooses from when enabled
+  mmr_lambda: 0.7                      # 0=pure diversity, 1=pure relevance
+  hybrid_alpha: 0.5
+  auto_merge_threshold: 0.5
+  bookend_reorder: true                # Liu 2023: place best chunks at start + end of context
+  query_rewriting: true                # multi-query RRF — LLM rewrites question into 3 variants
+  query_rewriting_variants: 3
+  hyde: false                          # opt-in: generate hypothetical answer, embed, retrieve
+  query_decomposition: true            # multi-hop: LLM splits compound questions into sub-queries
+  crag_evaluator: true                 # score retrieval before synthesis; refuse if low
+  crag_min_score: 0.3                  # threshold below which CRAG triggers refusal
+
+synthesize:
+  max_excerpts_per_citation: 1
+  excerpt_chars: 400
+  refuse_if_no_citations: true
+  verify_citations: true             # per-claim entailment check (AIS/FActScore pattern)
+  contextual_retrieval: true         # Anthropic Sep-2024: prefix each chunk with a 1-sentence
+                                     # "where this chunk sits in the doc" context before embedding.
+                                     # Trades extra LLM calls at INGEST for −49% retrieval failures.
+  contextual_max_concurrent: 8
+
+retrieve_extra:
+  duckdb_route_enabled: true         # FinanceBench-pattern: aggregation questions run text-to-SQL
+                                     # over the entities table via in-memory DuckDB views.
+
+prompts:
+  extract_system: |
+    You are an extraction agent. Read the document context and produce JSON
+    matching the requested schema EXACTLY. For every field you fill, the source
+    must be supported by the provided context. If unsure, return null for that
+    field and lower your confidence. Never invent values.
+  synthesize_system: |
+    Answer ONLY from the provided sources. Every claim MUST be supported by an
+    inline citation [n] tied to the source list. If the sources do not contain
+    enough information to answer:
+      - Say so explicitly. Name the topic that was missing.
+      - Cite the sources you actually examined as inline [n] markers (so the
+        reader can verify the absence). For example:
+        "Based on the provided sources [1][2][3], there is no mention of <topic>.
+        The sources discuss <what they cover> but do not address <topic>."
+      - Report low confidence (≤ 0.3).
+    Never fabricate facts and never cite a source that doesn't exist.

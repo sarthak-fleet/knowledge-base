@@ -1,0 +1,69 @@
+domain: sec
+name: edgar-filings
+version: 1
+description: |
+  SEC EDGAR filings for US-listed companies. Captures filings, the issuing
+  company, and the parts of each filing (sections, risk factors, items) we
+  want to query in isolation.
+vocabulary:
+  "MD&A": "Management's Discussion and Analysis section of a 10-K or 10-Q"
+  "Item 1A": "Risk Factors section"
+  "Item 8": "Financial statements section"
+  "CIK": "SEC Central Index Key, a unique issuer identifier"
+
+entities:
+  - name: Company
+    description: A publicly traded issuer registered with the SEC.
+    summary_field: name
+    fields:
+      - { name: ticker,  type: string, required: true,  identity: true, description: "Stock ticker symbol, e.g. NVDA" }
+      - { name: cik,     type: string, required: false, identity: true, description: "SEC Central Index Key" }
+      - { name: name,    type: string, required: true, description: "Legal company name" }
+      - { name: sic,     type: string, description: "SIC industry code" }
+      - { name: hq,      type: string, description: "Headquarters location" }
+
+  - name: Filing
+    description: A single SEC filing (10-K, 10-Q, 8-K, etc.) submitted by a Company.
+    summary_field: title
+    fields:
+      - { name: accession_number, type: string, identity: true, required: true, description: "EDGAR accession number, uniquely identifies this filing" }
+      - { name: form_type,        type: enum,   required: true, enum: ["10-K","10-Q","8-K","S-1","DEF 14A","20-F","6-K","13F-HR","SC 13D","SC 13G"], description: "EDGAR form type" }
+      - { name: filed_date,       type: date,   required: true, description: "Date the filing was submitted to SEC" }
+      - { name: period_end,       type: date,   description: "Fiscal period the filing covers" }
+      - { name: title,            type: string, description: "Short human title, e.g. '8-K: Item 2.02 Results of Operations'" }
+      - { name: items,            type: array,  item_type: string, description: "8-K item codes when applicable, e.g. ['2.02','7.01']" }
+      - { name: fiscal_year,      type: integer, description: "Fiscal year covered by the filing" }
+
+  - name: Section
+    description: A named section inside a filing — MD&A, Risk Factors, etc.
+    summary_field: heading
+    fields:
+      - { name: heading,  type: string, identity: true, required: true, description: "Section heading text as it appears in the filing" }
+      - { name: item_code, type: string, description: "EDGAR item code (e.g. '1A', '7', '7A')" }
+      - { name: page_start, type: integer, description: "First page of this section in the source PDF" }
+      - { name: page_end,   type: integer, description: "Last page of this section in the source PDF" }
+      - { name: summary,    type: text,    description: "1–3 sentence summary of what the section says" }
+
+  - name: RiskFactor
+    description: An individual risk factor disclosed under Item 1A.
+    summary_field: title
+    fields:
+      - { name: title,    type: string, identity: true, required: true, description: "Risk factor heading / first sentence" }
+      - { name: category, type: enum, enum: [market, operational, regulatory, technology, financial, geopolitical, supply_chain, cybersecurity, climate, other], description: "Inferred risk category" }
+      - { name: summary,  type: text,   description: "Plain-language summary of the risk" }
+
+  - name: FinancialMetric
+    description: A reported financial number (revenue, net income, EPS, etc.).
+    summary_field: name
+    fields:
+      - { name: name,   type: string, identity: true, required: true, description: "Metric name, e.g. 'Revenue', 'Net Income', 'EPS-Diluted'" }
+      - { name: value,  type: number, description: "Numerical value in USD unless otherwise noted" }
+      - { name: unit,   type: string, description: "USD-millions, USD-billions, %, etc." }
+      - { name: period, type: string, description: "Period label, e.g. 'Q3 FY2024'" }
+
+relationships:
+  - { name: company_files,    kind: parent, from_type: Company, to_type: Filing,         description: "Company → Filing" }
+  - { name: filing_sections,  kind: parent, from_type: Filing,  to_type: Section,        description: "Filing → Section" }
+  - { name: filing_risks,     kind: parent, from_type: Filing,  to_type: RiskFactor,     description: "Filing → RiskFactor" }
+  - { name: filing_metrics,   kind: parent, from_type: Filing,  to_type: FinancialMetric,description: "Filing → FinancialMetric" }
+  - { name: references_company, kind: ref,  from_type: Filing,  to_type: Company,        description: "Filing references other companies (subsidiaries, competitors, peers)" }

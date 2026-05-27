@@ -1,0 +1,84 @@
+# Ground-truth Q&A for the legal-contracts demo (open-source software licenses).
+# Same scoring rubric as SEC; proves the eval harness is domain-agnostic too.
+
+domain: legal
+questions:
+  - id: l01
+    question: "What permission does the MIT License grant to the licensee?"
+    expected_files: ["MIT"]
+    key_facts:
+      - "Permission is granted to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies"
+      - "Free of charge"
+
+  - id: l02
+    question: "What disclaimers of warranty appear in the MIT License?"
+    expected_files: ["MIT"]
+    key_facts:
+      - "The software is provided 'AS IS', without warranty of any kind"
+
+  - id: l03
+    question: "What attribution requirement does the Apache 2.0 license impose on licensees?"
+    expected_files: ["Apache-2.0"]
+    key_facts:
+      - "A copy of the License must be included with the distribution"
+      - "Modifications must carry prominent notices"
+
+  - id: l04
+    question: "What does GPL-3.0 require when distributing modified versions?"
+    expected_files: ["GPL-3.0"]
+    key_facts:
+      - "Modified versions must be marked as changed"
+      - "The source code must be made available, OR derivative works must be licensed under the same GPL terms"
+
+  - id: l05
+    question: "Does the BSD 3-Clause license allow use of the original authors' names to endorse derived products?"
+    expected_files: ["BSD-3-Clause"]
+    key_facts:
+      - "The names of contributors may NOT be used to endorse or promote products derived from the software without prior written permission"
+
+  - id: l06
+    question: "What is the patent grant in Apache 2.0 and what triggers its revocation?"
+    expected_files: ["Apache-2.0"]
+    key_facts:
+      - "A perpetual, worldwide, royalty-free patent license is granted by each contributor"
+      - "The grant terminates if the licensee initiates patent litigation against the licensor (or any contributor)"
+
+  - id: l07
+    question: "Which of the licenses in the corpus are copyleft?"
+    expected_files: ["GPL-3.0", "MPL-2.0"]
+    key_facts:
+      - "GPL-3.0 is identified as strong copyleft"
+      - "MPL-2.0 is identified as weak (file-level) copyleft, OR another reasonable copyleft characterization"
+
+  - id: l08
+    question: "What is the ISC license's grant clause?"
+    expected_files: ["ISC"]
+    key_facts:
+      - "Permission to use, copy, modify, and/or distribute the software is granted"
+      - "Free of charge"
+
+  - id: l09
+    question: "Does the MPL-2.0 require source code disclosure for modified files?"
+    expected_files: ["MPL-2.0"]
+    key_facts:
+      - "Modified files must be made available in source form"
+      - "The MPL-2.0 license must apply to the modified files"
+
+  - id: l10
+    question: "Across the licenses in the corpus, which have an explicit patent grant clause?"
+    expected_files: ["Apache-2.0", "MPL-2.0", "GPL-3.0"]
+    key_facts:
+      - "Apache-2.0 has an explicit patent grant"
+      - "Additional licenses with patent provisions are correctly identified (GPL-3.0 and/or MPL-2.0)"
+
+  - id: l11
+    question: "What is the GPL's stance on combining GPL code with non-GPL code?"
+    expected_files: ["GPL-3.0"]
+    key_facts:
+      - "Combined works generally must be licensed as a whole under the GPL"
+
+  - id: l12
+    question: "What does the European Union Public License grant?"
+    expected_files: []  # negative case — EUPL is NOT in the corpus
+    key_facts:
+      - "The answer must explicitly state that the EUPL is not present in this corpus"

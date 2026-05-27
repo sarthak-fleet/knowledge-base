@@ -1,0 +1,53 @@
+domain: legal
+name: contracts
+version: 1
+description: |
+  Generic legal-contracts domain: licenses, agreements, and similar instruments.
+  Demonstrates that the KB service is domain-agnostic — exactly the same code
+  paths run on legal documents as on SEC filings, only the schema + seed differ.
+vocabulary:
+  "Licensor": "The party granting rights under a license"
+  "Licensee": "The party receiving rights under a license"
+  "Permissive license": "A license with minimal restrictions on redistribution"
+  "Copyleft": "A license that requires derivative works to be released under the same license"
+  "SPDX": "Software Package Data Exchange identifier (a standard short name for licenses)"
+
+entities:
+  - name: Contract
+    description: A legal instrument — a license, agreement, or similar document.
+    summary_field: title
+    fields:
+      - { name: title,    type: string, identity: true, required: true, description: "Human-readable name of the contract (e.g. 'MIT License', 'Apache License 2.0')" }
+      - { name: spdx_id,  type: string, identity: true, description: "SPDX identifier (e.g. 'MIT', 'Apache-2.0')" }
+      - { name: category, type: enum,   enum: [permissive, weak_copyleft, strong_copyleft, proprietary, public_domain, other], description: "License category" }
+      - { name: version,  type: string, description: "Version string if applicable" }
+      - { name: year,     type: integer, description: "Year of issue if stated" }
+
+  - name: Party
+    description: A party named in or addressed by the contract.
+    summary_field: name
+    fields:
+      - { name: name, type: string, identity: true, required: true, description: "Party name or role label (e.g. 'Licensor', 'Licensee', 'Contributor')" }
+      - { name: role, type: enum,   enum: [licensor, licensee, contributor, distributor, end_user, other], description: "Functional role" }
+
+  - name: Clause
+    description: A discrete clause of the contract, by topic.
+    summary_field: heading
+    fields:
+      - { name: heading, type: string, identity: true, required: true, description: "Short heading, e.g. 'Grant of License', 'Disclaimer of Warranty', 'Limitation of Liability', 'Attribution'" }
+      - { name: topic,   type: enum, enum: [grant, restriction, attribution, disclaimer, liability, distribution, modification, termination, patent, other], description: "Topic category" }
+      - { name: summary, type: text, description: "One-paragraph summary of what the clause says" }
+
+  - name: Obligation
+    description: A discrete obligation imposed by the contract on a party.
+    summary_field: description
+    fields:
+      - { name: description, type: text,  identity: true, required: true, description: "What the obligation requires" }
+      - { name: party_role,  type: enum,  enum: [licensor, licensee, contributor, distributor, end_user, other], description: "Whom the obligation falls on" }
+      - { name: severity,    type: enum,  enum: [must, must_not, should, may], description: "Strength of the obligation (RFC 2119 levels)" }
+
+relationships:
+  - { name: contract_parties,    kind: parent, from_type: Contract, to_type: Party,       description: "Contract → Party" }
+  - { name: contract_clauses,    kind: parent, from_type: Contract, to_type: Clause,      description: "Contract → Clause" }
+  - { name: contract_obligations,kind: parent, from_type: Contract, to_type: Obligation,  description: "Contract → Obligation" }
+  - { name: clause_obligations,  kind: ref,   from_type: Clause,    to_type: Obligation,  description: "Clause → Obligation it imposes" }

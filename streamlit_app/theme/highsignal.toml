@@ -1,0 +1,9 @@
+# Streamlit theme matched to HighSignal (fleet/high-signal/apps/web/src/app/globals.css).
+# oklch source values preserved as comments.
+[theme]
+base = "dark"
+primaryColor = "#3ec5d4"        # accent: oklch(0.78 0.18 195) cyan/teal
+backgroundColor = "#1a1a1a"     # bg: oklch(0.16 0 0)
+secondaryBackgroundColor = "#222222"
+textColor = "#f4f4f4"           # fg: oklch(0.96 0 0)
+font = "monospace"              # GeistMono unavailable in Streamlit; fall back to ui-mono

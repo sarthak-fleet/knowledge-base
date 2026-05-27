@@ -1,0 +1,17 @@
+# Overrides for the SEC demo. Anything not listed is inherited from defaults.yaml.
+parse:
+  default_strategy: auto       # 10-K/Q are usually digital PDFs; OCR kicks in only when needed
+  hi_res_pages_max: 400        # 10-Ks can be 300+ pages
+
+extract:
+  window_pages: 12             # filings have long sections; bigger windows reduce LLM calls
+  window_overlap_pages: 2
+
+retrieve:
+  top_k_dense: 25              # large corpora — surface more candidates before fusion
+  top_k_sparse: 25
+  rerank_top_k: 10
+  hybrid_alpha: 0.55           # lean slightly more on dense for financial language
+
+synthesize:
+  excerpt_chars: 600           # SEC sentences are long; keep more excerpt text in citations

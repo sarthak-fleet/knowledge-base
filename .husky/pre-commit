@@ -1,0 +1,11 @@
+#!/usr/bin/env sh
+# Mirror HighSignal's husky setup; runs ruff format-check + ruff lint on staged Python.
+set -e
+
+if command -v uv >/dev/null 2>&1; then
+  STAGED_PY=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.py$' || true)
+  if [ -n "$STAGED_PY" ]; then
+    echo "$STAGED_PY" | xargs uv run ruff format --check
+    echo "$STAGED_PY" | xargs uv run ruff check
+  fi
+fi
