@@ -2,8 +2,11 @@
 
 Domain-agnostic Knowledge Base over unstructured documents. Define your schema, drop in PDFs / HTMLs / spreadsheets, ask questions, get cited answers.
 
-> **Status (2026-05-26):** Verified end-to-end on a real LLM with 11 real SEC EDGAR documents.
-> Citation F1 0.605, answer pass 50% on 16-question eval set. See [`LIVE_VERIFICATION.md`](LIVE_VERIFICATION.md).
+> **Status (2026-05-27, Step 7 — cross-model + bug-sweep round):**
+> Verified end-to-end on the free-AI gateway across **5 synth models** × **2 domains**.
+> Headline: **SEC × llama-3.1-8b → F1 0.61, pass 0.68. Legal × Flash → F1 0.79, pass 0.67.**
+> Bigger model ≠ better for RAG synthesis — Pro hedged its way to a lower pass rate than llama-8b.
+> See [`LEARNING.md`](LEARNING.md) for the full session story or [`NOTES.md`](NOTES.md) § 4.7 for the matrix.
 
 ## One-command bootstrap
 
@@ -47,13 +50,18 @@ Then open:
 | `src/kb/config/` | Layered config — `defaults.yaml` < `domains/<d>/config.yaml` < env |
 | `src/kb/storage/` | Postgres engine + raw-SQL repo + object-store adapter (minio/local) |
 | `src/kb/eval/` | Eval runner: deterministic citation P/R + LLM-judge correctness |
-| `domains/sec/` | Demo schema + config + eval dataset (16 Q&A) for SEC EDGAR filings |
+| `domains/sec/` | Demo schema + config + 25-question eval set for SEC EDGAR filings |
+| `domains/legal/` | Demo schema + config + 12-question eval set for SPDX licenses |
 | `migrations/` | Postgres schema (extensions, tables, indexes), idempotent |
 | `streamlit_app/` | Single-page demo UI — HighSignal-styled dark theme |
 | `DESIGN.md` | Architecture, trade-offs, what's missing |
+| `NOTES.md` | Interview brief — decision log, eval timeline, all numbers |
+| `LEARNING.md` | The session story end-to-end, every decision, every bug found |
 | `LIVE_VERIFICATION.md` | Snapshot of the actual live run — eval numbers, sample answers |
+| `GROK_FINDINGS.md` | External code review (Grok 4.3); all 13 findings addressed |
 | `docs/runbook.md` | Operator runbook + common failure modes |
 | `docs/highsignal-integration.md` | Phase-2 plan to fold into HighSignal |
+| `scripts/chain_legal_evals.sh` | Chain multi-model evals back-to-back |
 
 ## Configurability (no domain values in source)
 
