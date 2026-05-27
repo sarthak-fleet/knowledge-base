@@ -26,16 +26,28 @@ async def query_stream(body: QueryIn) -> StreamingResponse:
     """Server-Sent Events stream.
 
     Emits a sequence of named events:
+      event: started   data: {"domain": "...", "question": "..."}      (immediate TTFB)
       event: stage     data: {"stage": "intent", "latency_ms": ...}    (one per stage)
       event: answer    data: {"answer": "...", "citations": [...]}      (final)
       event: error     data: {"detail": "..."}                          (on failure)
 
-    Internally we still run the full pipeline (no per-token streaming yet —
-    that requires upstream LLM streaming wiring). The SSE shape gives clients
-    a first-byte signal as each stage completes, which is the production UX win.
+    NOTE — the current shape is **not** truly incremental per-stage. The full
+    pipeline runs to completion inside `answer_query` and the stages are then
+    replayed as SSE events. We emit a `started` event up-front so the client
+    gets a real first-byte signal; the per-stage events still arrive only
+    after the pipeline finishes.
+
+    Truly incremental streaming requires `answer_query` to be an async
+    generator that yields stages as it computes them. Substantial refactor —
+    deferred. See DESIGN.md "what's missing".
     """
 
     async def _gen() -> AsyncIterator[bytes]:
+        # Ship a started event immediately so the client sees TTFB even
+        # though the rest is batched after the pipeline ends.
+        yield (
+            f"event: started\ndata: {json.dumps({'domain': body.domain, 'question': body.question})}\n\n"
+        ).encode()
         try:
             # Kick the full pipeline; collect the result.
             out = await answer_query(body)
