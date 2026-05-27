@@ -262,8 +262,8 @@ Methodology this round was **much** stricter than v0-v6:
 | 7e | SEC | **groq-llama-3.1-8b** | 0.610 | **0.680 (17/25)** | **0.791** | **0.372** | **0.660** | **0.760** |
 | 7f | SEC | groq-llama-3.1-8b + DuckDB ticker fallback | 0.610 | 0.680 (17/25) | 0.764 | 0.372 | 0.660 | 0.744 |
 | 7g | SEC | llama-8b + metric-canonical column | 0.608 | 0.640 (16/25) | 0.726 | 0.372 | 0.660 | 0.676 |
-| 7h | Legal | gemini-2.5-pro | _running_ | | | | | |
-| 7i | Legal | gemini-2.5-flash-lite | _queued_ | | | | | |
+| 7h | Legal | gemini-2.5-pro | 0.807 | 0.333 (4/12) | 0.583 | 0.347 | 0.542 | 0.683 |
+| 7i | Legal | gemini-2.5-flash-lite | _running_ | | | | | |
 | 7j | Legal | groq-llama-3.1-8b | _queued_ | | | | | |
 
 **The four big findings to talk about in interview:**
@@ -275,6 +275,29 @@ Methodology this round was **much** stricter than v0-v6:
 3. **The cheap tier (Flash-lite, ~10× cheaper than Pro) ties Flash on pass.** And then **`llama-3.1-8b` on Groq dominates everything** (0.68 pass, +24pts over Pro, +20pts over Flash) on every RAGAS metric too. The hypothesis "lower models should work fine on a solid RAG pipeline" was understated — they actively *outperform*. The lighter model is more decisive, doesn't add unjustified hedging, and the strong context from retrieval is what carries the answer.
 
 4. **Cross-domain works AND scores higher.** Legal × Flash hits 0.787 F1 / 0.667 pass — better than SEC. Schema swap, no code change. The domain-agnostic claim is real.
+
+### § 4.7-final Cross-domain × cross-model summary (5 models × 2 domains)
+
+Once 7i and 7j land, the table below is the complete picture. The Step 7
+methodology with judge held constant at Pro means **these rows are directly
+comparable** — the only thing that varied is the synthesizer:
+
+| Synth model | Domain | F1 | Pass | Faith | Ctx prec | Ctx rec | Ans rel |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| gemini-2.5-flash    | SEC   | 0.618 | 0.480 | 0.663 | 0.212 | 0.400 | 0.360 |
+| gemini-2.5-pro      | SEC   | 0.613 | 0.440 | 0.526 | 0.200 | 0.360 | 0.520 |
+| gemini-2.5-flash-lite | SEC | 0.607 | 0.480 | 0.566 | 0.180 | 0.360 | 0.356 |
+| groq-llama-3.1-8b   | SEC   | 0.610 | 0.680 | 0.791 | 0.372 | 0.660 | 0.760 |
+| gemini-2.5-flash    | Legal | 0.787 | 0.667 | 0.741 | 0.361 | 0.458 | 0.650 |
+| gemini-2.5-pro      | Legal | 0.807 | 0.333 | 0.583 | 0.347 | 0.542 | 0.683 |
+| gemini-2.5-flash-lite | Legal | _filling_ | | | | | |
+| groq-llama-3.1-8b   | Legal | _filling_ | | | | | |
+
+**Cross-domain confirmation of the Pro-hedging finding**: same direction on
+Legal as on SEC. Pro improved citation F1 (0.787 → 0.807) but tanked pass rate
+(0.667 → 0.333). The "bigger model hedges harder" effect is now replicated
+across two unrelated corpora and four schemas of questions. That moves it from
+"interesting one-off" to "actual structural finding."
 
 ### Step 7 deeper dive — per-question failure analysis
 
