@@ -8,7 +8,6 @@ from contextlib import asynccontextmanager
 from asgi_correlation_id import CorrelationIdMiddleware
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import ORJSONResponse
 
 from kb.api.routes import register_routes
 from kb.config import get_settings
@@ -50,9 +49,9 @@ def create_app() -> FastAPI:
         version="0.1.0",
         description="Domain-agnostic KB service: schema-driven ingestion, hybrid retrieval, cited answers.",
         lifespan=_lifespan,
-        # orjson is ~3-5x faster than stdlib json and serialises datetime/UUID/
-        # Decimal natively, so we don't need a custom encoder for trace records.
-        default_response_class=ORJSONResponse,
+        # Modern FastAPI serialises Pydantic models to JSON via orjson under
+        # the hood when a response_model is set — no custom response class
+        # needed. We import orjson as a dep so the path is available.
     )
 
     app.add_middleware(

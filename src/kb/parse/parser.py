@@ -206,6 +206,15 @@ async def parse_file(
     elif filename.lower().endswith(".pdf"):
         elements = await asyncio.to_thread(_parse_pdf_sync, blob, filename, strategy, ["eng"])
         parser = f"unstructured:pdf:{strategy}"
+        # Optional supplementary vision-LLM pass to pick up tables that
+        # Unstructured + tesseract miss. Opt-in via KB_PARSE_USE_VISION.
+        if settings.parse_use_vision:
+            from kb.parse.vision import augment_elements_with_vision_tables
+
+            elements = await augment_elements_with_vision_tables(
+                elements, blob, filename=filename
+            )
+            parser += "+vision"
     else:
         elements = await asyncio.to_thread(_parse_auto_sync, blob, filename)
         parser = "unstructured:auto"

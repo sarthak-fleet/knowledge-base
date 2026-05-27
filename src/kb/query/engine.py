@@ -192,6 +192,43 @@ async def answer_query(body: QueryIn) -> QueryOut:
         else:
             stages.append(_stage("duckdb", started, rows=0))
 
+    # ── Stage 1b.5: graph route for cross-document "themes" questions ───────
+    # GraphRAG-shaped (Microsoft, arXiv 2404.16130) but scoped to our entity
+    # graph: when the question asks for cross-document themes, vector retrieval
+    # over chunks is the wrong shape. Group entities, summarise, cite filings.
+    # NOT mutually exclusive with DuckDB — both can fire and feed the
+    # synthesizer complementary structured + narrative views.
+    graph_result: dict[str, Any] | None = None
+    if bool(pipeline.get(cfg, "retrieve.graph_route_enabled", True)):
+        from kb.query.graph_route import looks_like_themes, maybe_graph_answer
+
+        if looks_like_themes(body.question):
+            started = time.time()
+            try:
+                gr = await maybe_graph_answer(
+                    intent=intent, domain=body.domain, question=body.question
+                )
+            except Exception as e:
+                logger.warning("graph route failed: %s", e)
+                gr = None
+            if gr:
+                graph_result = {
+                    "summary": gr.summary,
+                    "rows": [{"id": r.get("id"), "type": r.get("type")} for r in gr.rows],
+                    "mentions": gr.mentions,
+                    "grouping_field": gr.grouping_field,
+                }
+                stages.append(
+                    _stage(
+                        "graph_route",
+                        started,
+                        entities=len(gr.rows),
+                        grouping=gr.grouping_field,
+                    )
+                )
+            else:
+                stages.append(_stage("graph_route", started, entities=0))
+
     # ── Stage 1c: query rewriting + HyDE + decomposition ────────────────────
     # Produces an expanded list of queries to retrieve against, fused via RRF.
     # All three are configurable on/off via retrieve.* config keys.
@@ -436,6 +473,13 @@ async def answer_query(body: QueryIn) -> QueryOut:
         structured_block += (
             "\nDuckDB query result (text-to-SQL over extracted tables; trust this for numeric/aggregation facts):\n"
             f"{duckdb_result['summary']}\n"
+        )
+    if graph_result:
+        structured_block += (
+            "\nGraph-route summary (cross-document themes derived from the "
+            f"entity layer, grouped by {graph_result['grouping_field']}; "
+            "use this as the spine of the answer for theme-shape questions):\n"
+            f"{graph_result['summary']}\n"
         )
     user_prompt = (
         f"Question: {body.question}{history_block}{structured_block}\n\n"

@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     log_level: str = "info"
     worker_concurrency: int = 4
     parse_strategy_default: Literal["auto", "fast", "hi_res", "ocr_only"] = "auto"
+    # When set, parse_pdf runs an extra multimodal pass via the configured AI
+    # model to extract tables from page images and add them as supplementary
+    # Element rows. Costs an LLM call per page (bounded to 8). Off by default.
+    parse_use_vision: bool = Field(default=False, alias="KB_PARSE_USE_VISION")
 
     @property
     def sync_postgres_dsn(self) -> str:
