@@ -49,6 +49,50 @@ def _ticker_from_filename(filename: str | None) -> str | None:
     m = _TICKER_FROM_FILENAME.match(filename)
     return m.group(1) if m else None
 
+
+# Metric-name normalization. The extraction LLM produces wildly inconsistent
+# `name` values across filings — "Revenue" vs "Total Net Sales" vs
+# "Net Sales - iPhone" all mean the same business concept, and the SQL
+# generator can't reliably guess which raw name maps to which question.
+#
+# This canonical-bucket map is overlaid as a new view column,
+# `metric_canonical`, so the LLM can write `WHERE metric_canonical='revenue'`
+# and pick up every shape. Buckets are conservative — if we don't know a
+# mapping, the column is NULL and the raw `name` is still available.
+#
+# Patterns are checked in order (most specific first). They match
+# case-insensitively as substrings of the raw name unless anchored.
+_METRIC_CANONICAL_PATTERNS: list[tuple[str, str]] = [
+    # eps_diluted before eps_basic so "eps - diluted" hits the right bucket
+    (r"\beps\b.*\bdilut", "eps_diluted"),
+    (r"\bdilut.*\beps\b", "eps_diluted"),
+    (r"earnings per share.*dilut", "eps_diluted"),
+    (r"\beps\b.*\bbasic", "eps_basic"),
+    (r"earnings per share.*basic", "eps_basic"),
+    # revenue family — Net Sales (Apple-flavor), Net Sales - X (Apple
+    # sub-segments), and the literal "Revenue" used by MSFT/NVDA.
+    (r"total net sales", "revenue"),
+    (r"net sales - ", "revenue_segment"),  # iPhone / Services etc. — sub-bucket
+    (r"\bnet sales\b", "revenue"),
+    (r"\brevenue\b", "revenue"),
+    (r"net income", "net_income"),
+    (r"net earnings", "net_income"),
+    (r"operating income", "operating_income"),
+    (r"gross margin", "gross_margin"),
+    (r"total assets", "total_assets"),
+    (r"cash and cash equiv", "cash"),
+]
+
+
+def _metric_canonical(raw_name: str | None) -> str | None:
+    if not raw_name:
+        return None
+    n = raw_name.lower().strip()
+    for pat, canon in _METRIC_CANONICAL_PATTERNS:
+        if re.search(pat, n):
+            return canon
+    return None
+
 logger = logging.getLogger("kb.query.duckdb")
 
 
@@ -90,6 +134,14 @@ def _build_duckdb_from_entities(entities_by_type: dict[str, list[dict]]) -> duck
             }
             for k in keys:
                 row[k] = fields.get(k)
+            # Inject metric_canonical for FinancialMetric so SQL can write
+            # `WHERE metric_canonical='revenue'` and hit every flavor of the
+            # underlying raw name ('Revenue', 'Total Net Sales', 'Net Sales',
+            # etc.). See _METRIC_CANONICAL_PATTERNS above for the mapping.
+            if etype == "FinancialMetric":
+                row["metric_canonical"] = _metric_canonical(
+                    fields.get("name") or row.get("display_name")
+                )
             norm.append(row)
         if norm:
             df = pd.DataFrame(norm)
@@ -117,6 +169,13 @@ _SQL_SYSTEM = (
     "(3) Use ILIKE for fuzzy string matches (period values store 'FY2024', not '2024'). "
     "(4) For numeric comparisons cast: CAST(value AS DOUBLE) > 60000. "
     "(5) Return at most 25 rows. "
+    "(6) For FinancialMetric, PREFER the `metric_canonical` column over the raw "
+    "`name` — it normalises across companies. Values: 'revenue' (covers 'Revenue', "
+    "'Net Sales', 'Total Net Sales'), 'revenue_segment' (Apple's 'Net Sales - iPhone' "
+    "etc.), 'net_income', 'operating_income', 'gross_margin', 'eps_diluted', "
+    "'eps_basic', 'total_assets', 'cash'. NULL when no mapping applies — in that case "
+    "fall back to ILIKE on the raw `name`. "
+    "(7) `ticker` is reliable: company stocks ('AAPL', 'NVDA', 'MSFT', 'TSLA', etc.). "
     "Reply with the SQL only, no markdown fences, no commentary."
 )
 
