@@ -153,10 +153,13 @@ async def answer_query(body: QueryIn) -> QueryOut:
     if (intent.kind in ("aggregate", "compare") or looks_agg) and bool(
         pipeline.get(cfg, "retrieve.duckdb_route_enabled", True)
     ):
-        from kb.query.duckdb_route import maybe_duckdb_answer
-
         started = time.time()
+        # The import is inside the try so a missing optional dep (or any
+        # transitive ImportError in duckdb_route) downgrades to "no DuckDB
+        # route" rather than 500'ing the whole query. We hit this in prod
+        # when duckdb wasn't yet in pyproject.toml.
         try:
+            from kb.query.duckdb_route import maybe_duckdb_answer
             dr = await maybe_duckdb_answer(intent=intent, domain=body.domain, question=body.question)
         except Exception as e:
             logger.warning("duckdb route failed: %s", e)
