@@ -113,6 +113,7 @@ services:
     env_file: .env
     environment:
       KB_API_URL: http://api:8000
+      PYTHONPATH: /app:/app/src
     ports:
       - "8501:8501"
     command:
