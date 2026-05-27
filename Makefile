@@ -48,6 +48,13 @@ fmt:
 	uv run ruff format src tests
 	uv run ruff check --fix src tests
 
+precommit-install:
+	uv tool install pre-commit
+	uv tool run pre-commit install
+
+precommit-run:
+	uv tool run pre-commit run --all-files
+
 clean:
 	docker compose down -v
 	rm -rf data/postgres data/qdrant data/minio data/cache

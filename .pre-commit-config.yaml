@@ -1,0 +1,40 @@
+# Standard pre-commit framework config. Install with:
+#   uv tool install pre-commit
+#   pre-commit install
+#
+# Runs on every `git commit`. The existing husky hook (.husky/pre-commit)
+# also runs uv-driven ruff — both pass; we get cross-language hook
+# orchestration (whitespace/yaml/json/etc.) for free.
+default_language_version:
+  python: python3.11
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: \.md$  # markdown trailing whitespace is sometimes meaningful (line breaks)
+      - id: end-of-file-fixer
+      - id: check-yaml
+        exclude: ^docker-compose\.yml$  # docker-compose uses YAML constructors ruff doesn't grok
+      - id: check-toml
+      - id: check-json
+      - id: check-added-large-files
+        args: ["--maxkb=512"]  # block accidental binary blobs
+      - id: check-merge-conflict
+      - id: debug-statements    # block stray `breakpoint()` / `pdb.set_trace()`
+      - id: detect-private-key  # block accidental commit of PEM-style keys
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.7.4
+    hooks:
+      - id: ruff
+        args: ["--fix", "--exit-non-zero-on-fix"]
+        files: ^(src|tests)/
+      - id: ruff-format
+        files: ^(src|tests)/
+
+  - repo: https://github.com/abravalheri/validate-pyproject
+    rev: v0.23
+    hooks:
+      - id: validate-pyproject
