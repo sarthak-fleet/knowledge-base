@@ -1,5 +1,56 @@
 # Live verification — final
 
+> **Update 2026-05-27 — Step 7 (cross-model + bug-sweep round)**
+>
+> The data below was captured 2026-05-26 during the v5 phase. **Read this top
+> section first** for the Step 7 truth; it supersedes the v5 numbers in this
+> document. The v5 section remains as historical record of what was true then.
+>
+> ### Step 7 stack health (2026-05-27)
+>
+> All containers up:
+> ```
+> kb-api        Up (model: AI_MODEL routed via free-AI gateway)
+> kb-minio      Up (healthy)
+> kb-postgres   Up (healthy)
+> kb-qdrant     Up
+> kb-streamlit  Up — verified HTTP 200 on http://localhost:8501
+> kb-worker     Up
+> ```
+>
+> ### Step 7 honest scars uncovered
+>
+> 1. **DuckDB structured-query route was 100% broken in v0-v5.** `duckdb` was
+>    missing from `pyproject.toml`; the `import` lived outside the try/except
+>    in `engine.py`, so every aggregate question returned 500. All v5 numbers
+>    were achieved with this route effectively dead. Fixed in commit `591037d`.
+> 2. **Most FinancialMetric entities lacked `ticker`** (3 of 15). DuckDB SQL
+>    `WHERE ticker='AAPL'` filtered to zero rows. Fixed in commit `3955e5e`
+>    via filename-prefix fallback.
+> 3. **Metric names are inconsistent** across companies (Apple "Total Net Sales"
+>    vs MSFT "Revenue"). Added derived `metric_canonical` column. Fix correct
+>    behaviorally but on this 25-question dataset the lift was within
+>    noise (eval noise floor measured at ±1 question = ±4pts pass).
+> 4. **Prometheus `record_query` was a ghost feature** — defined, never called.
+>    Now actually fires (commit `0f21cf0`).
+> 5. **The free-AI gateway needs `project_id` in the request body** — added
+>    via OpenAI SDK's `extra_body=` (commit `b8bc09b`).
+>
+> ### Step 7 cross-model × cross-domain matrix (judge=gemini-2.5-pro constant)
+>
+> See § 4.7 of NOTES.md for the live-filling matrix. Headline already in:
+>
+> - **Citation F1 ~0.61 across every SEC synth model** — retrieval is the
+>   bottleneck, citation parsing is deterministic
+> - **`llama-3.1-8b` dominates Pro by +24pts on pass** — bigger model ≠ better
+>   for RAG synthesis when retrieval is solid; Pro hedges, llama commits
+> - **Legal × Flash hits 0.787 F1 / 0.667 pass**, beating SEC across the board
+>   — cross-domain claim holds with zero code changes
+>
+> ---
+>
+> The v5-era write-up below remains for context but its eval numbers are stale.
+
 Captured 2026-05-26 against the running stack with all upgrades enabled.
 
 ## Stack

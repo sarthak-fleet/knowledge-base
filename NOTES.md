@@ -261,6 +261,10 @@ Methodology this round was **much** stricter than v0-v6:
 | 7d | Legal | gemini-2.5-flash | **0.787** | **0.667 (8/12)** | 0.741 | 0.361 | 0.458 | 0.650 |
 | 7e | SEC | **groq-llama-3.1-8b** | 0.610 | **0.680 (17/25)** | **0.791** | **0.372** | **0.660** | **0.760** |
 | 7f | SEC | groq-llama-3.1-8b + DuckDB ticker fallback | 0.610 | 0.680 (17/25) | 0.764 | 0.372 | 0.660 | 0.744 |
+| 7g | SEC | llama-8b + metric-canonical column | 0.608 | 0.640 (16/25) | 0.726 | 0.372 | 0.660 | 0.676 |
+| 7h | Legal | gemini-2.5-pro | _running_ | | | | | |
+| 7i | Legal | gemini-2.5-flash-lite | _queued_ | | | | | |
+| 7j | Legal | groq-llama-3.1-8b | _queued_ | | | | | |
 
 **The four big findings to talk about in interview:**
 

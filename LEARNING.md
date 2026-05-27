@@ -205,7 +205,10 @@ Each run: pick a synth model, set `AI_MODEL` in `.env`, force-recreate the api c
 | 7d | Legal | gemini-2.5-flash | **0.787** | **0.667** | 0.741 | 0.361 | 0.458 | 0.650 |
 | 7e | SEC | **groq-llama-3.1-8b** | 0.610 | **0.680** | **0.791** | **0.372** | **0.660** | **0.760** |
 | 7f | SEC | llama-8b + DuckDB ticker fix | 0.610 | 0.680 | 0.764 | 0.372 | 0.660 | 0.744 |
-| 7g | SEC | llama-8b + metric-canonical fix | (in flight) | | | | | |
+| 7g | SEC | llama-8b + metric-canonical fix | 0.608 | 0.640 | 0.726 | 0.372 | 0.660 | 0.676 |
+| 7h | Legal | gemini-2.5-pro | _filling_ | | | | | |
+| 7i | Legal | gemini-2.5-flash-lite | _filling_ | | | | | |
+| 7j | Legal | groq-llama-3.1-8b | _filling_ | | | | | |
 
 ### Findings
 
