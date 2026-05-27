@@ -127,8 +127,18 @@ def _coerce_json(text: str) -> dict[str, Any]:
 
 
 def _classify_llm_error(e: BaseException) -> tuple[str, bool]:
-    """Return (kind, retryable). Kinds: auth | quota | rate | timeout | shape | other."""
+    """Return (kind, retryable). Kinds: auth | quota | rate | timeout | shape | other.
+
+    Routing gateways (e.g. free-AI gateway) emit `"All providers failed: <X>"`
+    wrappers when EVERY upstream provider returns the same shape (incl. 401 /
+    402 / timeout). That is a transient *gateway-side* failure, not a terminal
+    auth issue on our end — our credentials are unchanged. Classify it as
+    rate-limit-shaped (retryable) so tenacity gets a chance to wait it out
+    instead of bailing immediately.
+    """
     msg = str(e)
+    if "All providers failed" in msg:
+        return "rate", True
     if "402" in msg or "Insufficient" in msg or "billing" in msg.lower():
         return "quota", False
     if "401" in msg or "Unauthor" in msg or "invalid api key" in msg.lower():
