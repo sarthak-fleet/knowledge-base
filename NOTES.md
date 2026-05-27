@@ -344,6 +344,35 @@ The v0-v5 SEC numbers were achieved **with the DuckDB structured-query route sil
 
 What surfaced this: Grok finding #12 (load LLM errors at WARNING/ERROR) — when I switched to the free gateway and watched API logs during a real eval, the `ModuleNotFoundError: No module named 'duckdb'` showed up. Both root causes fixed in Step 7 commits. The Step 7 numbers above are the first ones with the route actually live.
 
+### Why "retrieval iteration" was explicitly cancelled, not skipped
+
+Worth being explicit, because the Step 7 matrix points at retrieval as the
+remaining bottleneck (Citation F1 stuck at ~0.61 across 4 SEC synth models).
+The obvious follow-up was "tune the rerank threshold + candidate pool." We
+considered it, decided **not** to do it, and the reasoning is:
+
+1. **Below the noise floor.** The 25-question SEC eval has empirically-
+   measured run-to-run variance of ~±1 question = ±4 pass-rate points
+   (the metric_canonical run that flipped q16 was within this band).
+   Most rerank tweaks move 1-2 questions. We'd burn time and get back
+   a number indistinguishable from noise.
+
+2. **No principled hypothesis.** Other Step 7 work had concrete theses
+   ("instructor replaces the parse-and-pray pattern"; "prometheus_client
+   replaces the deque aggregator"). Retrieval iteration here would be
+   "try a knob, see what happens" — fine for research, weak for a
+   shippable diff.
+
+3. **The diagnostic value is already captured.** Five-model-by-two-domain
+   matrix already produced the finding: model swaps don't move citation
+   F1 → retrieval is structural. That's the interesting result; running
+   one more knob-tune doesn't sharpen it.
+
+**What would unblock it**: a larger eval set (100+ questions with
+hard-negatives) so deltas escape the noise floor, and a concrete
+failure-mode hypothesis to test. Until then, retrieval iteration is
+cancelled, not deferred.
+
 ### Step 6 — the billing event and what it taught us
 
 The final eval came back at F1 0.160 / pass 0.000 / every RAGAS metric 0.000.
