@@ -18,11 +18,21 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from aiolimiter import AsyncLimiter
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 from tenacity import retry, stop_after_attempt, wait_exponential_jitter
 
 from kb.config import get_settings
+
+# Client-side rate limit. The free-AI gateway intermittently returns 502s
+# with bodies like "All providers failed: 429 Rate limit exceeded" when we
+# fan out queries (e.g. running an eval with 10+ concurrent /query calls,
+# each issuing 6+ LLM sub-calls). Per-request tenacity retries help but
+# they don't *prevent* the storm — a leaky-bucket limiter on the way out
+# does. 8 requests/second is conservative for most providers' free tiers
+# and well below where Groq/Gemini complain.
+_gateway_limiter = AsyncLimiter(max_rate=8, time_period=1.0)
 
 if TYPE_CHECKING:
     import instructor
@@ -230,18 +240,19 @@ async def chat_structured(
 
     client = _instructor_client()
     try:
-        result: _T_MODEL = await client.chat.completions.create(
-            model=mdl,
-            response_model=response_model,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            temperature=temperature,
-            max_tokens=max_tokens,
-            timeout=timeout_s,
-            **_gateway_extras(),
-        )
+        async with _gateway_limiter:
+            result: _T_MODEL = await client.chat.completions.create(
+                model=mdl,
+                response_model=response_model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens,
+                timeout=timeout_s,
+                **_gateway_extras(),
+            )
     except Exception as e:
         _log_llm_error("chat_structured", e)
         kind, _ = _classify_llm_error(e)
@@ -303,19 +314,20 @@ async def chat_json(
 
     result: dict[str, Any] = {}
     try:
-        resp = await client.chat.completions.create(
-            model=mdl,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            tools=tools,
-            tool_choice={"type": "function", "function": {"name": "submit"}},
-            temperature=temperature,
-            max_tokens=max_tokens,
-            timeout=timeout_s,
-            **_gateway_extras(),
-        )
+        async with _gateway_limiter:
+            resp = await client.chat.completions.create(
+                model=mdl,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                tools=tools,
+                tool_choice={"type": "function", "function": {"name": "submit"}},
+                temperature=temperature,
+                max_tokens=max_tokens,
+                timeout=timeout_s,
+                **_gateway_extras(),
+            )
         choice = resp.choices[0]
         if choice.message.tool_calls:
             args = choice.message.tool_calls[0].function.arguments
@@ -331,18 +343,19 @@ async def chat_json(
         if kind in ("auth", "quota"):
             raise
         try:
-            resp = await client.chat.completions.create(
-                model=mdl,
-                messages=[
-                    {"role": "system", "content": system + "\n\nReturn ONLY a JSON object matching the schema."},
-                    {"role": "user", "content": user + "\n\nSchema: " + json.dumps(schema)},
-                ],
-                response_format={"type": "json_object"},
-                temperature=temperature,
-                max_tokens=max_tokens,
-                timeout=timeout_s,
-                **_gateway_extras(),
-            )
+            async with _gateway_limiter:
+                resp = await client.chat.completions.create(
+                    model=mdl,
+                    messages=[
+                        {"role": "system", "content": system + "\n\nReturn ONLY a JSON object matching the schema."},
+                        {"role": "user", "content": user + "\n\nSchema: " + json.dumps(schema)},
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    timeout=timeout_s,
+                    **_gateway_extras(),
+                )
             result = _coerce_json(resp.choices[0].message.content or "")
             cache_put(ck, {"data": result})
             return result
@@ -393,13 +406,14 @@ async def chat_text_with_usage(
         }
 
     try:
-        resp = await client.chat.completions.create(
-            model=mdl,
-            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-            temperature=temperature,
-            max_tokens=max_tokens,
-            **_gateway_extras(),
-        )
+        async with _gateway_limiter:
+            resp = await client.chat.completions.create(
+                model=mdl,
+                messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+                temperature=temperature,
+                max_tokens=max_tokens,
+                **_gateway_extras(),
+            )
     except Exception as e:
         _log_llm_error("chat_text", e)
         kind, _ = _classify_llm_error(e)

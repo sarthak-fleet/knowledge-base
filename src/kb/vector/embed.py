@@ -12,6 +12,8 @@ import asyncio
 import logging
 from functools import lru_cache
 
+from cachetools import LRUCache
+
 from kb.config import get_settings
 
 logger = logging.getLogger("kb.vector.embed")
@@ -39,27 +41,22 @@ async def embed_dense(texts: list[str]) -> list[list[float]]:
     return await asyncio.to_thread(_do)
 
 
-# Single-query memoisation: the engine re-embeds the same query text in
-# intent, retrieve, rerank, and span_cite stages. This is a request-local cache.
-_query_cache: dict[str, list[float]] = {}
+# Single-query memoisation: the engine re-embeds the same query text across
+# the intent, retrieve, rerank, and span_cite stages. This is a process-wide
+# request-local cache. `cachetools.LRUCache` replaces a hand-rolled FIFO
+# (Grok Issue 9): proper LRU semantics rather than insertion-order eviction.
+_query_cache: LRUCache[str, list[float]] = LRUCache(maxsize=256)
 _query_cache_lock = asyncio.Lock()
 
 
 async def embed_query_cached(text: str) -> list[float]:
-    """Embed a single query text, with a process-wide cache keyed by text.
-
-    Saves 3-4 redundant embedding calls per /query. Cache is bounded by simple
-    FIFO eviction at 256 entries.
-    """
+    """Embed a single query text, with a process-wide LRU cache keyed by text."""
     if text in _query_cache:
         return _query_cache[text]
     async with _query_cache_lock:
         if text in _query_cache:
             return _query_cache[text]
         vec = (await embed_dense([text]))[0]
-        if len(_query_cache) >= 256:
-            # Drop the oldest entry (Python dicts preserve insertion order).
-            _query_cache.pop(next(iter(_query_cache)))
         _query_cache[text] = vec
         return vec
 
