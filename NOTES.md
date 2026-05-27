@@ -240,8 +240,41 @@ Every change here is one row in the table; everything was measured live.
 | 3 | + ILIKE in structured query (matches "Q2 2024" → "Q2 FY2024") | — | — | — | — | intent path more lenient |
 | 4 | MMR off globally; legal opts in | 0.573 | 0.560 | 0.835 | 0.333 | confirmed MMR isn't the regression cause |
 | 4b | **Same code, same index — variance check** | **0.659** | **0.640** | — | — | ±0.08 F1 of LLM-judge variance. Single-run eval is unreliable. Justifies shipping RAGAS. |
-| 5 | Contextual Retrieval ON + DuckDB route + full re-ingest | **0.610** | **0.560** | **0.771** | **0.417** | CR + DuckDB + RAGAS all live. Legal pass +0.08 (4→5 of 12). SEC F1 within variance. Both domains converge on the same RAGAS profile. |
+| 5 | Contextual Retrieval ON + DuckDB route + full re-ingest | **0.610** | **0.560** | **0.771** | **0.417** | CR + DuckDB + RAGAS all live. Legal pass +0.08 (4→5 of 12). SEC F1 within variance. Both domains converge on the same RAGAS profile. ⚠ See **Step 7 retroactive caveat** — DuckDB route never actually fired during these runs. |
 | 6 | 20 more upgrades shipped (query rewriting, HyDE, decomposition, CRAG, semantic chunking, embedding cache, race fix, prompt-cache structure, SSE streaming, schema inference, Prometheus metrics, etc.) | **invalid** | **invalid** | n/a | n/a | DeepSeek balance went negative (−$0.03) mid-eval. Every LLM call returned HTTP 402 "Insufficient Balance". The eval measured "all calls fail," not the system. Code is clean (63/63 tests pass, ruff clean); no regression. |
+| 7 | **Free-AI gateway wired in. duckdb dep fix. Grok findings #1-13 addressed. Cross-model eval.** | see § 4.7 | see § 4.7 | see § 4.7 | see § 4.7 | Fresh, clean numbers on Gemini 2.5 family (free). Surfaced that the v0-v5 SEC numbers above were achieved with the DuckDB structured-route route silently broken (missing dep + import outside try). Aggregate questions all fell back to RAG. |
+
+### § 4.7 Step 7 results — cross-model eval (free AI gateway, judge held constant)
+
+Methodology this round was **much** stricter than v0-v6:
+1. Synth model: varied across runs (Flash, Pro, Flash-lite)
+2. **Judge model: held constant at gemini-2.5-pro** for every run
+3. RAGAS-scorer model: same Pro judge (eliminates judge-confound)
+4. API container restarted with `AI_MODEL=...` between runs so the synth swap actually takes effect (the in-flight env-via-`docker compose exec -e` trick does NOT propagate to the API server — caught and fixed mid-session)
+5. Deterministic LLM-call cache (`KB_LLM_CACHE_DIR`) means re-runs are bit-identical, no LLM-judge-variance confound
+
+| Run | Domain | Synth model | Cit F1 | Pass | Faithfulness | Ctx prec | Ctx recall | Ans rel |
+|---|---|---|---|---|---|---|---|---|
+| 7a | SEC | gemini-2.5-flash | 0.618 | 0.480 (12/25) | 0.663 | 0.212 | 0.400 | 0.360 |
+| 7b | SEC | gemini-2.5-pro | 0.613 | 0.440 (11/25) | 0.526 | 0.200 | 0.360 | 0.520 |
+| 7c | SEC | gemini-2.5-flash-lite | 0.607 | 0.480 (12/25) | 0.566 | 0.180 | 0.360 | 0.356 |
+| 7d | Legal | gemini-2.5-flash | **0.787** | **0.667 (8/12)** | 0.741 | 0.361 | 0.458 | 0.650 |
+
+**The three big findings to talk about in interview:**
+
+1. **Citation F1 is identical (~0.61) across all 3 SEC synth models.** Retrieval is the same; citation parsing is deterministic. The model swap genuinely isolates synthesis.
+
+2. **Bigger model ≠ better RAG synthesis when retrieval is solid.** Pro scored *lower* on pass rate than Flash (0.44 vs 0.48) and Flash-lite (0.48). Pro hedges harder — more answers with confidence=0.00, more polite refusals. That's correct behavior for a strong model facing weak context, but it costs pass rate. Pro IS better on answer-relevance (+0.16) — more polished prose; just less decisive.
+
+3. **The cheap tier (Flash-lite, ~10× cheaper than Pro) ties Flash on pass.** User's intuition validated: for a RAG pipeline where retrieval and chunking are solid, the synthesis model's role is mostly "rephrase the cited context coherently" and a cheap model handles that fine. Diminishing returns above mid-tier.
+
+**Legal validation**: Legal × Flash scores *higher than* SEC across the board (F1 0.787 vs 0.618, pass 0.667 vs 0.480). The cross-domain claim holds — schema swap, no code change, better numbers than the "home" SEC domain.
+
+### Step 7 retroactive caveat — what I'd own honestly
+
+The v0-v5 SEC numbers were achieved **with the DuckDB structured-query route silently broken**. `duckdb` was missing from `pyproject.toml` entirely, and the `from kb.query.duckdb_route import` lived outside the try/except in `engine.py`. So every aggregate question hit an ImportError, returned 500 inside the engine, was caught by FastAPI's outer handler as a `query_error` by the eval CLI, and counted as 0/0/0. The "DuckDB route" feature I documented as live was never firing. The 0.560-0.640 pass rates were achieved *despite* that — they're not the numbers a working aggregate path would have produced.
+
+What surfaced this: Grok finding #12 (load LLM errors at WARNING/ERROR) — when I switched to the free gateway and watched API logs during a real eval, the `ModuleNotFoundError: No module named 'duckdb'` showed up. Both root causes fixed in Step 7 commits. The Step 7 numbers above are the first ones with the route actually live.
 
 ### Step 6 — the billing event and what it taught us
 
