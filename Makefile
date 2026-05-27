@@ -1,4 +1,4 @@
-.PHONY: up down logs build seed schema-apply ingest eval test lint fmt clean reset
+.PHONY: up down logs build seed schema-apply ingest eval test lint fmt clean reset demo
 
 up:
 	@cp -n .env.example .env || true
@@ -67,3 +67,29 @@ clean:
 	rm -rf data/postgres data/qdrant data/minio data/cache
 
 reset: clean up
+
+# Zero-to-cited-answer in one command. Useful for "just show me it works":
+#   - bring up the stack
+#   - apply both schemas + seed SEC and Legal corpora (idempotent; skips if done)
+#   - print three sample cited answers across both domains
+demo: seed-all
+	@echo
+	@echo "── Asking a question on the SEC domain ──────────────────────────────"
+	@curl -s -X POST http://localhost:8000/query \
+		-H 'Content-Type: application/json' \
+		-d '{"domain":"sec","question":"What does NVIDIA disclose about U.S. export controls?"}' \
+		| python3 -c "import json,sys; d=json.load(sys.stdin); print('Q: What does NVIDIA disclose about U.S. export controls?\n'); print('Answer:'); print(d.get('answer','')[:400]); print(); print(f'Citations: {len(d.get(\"citations\",[]))} sources')"
+	@echo
+	@echo "── Same code, different schema — Legal domain ───────────────────────"
+	@curl -s -X POST http://localhost:8000/query \
+		-H 'Content-Type: application/json' \
+		-d '{"domain":"legal","question":"What permission does the MIT License grant?"}' \
+		| python3 -c "import json,sys; d=json.load(sys.stdin); print('Q: What permission does the MIT License grant?\n'); print('Answer:'); print(d.get('answer','')[:400]); print(); print(f'Citations: {len(d.get(\"citations\",[]))} sources')"
+	@echo
+	@echo "── Aggregate question — DuckDB structured route ─────────────────────"
+	@curl -s -X POST http://localhost:8000/query \
+		-H 'Content-Type: application/json' \
+		-d '{"domain":"sec","question":"Which companies had quarterly revenue exceeding $60 billion?"}' \
+		| python3 -c "import json,sys; d=json.load(sys.stdin); print('Q: Which companies had quarterly revenue exceeding \$60 billion?\n'); print('Answer:'); print(d.get('answer','')[:400]); print(); print(f'Citations: {len(d.get(\"citations\",[]))} sources')"
+	@echo
+	@echo "Open http://localhost:8501 for the interactive UI."

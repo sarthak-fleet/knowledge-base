@@ -34,31 +34,40 @@ For deeper looks:
 - **Demo** — `docs/demo-walkthrough.md`
 - **Operator runbook** — `docs/runbook.md`
 
-## High-level shape
+## Architecture
 
-```
-                   ┌─── HTTP /query ────┐                              ┌── Postgres ──┐
-   User ──────────►│   FastAPI (api)    │──┐                       ┌──►│  entities,   │
-                   └──────────┬─────────┘  │                       │   │  jobs,       │
-                              │            │                       │   │  traces      │
-                              ▼            │                       │   └──────────────┘
-                ┌─────────────────────────┐│        ┌──────────────┴─┐
-                │ Query pipeline (9 stg)  ││ ◄──────│ asyncio worker │ ◄── ingest jobs
-                │  intent → decompose →   ││ ingest │  (SKIP LOCKED) │
-                │  rewrite (multi + HyDE)→│└────────│                │     ┌── MinIO ──┐
-                │  retrieve (hybrid)    → │         └────────────────┘ ───►│  raw +    │
-                │  rerank (jina v2)     → │                                │  parse    │
-                │  MMR → CRAG → Self-RAG→ │                                │  cache    │
-                │  graph_route (themes)→  │  ┌── Qdrant ──┐                └───────────┘
-                │  duckdb (structured) →  │─►│ kb_sec     │
-                │  synthesize → verify →  │  │ kb_legal   │
-                │  span_cite              │  │ (hybrid:   │
-                └─────────────────────────┘  │  dense +   │
-                                             │  sparse)   │
-                                             └────────────┘
+```mermaid
+flowchart LR
+    User[User] -->|HTTP /query| API[FastAPI api]
+    API --> Pipeline
+
+    subgraph Pipeline[Query pipeline, 9+ stages]
+        direction TB
+        S1[intent + filters] --> S2[duckdb structured route]
+        S2 --> S3[graph_route themes]
+        S3 --> S4[decompose + rewrite + HyDE]
+        S4 --> S5[hybrid retrieve dense+sparse RRF]
+        S5 --> S6[rerank jina-v2]
+        S6 --> S7[MMR diversity]
+        S7 --> S8[CRAG + Self-RAG retry]
+        S8 --> S9[synthesize cited]
+        S9 --> S10[AIS verify]
+        S10 --> S11[span_cite]
+    end
+
+    Worker[asyncio worker<br/>SKIP LOCKED] -->|ingest jobs| Pipeline
+    Files[upload / edgar] -->|POST /files| API
+    API -.->|enqueue| Worker
+
+    Pipeline --> PG[(Postgres<br/>entities, jobs,<br/>traces, mentions)]
+    Pipeline --> Qdrant[(Qdrant<br/>kb_sec, kb_legal<br/>hybrid: dense + sparse)]
+    Worker --> MinIO[(MinIO<br/>raw + parse cache)]
+
+    classDef store fill:#e8f4f8,stroke:#0288d1,color:#01579b
+    class PG,Qdrant,MinIO store
 ```
 
-Two demo domains (SEC + Legal) run on the **same code** with completely different schemas, sources, and eval sets — proves domain-agnosticism empirically, not aspirationally.
+Two demo domains (SEC + Legal) run on the **same code** with completely different schemas, sources, and eval sets — proves domain-agnosticism empirically, not aspirationally. See [`docs/onboard-new-domain.md`](docs/onboard-new-domain.md) for a 30-minute walkthrough of adding a third.
 
 ## One-command bootstrap
 
@@ -81,6 +90,43 @@ Then open:
 - Prometheus metrics → http://localhost:8000/metrics
 - MinIO console → http://localhost:9001
 - Qdrant dashboard → http://localhost:6333/dashboard
+
+## Try it from the command line
+
+The four most interesting endpoints, copy-paste-ready:
+
+```bash
+# 1. Health check (DB + vector store + object store probes)
+curl -s http://localhost:8000/readyz | jq
+
+# 2. Cited answer on the SEC corpus
+curl -s -X POST http://localhost:8000/query \
+  -H 'Content-Type: application/json' \
+  -d '{"domain":"sec","question":"What does NVIDIA disclose about U.S. export controls?"}' \
+  | jq '{answer, citations: [.citations[] | {filename, page_start, excerpt}], confidence}'
+
+# 3. The full trace for that answer (every stage, every latency, every token count)
+curl -s "http://localhost:8000/query/traces?domain=sec&limit=1" | jq '.[0].id' \
+  | xargs -I {} curl -s "http://localhost:8000/query/trace/{}" | jq '.filters._stages'
+
+# 4. The same question on the Legal domain — same code, different schema
+curl -s -X POST http://localhost:8000/query \
+  -H 'Content-Type: application/json' \
+  -d '{"domain":"legal","question":"What permission does the MIT License grant?"}' \
+  | jq '.answer'
+```
+
+| Endpoint | What it does |
+| --- | --- |
+| `POST /query` | Run the full 9-stage pipeline; returns cited answer + confidence + trace_id |
+| `POST /query/stream` | Same, but as Server-Sent Events with per-stage progress |
+| `GET /query/traces?domain=X` | List recent query traces with timings + token usage |
+| `GET /query/trace/{id}` | Full per-stage record for one query (auditable) |
+| `POST /files` | Upload a doc; enqueues an ingest job |
+| `GET /ingest/jobs?domain=X` | Job queue state |
+| `POST /schemas/infer` | Propose a schema from sample chunks (Phase-2, opt-in) |
+| `GET /metrics` | Prometheus-format counters + summaries |
+| `GET /readyz` | DB + vector + object store readiness probe |
 
 ## How this was built — AI-assistance disclosure
 
@@ -135,6 +181,33 @@ The decision log in `LEARNING.md` was written from my own session notes; it's wh
 | `migrations/` | Postgres schema (extensions, tables, indexes), idempotent SQL |
 | `streamlit_app/` | Single-page demo UI |
 | `tests/` | 77 unit + integration tests, ruff + ruff-format + mypy in CI |
+
+## Performance
+
+Per-stage latency on SEC across a real eval run (25 questions, `gemini-2.5-flash` synth, `gemini-2.5-pro` judge, ~3-hop pipeline including DuckDB + GraphRAG-sketch routes):
+
+| Stage          | Typical p50 (ms) | Notes |
+| -------------- | ---------------: | ----- |
+| `intent`       |              ~3 000 | Cached when KB_LLM_CACHE_DIR is set; warm calls < 5 ms |
+| `duckdb`       |                 ~600 | LLM-generated SQL over in-memory DuckDB views |
+| `graph_route`  |             ~18 000 | Fires only on theme-shape questions |
+| `rewrite`      |             ~10 000 | Multi-query expansion + HyDE; parallel-friendly |
+| `retrieve`     |                 ~300 | Qdrant hybrid (dense + sparse + RRF) |
+| `rerank`       |             ~9 000 | Cross-encoder (jina-v2 base) on CPU; first call ~25 s incl. model load |
+| `mmr`          |                  ~5 | Pure-Python diversity reranker over the rerank pool |
+| `crag`         |                  ~4 | Cache hit; cold ~14 s |
+| `self_rag`     |                   0 | Triggered only when `crag_score < 0.4`; bounded to 1 retry per request |
+| `synthesize`   |             ~12 000 | The single biggest spend; varies wildly with model + context size |
+| `verify`       |             ~16 000 | AIS entailment per claim |
+| `span_cite`    |                 ~400 | Per-citation best-span via dense cosine over chunk text |
+
+End-to-end p50 ≈ **30 s warm**, **80 s cold** (first request loads embedder + reranker). Reproduce with:
+
+```bash
+python scripts/bench.py --domain sec --n 25
+```
+
+For sub-second response, the right architecture is per-token streaming (the SSE endpoint exists; it doesn't yet stream per-token — see `LEARNING.md` Part 7). Costs trade against latency: enable `KB_LLM_CACHE_DIR` for deterministic replay and zero LLM cost on repeated queries; this is what makes eval iteration practical.
 
 ## Configurability (no domain values in source)
 
