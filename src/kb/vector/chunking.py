@@ -32,9 +32,7 @@ _SENT = re.compile(r"(?<=[.!?])\s+")
 # at one of these is preferable to a mid-paragraph break of the same size.
 # Used by `_should_close_parent_here` to prefer element boundaries when
 # they fall within ±20% of the target chunk size.
-_BOUNDARY_TYPES = frozenset(
-    {"Title", "Header", "Table", "ListItem", "NarrativeText", "Address"}
-)
+_BOUNDARY_TYPES = frozenset({"Title", "Header", "Table", "ListItem", "NarrativeText", "Address"})
 
 
 def _should_close_parent_here(

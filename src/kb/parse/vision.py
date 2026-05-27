@@ -53,9 +53,7 @@ def _pdf_to_page_images(pdf_bytes: bytes, *, dpi: int = 144, max_pages: int = 8)
     matter, not exhaustive coverage."""
     import pdf2image
 
-    pages = pdf2image.convert_from_bytes(
-        pdf_bytes, dpi=dpi, first_page=1, last_page=max_pages
-    )
+    pages = pdf2image.convert_from_bytes(pdf_bytes, dpi=dpi, first_page=1, last_page=max_pages)
     out: list[bytes] = []
     for img in pages:
         buf = io.BytesIO()

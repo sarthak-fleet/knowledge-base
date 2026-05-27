@@ -255,9 +255,11 @@ async def answer_query(body: QueryIn) -> QueryOut:
 
         t0 = time.time()
         is_compound, subs = await decompose_query(body.question, model=syn_model_for_queries)
-        return is_compound, (subs[:] if is_compound and len(subs) > 1 else [body.question]), (
-            time.time() - t0
-        ) * 1000
+        return (
+            is_compound,
+            (subs[:] if is_compound and len(subs) > 1 else [body.question]),
+            (time.time() - t0) * 1000,
+        )
 
     async def _hyde_call() -> tuple[str | None, float]:
         if not hyde_on:
@@ -313,9 +315,7 @@ async def answer_query(body: QueryIn) -> QueryOut:
     if hyde_on:
         if hyde_text:
             queries.append(hyde_text)
-        stages.append(
-            {"stage": "hyde", "latency_ms": int(hyde_ms), "used": hyde_text is not None}
-        )
+        stages.append({"stage": "hyde", "latency_ms": int(hyde_ms), "used": hyde_text is not None})
 
     _block_ms = int((time.time() - started_block) * 1000)
     logger.info(
@@ -411,15 +411,26 @@ async def answer_query(body: QueryIn) -> QueryOut:
         # section names. A future-proof version would derive these from the
         # schema; this list is the 80% on SEC + Legal.
         _section_phrases = (
-            "risk factor", "risk factors",
-            "results of operations", "management discussion", "md&a",
-            "supply chain", "customer concentration", "export control",
-            "climate", "cybersecurity",
-            "warranty", "indemnif", "license grant", "patent grant",
-            "copyleft", "redistribut",
+            "risk factor",
+            "risk factors",
+            "results of operations",
+            "management discussion",
+            "md&a",
+            "supply chain",
+            "customer concentration",
+            "export control",
+            "climate",
+            "cybersecurity",
+            "warranty",
+            "indemnif",
+            "license grant",
+            "patent grant",
+            "copyleft",
+            "redistribut",
         )
         matchers = [p for p in _section_phrases if p in q_low]
         if matchers:
+
             def _section_score(h: Any) -> float:
                 title = (h.metadata.get("section_title") or "").lower()
                 if not title:
@@ -498,9 +509,7 @@ async def answer_query(body: QueryIn) -> QueryOut:
 
         started = time.time()
         # Build a terse summary of what we got so the reformulator can pivot.
-        weak_summary = "\n".join(
-            f"- {(h.get('text') or '')[:200]}" for h in serializable_hits[:4]
-        )
+        weak_summary = "\n".join(f"- {(h.get('text') or '')[:200]}" for h in serializable_hits[:4])
         new_query = await reformulate_for_self_rag(
             body.question, weak_summary, model=pipeline.get(cfg, "llm.synthesize.model")
         )
@@ -647,8 +656,10 @@ async def answer_query(body: QueryIn) -> QueryOut:
     # refuse_if_no_citations guard still fires regardless.
     verify_enabled = bool(pipeline.get(cfg, "synthesize.verify_citations", True))
     verify_skip_threshold = float(pipeline.get(cfg, "synthesize.verify_skip_threshold", 0.7))
-    should_verify = verify_enabled and cited_indices and not (
-        crag_score >= verify_skip_threshold and confidence_value >= verify_skip_threshold
+    should_verify = (
+        verify_enabled
+        and cited_indices
+        and not (crag_score >= verify_skip_threshold and confidence_value >= verify_skip_threshold)
     )
     verify_summary: dict[str, Any] = {}
     if should_verify:

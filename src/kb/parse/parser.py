@@ -211,9 +211,7 @@ async def parse_file(
         if settings.parse_use_vision:
             from kb.parse.vision import augment_elements_with_vision_tables
 
-            elements = await augment_elements_with_vision_tables(
-                elements, blob, filename=filename
-            )
+            elements = await augment_elements_with_vision_tables(elements, blob, filename=filename)
             parser += "+vision"
     else:
         elements = await asyncio.to_thread(_parse_auto_sync, blob, filename)

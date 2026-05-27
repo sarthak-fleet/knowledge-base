@@ -57,12 +57,22 @@ class Score:
 
 
 _SECTION_PHRASES = (
-    "risk factor", "risk factors",
-    "results of operations", "management discussion", "md&a",
-    "supply chain", "customer concentration", "export control",
-    "climate", "cybersecurity",
-    "warranty", "indemnif", "license grant", "patent grant",
-    "copyleft", "redistribut",
+    "risk factor",
+    "risk factors",
+    "results of operations",
+    "management discussion",
+    "md&a",
+    "supply chain",
+    "customer concentration",
+    "export control",
+    "climate",
+    "cybersecurity",
+    "warranty",
+    "indemnif",
+    "license grant",
+    "patent grant",
+    "copyleft",
+    "redistribut",
 )
 
 
@@ -89,7 +99,9 @@ def _file_match(citation_file: str, expected: list[str]) -> bool:
     return any(e.lower() in cf or cf in e.lower() for e in expected)
 
 
-def _citation_pr(predicted_files: list[str], expected_files: list[str]) -> tuple[float, float, float]:
+def _citation_pr(
+    predicted_files: list[str], expected_files: list[str]
+) -> tuple[float, float, float]:
     if not expected_files:
         return 1.0, 1.0, 1.0
     if not predicted_files:
@@ -181,7 +193,9 @@ async def _run(args: argparse.Namespace) -> int:
         "domain": args.domain,
         "n": len(scores),
         "mode": "retrieval_only",
-        "mean_citation_precision": statistics.mean(s.citation_precision for s in scores) if scores else 0,
+        "mean_citation_precision": statistics.mean(s.citation_precision for s in scores)
+        if scores
+        else 0,
         "mean_citation_recall": statistics.mean(s.citation_recall for s in scores) if scores else 0,
         "mean_citation_f1": statistics.mean(s.citation_f1 for s in scores) if scores else 0,
         "section_boost_total_hits": sum(s.section_boost_hits for s in scores),
