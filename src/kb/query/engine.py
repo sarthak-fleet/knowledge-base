@@ -426,7 +426,7 @@ async def answer_query(body: QueryIn) -> QueryOut:
             "license grant",
             "patent grant",
             "copyleft",
-            "redistribut",
+            "distribut",  # catches both "distribution" and "redistribution" — license sections use either
         )
         matchers = [p for p in _section_phrases if p in q_low]
         if matchers:

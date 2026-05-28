@@ -1,0 +1,72 @@
+# Extension to dataset.yaml — entity-shaped Legal questions to grow the eval
+# from 12 → 22. Lower noise floor for F1 deltas.
+
+domain: legal
+questions:
+  - id: le01
+    question: "What copyright notice text must accompany distributions of the MIT License?"
+    expected_files: ["MIT"]
+    key_facts:
+      - "The copyright notice and permission notice must be included"
+      - "In all copies or substantial portions of the Software"
+
+  - id: le02
+    question: "What is the standard 4-clause structure of the Apache 2.0 license?"
+    expected_files: ["Apache-2.0"]
+    key_facts:
+      - "Definitions, grant of copyright license, grant of patent license, redistribution / submission of contributions are covered"
+
+  - id: le03
+    question: "Under GPL-3.0, what is required when conveying object code?"
+    expected_files: ["GPL-3.0"]
+    key_facts:
+      - "The corresponding source code must be made available"
+      - "Either by accompanying the object code or by a written offer"
+
+  - id: le04
+    question: "What does ISC license say about permission to use, copy, modify, and distribute?"
+    expected_files: ["ISC"]
+    key_facts:
+      - "Permission is granted to use, copy, modify, and/or distribute"
+      - "With or without fee"
+
+  - id: le05
+    question: "What conditions does MPL 2.0 place on contributions to a project?"
+    expected_files: ["MPL-2.0"]
+    key_facts:
+      - "Contributions are licensed under the same MPL terms"
+      - "File-level copyleft (source files modified must remain under MPL)"
+
+  - id: le06
+    question: "What is the BSD-3-Clause non-endorsement clause about?"
+    expected_files: ["BSD-3-Clause"]
+    key_facts:
+      - "Contributors' names may not be used to endorse or promote derived products"
+      - "Without prior written permission"
+
+  - id: le07
+    question: "What is the disclaimer of liability in the Apache 2.0 license?"
+    expected_files: ["Apache-2.0"]
+    key_facts:
+      - "Work is provided on an AS IS BASIS"
+      - "Without warranties or conditions of any kind, express or implied"
+
+  - id: le08
+    question: "Under MPL 2.0, can a larger work be distributed under a different license?"
+    expected_files: ["MPL-2.0"]
+    key_facts:
+      - "Yes — MPL is file-level copyleft, so the Larger Work can be under a different license"
+      - "Provided MPL-covered files remain under MPL"
+
+  - id: le09
+    question: "What is the patent retaliation clause in MPL 2.0?"
+    expected_files: ["MPL-2.0"]
+    key_facts:
+      - "If a contributor initiates a patent infringement claim, their patent rights under the License terminate"
+
+  - id: le10
+    question: "Does GPL-3.0 explicitly address tivoization or anti-circumvention?"
+    expected_files: ["GPL-3.0"]
+    key_facts:
+      - "GPL-3.0 includes anti-tivoization provisions requiring installation information for user products"
+      - "OR addresses anti-circumvention of technological measures"

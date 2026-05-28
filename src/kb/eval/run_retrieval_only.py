@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import statistics
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -72,7 +73,7 @@ _SECTION_PHRASES = (
     "license grant",
     "patent grant",
     "copyleft",
-    "redistribut",
+    "distribut",
 )
 
 
@@ -156,7 +157,10 @@ async def _run(args: argparse.Namespace) -> int:
             )
             if hits:
                 hits = await cross_rerank(question, hits, top_k=max(rerank_top_k, 8))
-            hits, boosted = _section_boost(hits, question)
+            if os.environ.get("KB_DISABLE_SECTION_BOOST"):
+                boosted = 0
+            else:
+                hits, boosted = _section_boost(hits, question)
             hits = hits[:rerank_top_k]
         except Exception as e:
             print(f"[red]{qid} retrieve error: {e}[/red]")

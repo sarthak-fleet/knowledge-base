@@ -1,0 +1,77 @@
+# D-targeting Legal eval — questions designed to fire the section-boost stage.
+#
+# Each question references vocabulary that appears in the parsed Title elements
+# of the license texts ("redistribution", "patent grant", "license grant",
+# "warranty", "indemnif"...). Section_boost should fire >0 times on this set,
+# unlike dataset.yaml which never triggers it.
+
+domain: legal
+questions:
+  - id: s01
+    question: "Under Apache 2.0, what conditions apply to the redistribution of source and object forms?"
+    expected_files: ["Apache-2.0"]
+    key_facts:
+      - "A copy of the License is included with the distribution"
+      - "Modifications are marked with prominent notices"
+      - "Any NOTICE file is retained"
+
+  - id: s02
+    question: "What does the Apache 2.0 license say about redistribution and the inclusion of a NOTICE file?"
+    expected_files: ["Apache-2.0"]
+    key_facts:
+      - "If the work includes a NOTICE file, that text must be reproduced in the distributed work"
+
+  - id: s03
+    question: "What are the terms for distribution under MPL 2.0?"
+    expected_files: ["MPL-2.0"]
+    key_facts:
+      - "Source form must be made available under MPL"
+      - "Executable form may be under a different license if Source is provided"
+
+  - id: s04
+    question: "What does GPL-3.0 require for redistribution of source code?"
+    expected_files: ["GPL-3.0"]
+    key_facts:
+      - "Distribute the source code (or a written offer to provide it)"
+      - "Under the same GPL terms"
+
+  - id: s05
+    question: "What is the patent grant in the Apache 2.0 license?"
+    expected_files: ["Apache-2.0"]
+    key_facts:
+      - "Each contributor grants a perpetual, worldwide, non-exclusive, royalty-free patent license"
+      - "Subject to revocation on patent litigation"
+
+  - id: s06
+    question: "What does the Apache 2.0 license say about patent grant termination on patent litigation?"
+    expected_files: ["Apache-2.0"]
+    key_facts:
+      - "Patent license terminates if licensee files patent litigation alleging the Work infringes a patent"
+
+  - id: s07
+    question: "What disclaimer of warranty appears in the GPL-3.0 license?"
+    expected_files: ["GPL-3.0"]
+    key_facts:
+      - "Program is provided WITHOUT ANY WARRANTY"
+      - "TO THE EXTENT PERMITTED BY APPLICABLE LAW"
+
+  - id: s08
+    question: "Under Apache 2.0, what limitation of liability protects contributors?"
+    expected_files: ["Apache-2.0"]
+    key_facts:
+      - "Contributors are not liable for damages arising from use of the Work"
+      - "Whether direct, indirect, special, incidental, or consequential"
+
+  - id: s09
+    question: "What does Section 3 of the MPL-2.0 cover regarding distribution responsibilities?"
+    expected_files: ["MPL-2.0"]
+    key_facts:
+      - "Distribution of Source Code Form and Executable Form requirements"
+      - "Notices and disclaimers must be preserved"
+
+  - id: s10
+    question: "What patent grant does MPL-2.0 give contributors?"
+    expected_files: ["MPL-2.0"]
+    key_facts:
+      - "Contributors grant a non-exclusive patent license under their patent claims"
+      - "License terminates on patent infringement claims against the Covered Software"

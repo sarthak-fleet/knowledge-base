@@ -1,0 +1,103 @@
+# Extension to dataset.yaml — hand-written entity-shaped questions to grow the
+# eval set from 25 → 40 SEC questions. Lower noise floor on F1 deltas, lets
+# per-intervention ablations show up. Same schema as dataset.yaml.
+
+domain: sec
+questions:
+  - id: e01
+    question: "What was AAPL total net sales for the quarter ended March 30, 2024?"
+    expected_files: ["AAPL_10-Q"]
+    key_facts:
+      - "A specific revenue figure for AAPL Q2 FY2024 is given"
+      - "The figure is in billions of dollars"
+
+  - id: e02
+    question: "What was Apple's gross margin percentage in its most recent 10-K?"
+    expected_files: ["AAPL_10-K"]
+    key_facts:
+      - "A gross margin percentage figure is given"
+      - "Calculated for fiscal year 2024 or 2025"
+
+  - id: e03
+    question: "Who is Apple's principal executive officer that signs the 10-K?"
+    expected_files: ["AAPL_10-K"]
+    key_facts:
+      - "Tim Cook is named as CEO"
+
+  - id: e04
+    question: "What was NVIDIA's reported revenue in its most recent quarterly filing?"
+    expected_files: ["NVDA_10-Q"]
+    key_facts:
+      - "A specific revenue figure is given"
+      - "The figure is in billions of dollars"
+
+  - id: e05
+    question: "What new product or business announcement does NVIDIA's most recent 8-K disclose?"
+    expected_files: ["NVDA_8-K"]
+    key_facts:
+      - "A specific business event or announcement is described"
+
+  - id: e06
+    question: "What is NVIDIA's fiscal year end date?"
+    expected_files: ["NVDA_10-K", "NVDA_10-Q"]
+    key_facts:
+      - "Last Sunday of January is mentioned, or a date in late January / early February"
+
+  - id: e07
+    question: "What is the Ticker symbol Apple files under, and on which exchange?"
+    expected_files: ["AAPL"]
+    key_facts:
+      - "AAPL is the ticker"
+      - "Nasdaq Global Select Market is mentioned"
+
+  - id: e08
+    question: "What does NVIDIA say about its data center revenue growth in fiscal 2024?"
+    expected_files: ["NVDA_10-K"]
+    key_facts:
+      - "Data center revenue grew substantially"
+      - "Driven by AI / generative AI / hyperscalers demand"
+
+  - id: e09
+    question: "What does Apple disclose about its share repurchase program?"
+    expected_files: ["AAPL_10-K", "AAPL_10-Q"]
+    key_facts:
+      - "A specific authorized amount is mentioned"
+      - "Repurchases are made through open-market and accelerated programs"
+
+  - id: e10
+    question: "Which auditor signs Apple's financial statements?"
+    expected_files: ["AAPL_10-K"]
+    key_facts:
+      - "Ernst & Young LLP is named as the independent auditor"
+
+  - id: e11
+    question: "What does NVIDIA disclose about climate-related risks?"
+    expected_files: ["NVDA_10-K"]
+    key_facts:
+      - "Climate risk is mentioned"
+      - "Operations or supply chain are described as potentially affected"
+
+  - id: e12
+    question: "What is Apple's effective tax rate in its latest 10-K?"
+    expected_files: ["AAPL_10-K"]
+    key_facts:
+      - "A specific effective tax rate percentage is given"
+
+  - id: e13
+    question: "How does NVIDIA describe its competition in the GPU market?"
+    expected_files: ["NVDA_10-K"]
+    key_facts:
+      - "Competitors are named (e.g. AMD, Intel) or competitive landscape is described"
+
+  - id: e14
+    question: "What does the NVIDIA 8-K from May 2026 disclose about board appointments?"
+    expected_files: ["NVDA_8-K"]
+    key_facts:
+      - "A specific person is named for a board appointment"
+      - "Compensation details are mentioned (equity grant value or similar)"
+
+  - id: e15
+    question: "What stock split has NVIDIA executed historically as referenced in its filings?"
+    expected_files: ["NVDA_10-K", "NVDA_10-Q"]
+    key_facts:
+      - "A specific stock split ratio is mentioned (e.g. 10-for-1, 4-for-1)"
