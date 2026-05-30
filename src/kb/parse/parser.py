@@ -42,7 +42,11 @@ class Element:
 
 def _strategy_for(filename: str, mime: str | None, default: str) -> str:
     name = filename.lower()
-    if name.endswith((".xlsx", ".xls")):
+    # Only .xlsx hits the per-row branch — _parse_xlsx_sync uses openpyxl, which
+    # doesn't read .xls. Legacy .xls falls through to unstructured.partition.auto
+    # (which converts via LibreOffice). We lose per-row chunking on .xls, but
+    # routing it to openpyxl would just fail.
+    if name.endswith(".xlsx"):
         return "xlsx"
     if name.endswith(".pdf"):
         return default
