@@ -65,24 +65,57 @@ async def _ensure_schema(*, api: str) -> None:
         print(f"[green]schema applied[/green] {r.json()}")
 
 
+def _fixtures_dir() -> Path:
+    # In-container path first (domains/ is COPYed to /app/domains), then dev path.
+    p = Path("/app/domains/legal/fixtures")
+    if p.is_dir():
+        return p
+    return Path(__file__).resolve().parents[3] / "domains/legal/fixtures"
+
+
 async def _fetch_licenses() -> list[IngestedDoc]:
+    """Load SPDX texts from committed fixtures first; fall back to live SPDX URLs.
+
+    Fixtures keep `make seed-legal` reproducible offline. Network fallback is
+    kept so the file map can be extended without re-bundling.
+    """
     out: list[IngestedDoc] = []
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-        for name, url in LICENSE_URLS.items():
-            try:
-                r = await client.get(url)
-                r.raise_for_status()
-                out.append(
-                    IngestedDoc(
-                        filename=name,
-                        bytes_=r.content,
-                        mime="text/plain",
-                        metadata={"source": "spdx", "url": url},
-                    )
+    fixtures = _fixtures_dir()
+
+    network_needed: dict[str, str] = {}
+    for name, url in LICENSE_URLS.items():
+        local = fixtures / name
+        if local.is_file():
+            data = local.read_bytes()
+            out.append(
+                IngestedDoc(
+                    filename=name,
+                    bytes_=data,
+                    mime="text/plain",
+                    metadata={"source": "spdx-fixture", "path": str(local)},
                 )
-                print(f"[green]downloaded[/green] {name} ({len(r.content)} bytes)")
-            except Exception as e:
-                print(f"[yellow]skip {name}: {e}[/yellow]")
+            )
+            print(f"[green]fixture[/green] {name} ({len(data)} bytes)")
+        else:
+            network_needed[name] = url
+
+    if network_needed:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+            for name, url in network_needed.items():
+                try:
+                    r = await client.get(url)
+                    r.raise_for_status()
+                    out.append(
+                        IngestedDoc(
+                            filename=name,
+                            bytes_=r.content,
+                            mime="text/plain",
+                            metadata={"source": "spdx", "url": url},
+                        )
+                    )
+                    print(f"[green]downloaded[/green] {name} ({len(r.content)} bytes)")
+                except Exception as e:
+                    print(f"[yellow]skip {name}: {e}[/yellow]")
     return out
 
 
