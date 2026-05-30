@@ -12,6 +12,8 @@ A domain-agnostic Knowledge Base over unstructured documents. Define a schema, d
 
 > On this RAG pipeline, **`groq-llama-3.1-8b` beats `gemini-2.5-pro` by 24 pass-rate points** on SEC. Bigger models hedge, smaller decisive ones don't — when retrieval is solid, the synthesis model becomes a rephrase-and-commit job that cheap models do *better*.
 
+This inversion is **contingent on retrieval quality**: the cheap-decisive synth is a retrieval-quality multiplier (NOTES.md §4.7, line 316). With reranker+RRF off, the 8b model would happily commit to wrong sources and the result flips. The right framing isn't "8b wins" — it's "no fixed model wins; the right synth depends on whether your context is solid enough that decisiveness pays off."
+
 Three other moments documented honestly in `LEARNING.md`:
 1. The DuckDB structured-query route was silently broken for 5 eval rounds (missing dep + import outside try) — every aggregate question 500'd, eval logged as `query_error`, all v0-v5 numbers achieved despite this. Caught by loud-error-logging, fixed.
 2. A methodology bug — `docker compose exec -e AI_MODEL=...` doesn't propagate to the API server, so 3 supposedly-different cross-model eval runs were the same model under different labels. Caught when two report files had identical MD5.
@@ -21,18 +23,29 @@ The project mantra **"cited or it didn't happen"** holds through every retrieval
 
 ## Reading guide
 
-If you only have 15 minutes, read these in order:
+Sorted by how much time you have:
 
-1. **`LEARNING.md` Part 4 (decision log)** — every architectural choice, why and what surfaced it. Includes the 4 production bugs above.
-2. **`LEARNING.md` Part 8 (five distilled lessons)** — what to take away.
-3. **`NOTES.md` § 4.7-final cross-domain × cross-model matrix** — the 8-cell empirical table that drives the headline finding.
+**5 min — the rubric write-up**
+- [`WRITEUP.md`](WRITEUP.md) — 4-page submission write-up: architecture diagram, three trickiest decisions, what I'd do differently, where it breaks. This is what to read if you're scoring against the assignment.
 
-For deeper looks:
-- **Architecture** — `DESIGN.md` + the ASCII diagram below
-- **Live run** — `LIVE_VERIFICATION.md`
-- **External code review** — `GROK_FINDINGS.md` (13 findings, all resolved)
-- **Demo** — `docs/demo-walkthrough.md`
-- **Operator runbook** — `docs/runbook.md`
+**15 min — decision depth + the empirical headline**
+1. [`LEARNING.md`](LEARNING.md) Part 4 (decision log) — every architectural choice, why, what surfaced it. Includes the 4 production bugs called out above.
+2. [`LEARNING.md`](LEARNING.md) Part 8 (five distilled lessons) — what to take away.
+3. [`NOTES.md`](NOTES.md) §4.7-final — the cross-domain × cross-model matrix that drives the headline finding.
+
+**60 min — full deep dive**
+- [`NOTES.md`](NOTES.md) — long-form engineering notes (~25 pages): every decision, the research behind each choice, the empirical numbers at each step. Source-of-truth appendix to WRITEUP.md.
+- [`DESIGN.md`](DESIGN.md) — architecture detail + boundary tests for domain-agnosticism.
+
+**Operator-flavored**
+- [`docs/runbook.md`](docs/runbook.md) — operator runbook
+- [`docs/demo-walkthrough.md`](docs/demo-walkthrough.md) — guided demo
+- [`docs/onboard-new-domain.md`](docs/onboard-new-domain.md) — adding a third domain in ~30 min
+
+**Appendix**
+- [`LIVE_VERIFICATION.md`](LIVE_VERIFICATION.md) — recorded live-run output of the eval pipeline.
+- [`GROK_FINDINGS.md`](GROK_FINDINGS.md) — external code review (13 findings, all resolved).
+- [`docs/highsignal-integration.md`](docs/highsignal-integration.md) — integration notes.
 
 ## Architecture
 
@@ -82,6 +95,8 @@ make eval-legal        # 12-question legal eval
 ```
 
 The `api` container runs `python -m kb.cli db init` on startup to apply migrations idempotently — no manual setup.
+
+**Image footprint** — the built image is ~8 GB. The non-obvious chunk is ~2 GB of pre-warmed fastembed model weights (dense embedder, sparse, cross-encoder reranker) baked in during `docker build`. This is deliberate: the first `/query` would otherwise pay a ~25 s reranker-load + ~2 GB download on a fresh container, and sparse/reranker silently degrade if the network is slow. If you'd rather mount a persistent volume for the model cache, set `FASTEMBED_CACHE_DIR` to a mounted path and skip the pre-warm step in `docker/Dockerfile`.
 
 Then open:
 
