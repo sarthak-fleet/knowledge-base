@@ -23,3 +23,22 @@ duckdb_route:
   filename_to_field:
     pattern: '^([A-Z]{1,5})[_-]'   # SEC filings name themselves TICKER_FORM_DATE_*.html
     field: ticker                  # backfill the ticker field on entities where extraction missed it
+
+xlsx_bridge:
+  enabled: true
+  target_entity_type: FinancialMetric
+  ident_field: ticker
+  ident_columns: [ticker, symbol, company, issuer]
+  value_columns:
+    - revenue
+    - net income
+    - income
+    - eps
+    - eps diluted
+    - eps-diluted
+    - gross profit
+    - operating income
+    - cash
+    - total assets
+  period_columns: [period, quarter, fiscal year, year, date]
+  name_columns: [name, metric, indicator]

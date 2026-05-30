@@ -165,44 +165,58 @@ async def extract_for_file(*, file_id: str, domain: str) -> ExtractionResult:
             continue
         records.extend(chunk)
 
-    # XLSX bridge: for spreadsheet files, parse per-row entities deterministically.
-    # The LLM extractor often misses dense tabular content; this is the safety net.
+    # XLSX bridge: when the domain opts in, parse per-row entities directly
+    # from spreadsheet content. The LLM extractor often misses dense tabular
+    # data because the row text doesn't read like natural language. The
+    # bridge's vocabulary and target entity type both come from per-domain
+    # config (xlsx_bridge.* section), so this is not financial-specific —
+    # any domain whose schema has a row-keyed tabular shape can opt in.
     if file_row["filename"].lower().endswith((".xlsx", ".xls")):
-        from kb.extract.xlsx_bridge import extract_financial_metrics_from_xlsx
+        from kb.extract.xlsx_bridge import XlsxBridgeConfig, extract_xlsx_entities
 
-        # Reconstruct rows from elements: each ListItem element is one row;
-        # the Title element is the header.
-        rows: list[list[str]] = []
-        header: list[str] | None = None
-        for e in elements:
-            if e.metadata.get("is_header"):
-                # Header text looks like "Sheet 'X' header: A | B | C"
-                if ":" in e.text and "|" in e.text:
-                    h_part = e.text.split(":", 1)[1]
-                    header = [s.strip() for s in h_part.split("|")]
-                    rows.append(header)
-            elif e.metadata.get("sheet") and not e.metadata.get("is_header"):
-                # Row text looks like "[Sheet] Col1: Val1 | Col2: Val2 ..."
-                body = e.text.split("] ", 1)[1] if "] " in e.text else e.text
-                vals = [
-                    pair.split(":", 1)[1].strip() if ":" in pair else pair.strip()
-                    for pair in body.split("|")
-                ]
-                rows.append(vals)
-        if rows:
-            for rec in extract_financial_metrics_from_xlsx(rows):
-                # Grok Issue 4: defensive default — any future or direct caller
-                # that omits `_provenance` no longer raises KeyError mid-ingest.
-                prov = rec.pop("_provenance", {}) or {}
-                records.append(
-                    ExtractedRecord(
-                        entity_type="FinancialMetric",
-                        fields=rec,
-                        provenance=prov,
-                        window=(0, 0),
+        bridge_cfg = XlsxBridgeConfig.from_pipeline_cfg(cfg)
+        if bridge_cfg.is_actionable():
+            # Reconstruct rows from elements: each ListItem element is one row;
+            # the Title element is the header.
+            rows: list[list[str]] = []
+            header: list[str] | None = None
+            for e in elements:
+                if e.metadata.get("is_header"):
+                    # Header text looks like "Sheet 'X' header: A | B | C"
+                    if ":" in e.text and "|" in e.text:
+                        h_part = e.text.split(":", 1)[1]
+                        header = [s.strip() for s in h_part.split("|")]
+                        rows.append(header)
+                elif e.metadata.get("sheet") and not e.metadata.get("is_header"):
+                    # Row text looks like "[Sheet] Col1: Val1 | Col2: Val2 ..."
+                    body = e.text.split("] ", 1)[1] if "] " in e.text else e.text
+                    vals = [
+                        pair.split(":", 1)[1].strip() if ":" in pair else pair.strip()
+                        for pair in body.split("|")
+                    ]
+                    rows.append(vals)
+            if rows:
+                added = 0
+                for rec in extract_xlsx_entities(rows, bridge_cfg):
+                    # Grok Issue 4: defensive default — any future or direct caller
+                    # that omits `_provenance` no longer raises KeyError mid-ingest.
+                    prov = rec.pop("_provenance", {}) or {}
+                    records.append(
+                        ExtractedRecord(
+                            entity_type=bridge_cfg.target_entity_type,  # type: ignore[arg-type]
+                            fields=rec,
+                            provenance=prov,
+                            window=(0, 0),
+                        )
                     )
-                )
-            logger.info("file %s: xlsx_bridge added rows for tabular extraction", file_id)
+                    added += 1
+                if added:
+                    logger.info(
+                        "file %s: xlsx_bridge added %d %s records",
+                        file_id,
+                        added,
+                        bridge_cfg.target_entity_type,
+                    )
 
     settings = get_settings()  # noqa: F841 (kept for symmetry / future tuning)
     logger.info(

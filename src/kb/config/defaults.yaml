@@ -88,6 +88,16 @@ duckdb_route:
                                      # Used to backfill an entity field from the source filename when
                                      # the extractor missed it. Null disables the fallback.
 
+xlsx_bridge:
+  enabled: false                     # opt-in per-domain. The bridge emits entities directly from
+                                     # XLSX rows when the LLM extractor misses dense tabular content.
+  target_entity_type: null           # entity type to emit, e.g. FinancialMetric.
+  ident_field: null                  # name of the entity identifier field (output key).
+  ident_columns: []                  # header tokens that identify the row, e.g. [ticker, symbol].
+  value_columns: []                  # header tokens that emit a separate record per row+column.
+  period_columns: []                 # header tokens concatenated into a period string.
+  name_columns: []                   # header tokens whose row value names the metric.
+
 prompts:
   extract_system: |
     You are an extraction agent. Read the document context and produce JSON
