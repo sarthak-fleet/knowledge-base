@@ -11,6 +11,7 @@ This is the "parse once, re-extract many" boundary called out in DESIGN.md.
 from __future__ import annotations
 
 import asyncio
+import re
 import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -75,6 +76,81 @@ def _parse_pdf_sync(
     return [_element_from_unstructured(e, i) for i, e in enumerate(elements)]
 
 
+# Title-promotion heuristics. Unstructured's HTML parser categorises every
+# block on a 10-K as NarrativeText (verified across the 540 elements of an
+# AAPL 10-K — zero Title or Header elements). Boundary-aware chunking and
+# section-boost both depend on Title markers to fire, so we recover them
+# from body elements with a small set of pure-Python checks.
+
+# Section-numbered headers: "Item 1A.", "PART II", "Section 4.2", "Article 7".
+_TITLE_SECTION_HEAD = re.compile(
+    r"^(item|part|section|article)\s+[ivx0-9]+[a-z]?(\.\d+)?\.?\s*",
+    re.IGNORECASE,
+)
+_SENTENCE_END = re.compile(r"[.!?:;]\s*$")
+
+
+def _is_title_like(text: str) -> bool:
+    """True when a body element's text reads like a section header.
+
+    Pure helper, unit-tested. Catches all-caps headings, Title-Cased headings,
+    and section-numbered headings ("Item 1A", "PART II"). Errs on the side of
+    not promoting — false negatives just leave the element as body, false
+    positives create spurious chunk boundaries that downstream stages tolerate.
+    """
+    t = (text or "").strip()
+    if not t or len(t) > 200 or "\n" in t:
+        return False
+    if _SENTENCE_END.search(t):
+        return False
+    words = t.split()
+    if not (1 <= len(words) <= 25):
+        return False
+    if _TITLE_SECTION_HEAD.match(t):
+        return True
+    if t.isupper() and any(c.isalpha() for c in t):
+        return True
+    content_words = [w for w in words if any(c.isalpha() for c in w)]
+    if not content_words:
+        return False
+    cap = sum(1 for w in content_words if w[0:1].isupper())
+    return cap / len(content_words) >= 0.6
+
+
+def _promote_title_like(elements: list[Element]) -> list[Element]:
+    """Rewrite body elements that look like headings as Title elements.
+
+    Necessary because Unstructured's HTML parser categorises every block as
+    NarrativeText / UncategorizedText / Text on the 10-K-shaped corpora that
+    this project ingests, leaving boundary-aware chunking and section-boost
+    with no Title markers to operate on. Generic enough to apply to any
+    auto-partition output (PDF parse path bypasses this — its hi_res/fast
+    strategies already produce Title elements correctly).
+    """
+    body_types = {"NarrativeText", "Text", "UncategorizedText"}
+    out: list[Element] = []
+    promoted = 0
+    for e in elements:
+        if e.type in body_types and _is_title_like(e.text):
+            out.append(
+                Element(
+                    id=e.id,
+                    type="Title",
+                    text=e.text,
+                    page=e.page,
+                    bbox=e.bbox,
+                    parent_id=e.parent_id,
+                    metadata={**(e.metadata or {}), "title_promoted": True},
+                )
+            )
+            promoted += 1
+        else:
+            out.append(e)
+    if promoted:
+        logger.info("title-promotion: rewrote %d body elements as Title", promoted)
+    return out
+
+
 def _parse_auto_sync(blob: bytes, filename: str) -> list[Element]:
     """Auto-dispatch via unstructured.partition.auto for non-PDF / non-XLSX files."""
     from unstructured.partition.auto import partition
@@ -86,7 +162,8 @@ def _parse_auto_sync(blob: bytes, filename: str) -> list[Element]:
         elements = partition(filename=str(tmp))
     finally:
         tmp.unlink(missing_ok=True)
-    return [_element_from_unstructured(e, i, default_page=1) for i, e in enumerate(elements)]
+    out = [_element_from_unstructured(e, i, default_page=1) for i, e in enumerate(elements)]
+    return _promote_title_like(out)
 
 
 def _parse_xlsx_sync(blob: bytes, filename: str) -> list[Element]:
