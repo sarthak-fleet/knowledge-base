@@ -30,6 +30,8 @@ from typing import Any
 
 import structlog
 
+from kb.config.pipeline import get as cfg_get
+from kb.config.pipeline import pipeline_config
 from kb.extract import llm
 from kb.query.intent import QueryIntent
 from kb.query.structured import mentions_for
@@ -108,10 +110,13 @@ async def maybe_graph_answer(
     `looks_like_themes(question)`. The route itself just looks at intent +
     domain entities and either produces a summary or backs off.
     """
-    # We need an entity type to operate on. Prefer intent.entity_type;
-    # otherwise default to RiskFactor (the most theme-friendly type on our
-    # SEC schema). On Legal, prefer Clause.
-    entity_type = intent.entity_type or ("RiskFactor" if domain == "sec" else "Clause")
+    # We need an entity type to operate on. Prefer intent.entity_type; otherwise
+    # take the per-domain fallback from config (`graph_route.default_entity_type`).
+    # If neither is set, back off cleanly — better than picking a random type.
+    fallback_type = cfg_get(pipeline_config(domain), "graph_route.default_entity_type")
+    entity_type = intent.entity_type or fallback_type
+    if not entity_type:
+        return None
 
     # Pull entities — bounded; if we have hundreds, sample.
     rows = await repo.list_entities(domain=domain, type=entity_type, q=None, limit=200)

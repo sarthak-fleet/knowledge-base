@@ -79,6 +79,10 @@ retrieve_extra:
   duckdb_route_enabled: true         # FinanceBench-pattern: aggregation questions run text-to-SQL
                                      # over the entities table via in-memory DuckDB views.
 
+graph_route:
+  default_entity_type: null          # per-domain — e.g. RiskFactor on sec, Clause on legal.
+                                     # null means the theme route backs off rather than guessing.
+
 prompts:
   extract_system: |
     You are an extraction agent. Read the document context and produce JSON

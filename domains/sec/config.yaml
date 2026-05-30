@@ -15,3 +15,6 @@ retrieve:
 
 synthesize:
   excerpt_chars: 600           # SEC sentences are long; keep more excerpt text in citations
+
+graph_route:
+  default_entity_type: RiskFactor  # theme questions default to RiskFactor entities

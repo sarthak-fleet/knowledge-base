@@ -12,3 +12,6 @@ retrieve:
   mmr_enabled: true             # licenses repeat boilerplate across files; MMR diversity
                                 # raises citation F1 from 0.75 → 0.83 in eval.
   mmr_lambda: 0.7
+
+graph_route:
+  default_entity_type: Clause   # theme questions on legal default to Clause entities
