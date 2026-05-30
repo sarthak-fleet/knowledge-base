@@ -15,3 +15,19 @@ retrieve:
 
 graph_route:
   default_entity_type: Clause   # theme questions on legal default to Clause entities
+
+intent:
+  few_shot_examples: |
+    Examples of correct classification:
+
+    Q: "What does the MIT License say about warranty disclaimers?"
+    → {"kind": "lookup", "entity_type": "Clause", "filters": {"license": "MIT"}, "reason": "Single lookup against a named license."}
+
+    Q: "Which licenses require source-code disclosure on redistribution?"
+    → {"kind": "aggregate", "entity_type": "Obligation", "filters": {}, "reason": "Aggregation over multiple licenses for a shared constraint."}
+
+    Q: "Compare patent-grant clauses across Apache-2.0 and GPL-3.0."
+    → {"kind": "compare", "entity_type": "Clause", "filters": {}, "reason": "Side-by-side comparison across named licenses."}
+
+    Q: "What obligations does the Apache-2.0 license impose on distributors?"
+    → {"kind": "lookup", "entity_type": "Obligation", "filters": {"license": "Apache-2.0"}, "reason": "Lookup of a topic in a named license."}

@@ -20,6 +20,8 @@ from typing import Any, Literal
 import structlog
 from pydantic import BaseModel, Field
 
+from kb.config.pipeline import get as cfg_get
+from kb.config.pipeline import pipeline_config
 from kb.extract import llm
 from kb.schema.model import DomainSchema
 
@@ -80,24 +82,17 @@ _SYSTEM_PROMPT = (
 )
 
 
-_FEW_SHOT_EXAMPLES = """
-Examples of correct classification:
+def _few_shot_examples_for(domain: str | None) -> str:
+    """Per-domain few-shot examples for the intent classifier.
 
-Q: "What does Apple disclose about supply chain risks?"
-→ {"kind": "lookup", "entity_type": "RiskFactor", "filters": {"ticker": "AAPL"}, "reason": "Single fact lookup for a named company."}
-
-Q: "Which companies had quarterly revenue exceeding $60 billion?"
-→ {"kind": "aggregate", "entity_type": "FinancialMetric", "filters": {"name": "Revenue"}, "reason": "Aggregation over multiple entities with numeric threshold."}
-
-Q: "Compare NVIDIA's Q1 and Q2 2024 EPS-Diluted."
-→ {"kind": "compare", "entity_type": "FinancialMetric", "filters": {"ticker": "NVDA"}, "reason": "Side-by-side comparison of named items."}
-
-Q: "What is Microsoft's largest revenue segment?"
-→ {"kind": "negative", "entity_type": null, "filters": {"ticker": "MSFT"}, "reason": "Microsoft is unlikely to be in this corpus."}
-
-Q: "What is Apple's highest quarterly revenue in the summary financials?"
-→ {"kind": "aggregate", "entity_type": "FinancialMetric", "filters": {"name": "Revenue", "ticker": "AAPL"}, "reason": "Superlative (highest) requires scanning multiple entries — aggregate."}
-"""
+    Examples are concrete (real entity types and filter keys from the domain's
+    schema) so the LLM picks up patterns rather than abstract placeholders. They
+    live under `intent.few_shot_examples` in the per-domain config. Falls back
+    to the shape-only stem in defaults.yaml when a domain doesn't ship its own.
+    """
+    if not domain:
+        return ""
+    return cfg_get(pipeline_config(domain), "intent.few_shot_examples", "") or ""
 
 
 class _IntentResponse(BaseModel):
@@ -115,16 +110,24 @@ class _IntentResponse(BaseModel):
 
 
 async def extract_intent(
-    question: str, schema: DomainSchema, *, model: str | None = None
+    question: str,
+    schema: DomainSchema,
+    *,
+    domain: str | None = None,
+    model: str | None = None,
 ) -> QueryIntent:
     """Best-effort intent extraction. Falls back to lookup-with-no-filters on any error.
 
     Uses `instructor` to enforce Pydantic-typed output via tool-call. Few-shot
-    examples + the schema-derived entity vocabulary still guide the model.
+    examples are loaded from the per-domain config (`intent.few_shot_examples`)
+    so the SEC-flavoured concrete examples that used to be hardcoded here now
+    live in `domains/sec/config.yaml`; Legal ships its own.
     """
+    examples = _few_shot_examples_for(domain)
+    system = _SYSTEM_PROMPT + ("\n\n" + examples if examples else "")
     try:
         resp = await llm.chat_structured(
-            system=_SYSTEM_PROMPT + "\n\n" + _FEW_SHOT_EXAMPLES,
+            system=system,
             user=_build_user_prompt(question, schema),
             response_model=_IntentResponse,
             model=model,

@@ -98,6 +98,18 @@ xlsx_bridge:
   period_columns: []                 # header tokens concatenated into a period string.
   name_columns: []                   # header tokens whose row value names the metric.
 
+intent:
+  # Per-domain few-shot examples shown to the intent classifier. Concrete examples
+  # tied to the domain's entity types work much better than abstract placeholders;
+  # the default below is a shape-only stem so a fresh domain still gets guidance.
+  few_shot_examples: |
+    Examples by question shape (use your domain's actual entity types):
+
+      - Lookup ("What does X say about Y?")     → kind=lookup
+      - Aggregate ("Which X had Y > N?")        → kind=aggregate
+      - Compare ("Compare X's Y across P1, P2") → kind=compare
+      - Negative (X is unlikely to be in corpus) → kind=negative
+
 prompts:
   extract_system: |
     You are an extraction agent. Read the document context and produce JSON

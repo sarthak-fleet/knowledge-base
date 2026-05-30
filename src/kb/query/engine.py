@@ -123,7 +123,7 @@ async def answer_query(body: QueryIn) -> QueryOut:
     schema = schema_from_dict(schema_row["spec"])
 
     started = time.time()
-    intent: QueryIntent = await extract_intent(body.question, schema)
+    intent: QueryIntent = await extract_intent(body.question, schema, domain=body.domain)
     stages.append(
         _stage("intent", started, kind=intent.kind, filters=intent.filters, reason=intent.reason)
     )
