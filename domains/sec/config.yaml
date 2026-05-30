@@ -18,3 +18,8 @@ synthesize:
 
 graph_route:
   default_entity_type: RiskFactor  # theme questions default to RiskFactor entities
+
+duckdb_route:
+  filename_to_field:
+    pattern: '^([A-Z]{1,5})[_-]'   # SEC filings name themselves TICKER_FORM_DATE_*.html
+    field: ticker                  # backfill the ticker field on entities where extraction missed it

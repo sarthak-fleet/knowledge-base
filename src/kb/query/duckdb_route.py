@@ -28,32 +28,54 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 # duckdb is an optional dep at import time so the pure helpers below
-# (_ticker_from_filename, _metric_canonical) are unit-testable without
+# (_capture_filename_field, _metric_canonical) are unit-testable without
 # installing it. The runtime path that actually opens a DuckDB connection
 # imports duckdb lazily — see _build_duckdb_from_entities.
 if TYPE_CHECKING:
     import duckdb
 
+from kb.config.pipeline import get as cfg_get
+from kb.config.pipeline import pipeline_config
 from kb.extract import llm
 from kb.query.intent import QueryIntent
 from kb.query.structured import mentions_for
 from kb.schema.loader import schema_from_dict
 from kb.storage import repo
 
-# Filename → ticker fallback. Most SEC filings name themselves
-# `TICKER_FORM_DATE_*.html` (the EDGAR adapter follows this convention) so
-# parsing the prefix is reliable. We use this when the extraction itself
-# fails to populate the `ticker` field on a `FinancialMetric` — which is
-# the dominant cause of "DuckDB query returns NULL" on aggregate questions
-# (found by per-question failure analysis on the Step 7 evals).
-_TICKER_FROM_FILENAME = re.compile(r"^([A-Z]{1,5})[_-]")
 
+def _capture_filename_field(pattern: str | None, filename: str | None, group: int = 1) -> str | None:
+    """Pure helper: match `pattern` against `filename` and return capture group N.
 
-def _ticker_from_filename(filename: str | None) -> str | None:
-    if not filename:
+    Used by the per-domain filename → entity-field fallback (see
+    `_filename_field_extractor`). Kept pure so it's unit-testable without any
+    config plumbing.
+    """
+    if not pattern or not filename:
         return None
-    m = _TICKER_FROM_FILENAME.match(filename)
-    return m.group(1) if m else None
+    try:
+        m = re.match(pattern, filename)
+    except re.error:
+        return None
+    if not m or not m.groups():
+        return None
+    return m.group(group)
+
+
+def _filename_field_extractor(domain: str) -> tuple[str, str] | None:
+    """Load `(pattern, target_field)` for a domain's filename-to-field fallback.
+
+    Returns None when the domain doesn't configure one. The typical case is
+    SEC, where filings follow `TICKER_FORM_DATE_*.html` and the extractor
+    often misses the `ticker` field on FinancialMetric entities.
+    """
+    spec = cfg_get(pipeline_config(domain), "duckdb_route.filename_to_field")
+    if not isinstance(spec, dict):
+        return None
+    pat = spec.get("pattern")
+    field = spec.get("field")
+    if not pat or not field:
+        return None
+    return str(pat), str(field)
 
 
 # Metric-name normalization. The extraction LLM produces wildly inconsistent
@@ -222,48 +244,48 @@ async def maybe_duckdb_answer(
     if not entities_by_type:
         return None
 
-    # File-level ticker fallback. Many extracted entities (esp. FinancialMetric
-    # in the SEC schema) come back with `ticker=NULL` because the extractor
-    # didn't fill the field even though the source file is clearly tagged
-    # (e.g. AAPL_10-K_2025.html). Without this, every `WHERE ticker='AAPL'`
-    # SQL returns 0 rows and the route emits NULL.
-    #
-    # We resolve the first mention's filename for every entity once, derive
-    # the ticker prefix, and overlay it onto the entity row when the entity
-    # itself doesn't have a ticker. Done in batch (single SQL call).
+    # Per-domain filename → entity-field fallback. Domains can configure a regex
+    # under `duckdb_route.filename_to_field` that backfills one entity field from
+    # the source filename when the extractor missed it. On SEC, this rescues
+    # `ticker` on FinancialMetric entities where the LLM didn't populate it (the
+    # 10-K filename like AAPL_10-K_2025.html carries the ticker reliably). On
+    # domains that don't configure this, the fallback is skipped entirely.
+    extractor = _filename_field_extractor(domain)
     all_ids = [str(r.get("id")) for rows in entities_by_type.values() for r in rows if r.get("id")]
-    file_ticker_by_entity: dict[str, str] = {}
-    if all_ids:
+    backfill_by_entity: dict[str, str] = {}
+    if extractor and all_ids:
+        pattern, _ = extractor
         try:
             ments = await mentions_for(all_ids)
-            # Keep the first mention per entity (mentions_for is ORDER BY created_at DESC,
-            # but a single ticker is what we want regardless of recency).
+            # Keep the first non-empty capture per entity.
             for m in ments:
                 eid = m.get("entity_id")
-                if eid and eid not in file_ticker_by_entity:
-                    tk = _ticker_from_filename(m.get("filename"))
-                    if tk:
-                        file_ticker_by_entity[eid] = tk
+                if eid and eid not in backfill_by_entity:
+                    val = _capture_filename_field(pattern, m.get("filename"))
+                    if val:
+                        backfill_by_entity[eid] = val
         except Exception as e:
-            logger.info("duckdb: ticker-fallback resolution failed (%s); proceeding without it", e)
+            logger.info("duckdb: filename-fallback resolution failed (%s); proceeding without it", e)
 
-    # Overlay the file-ticker onto every entity row's `fields` dict if the
-    # row doesn't already have a ticker. This keeps the DuckDB schema stable
-    # (same column names) and lets existing SQL using `ticker` just work.
-    if file_ticker_by_entity:
+    # Overlay the captured value onto every entity row's `fields` dict, keyed
+    # on the per-domain target field, when the entity itself lacks that field.
+    if extractor and backfill_by_entity:
+        _, target_field = extractor
         backfilled = 0
         for _etype, rows in entities_by_type.items():
             for r in rows:
                 fields = r.get("fields") or {}
-                if not fields.get("ticker"):
-                    tk = file_ticker_by_entity.get(str(r.get("id", "")))
-                    if tk:
-                        fields["ticker"] = tk
+                if not fields.get(target_field):
+                    val = backfill_by_entity.get(str(r.get("id", "")))
+                    if val:
+                        fields[target_field] = val
                         r["fields"] = fields
                         backfilled += 1
         if backfilled:
             logger.info(
-                "duckdb: backfilled ticker on %d entities via filename fallback", backfilled
+                "duckdb: backfilled %s on %d entities via filename fallback",
+                target_field,
+                backfilled,
             )
 
     conn = _build_duckdb_from_entities(entities_by_type)

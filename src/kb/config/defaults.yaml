@@ -83,6 +83,11 @@ graph_route:
   default_entity_type: null          # per-domain — e.g. RiskFactor on sec, Clause on legal.
                                      # null means the theme route backs off rather than guessing.
 
+duckdb_route:
+  filename_to_field: null            # per-domain — e.g. {pattern: '^([A-Z]{1,5})[_-]', field: ticker}.
+                                     # Used to backfill an entity field from the source filename when
+                                     # the extractor missed it. Null disables the fallback.
+
 prompts:
   extract_system: |
     You are an extraction agent. Read the document context and produce JSON

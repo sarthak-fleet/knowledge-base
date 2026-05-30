@@ -1,47 +1,63 @@
 """Unit tests for the pure helpers in kb.query.duckdb_route.
 
 Covers:
-- _ticker_from_filename: filename → ticker prefix
+- _capture_filename_field: generic regex-capture from filename (the SEC-specific
+  pattern lives in domains/sec/config.yaml as duckdb_route.filename_to_field;
+  these tests pin the pattern explicitly so they exercise the helper itself).
 - _metric_canonical: raw metric name → canonical bucket
-
-These are the two fixes added in Step 7 (commits 3955e5e and 9ff959d)
-that lifted the structured-query route from "always returns NULL" to
-"actually finds the rows." No live API needed to test them.
 """
 
 from __future__ import annotations
 
-from kb.query.duckdb_route import _metric_canonical, _ticker_from_filename
+from kb.query.duckdb_route import _capture_filename_field, _metric_canonical
 
-# ─── _ticker_from_filename ────────────────────────────────────────────────
+# SEC ticker-from-filename pattern — kept here so the tests stay deterministic
+# and don't depend on the config loader.
+SEC_TICKER_PATTERN = r"^([A-Z]{1,5})[_-]"
+
+
+# ─── _capture_filename_field (SEC ticker pattern) ─────────────────────────
 
 
 def test_ticker_basic_underscore() -> None:
-    assert _ticker_from_filename("AAPL_10-K_2025-10-31.html") == "AAPL"
+    assert _capture_filename_field(SEC_TICKER_PATTERN, "AAPL_10-K_2025-10-31.html") == "AAPL"
 
 
 def test_ticker_basic_dash() -> None:
-    assert _ticker_from_filename("NVDA-10-Q-2025.html") == "NVDA"
+    assert _capture_filename_field(SEC_TICKER_PATTERN, "NVDA-10-Q-2025.html") == "NVDA"
 
 
 def test_ticker_msft_short() -> None:
-    assert _ticker_from_filename("MSFT_8-K_xyz.html") == "MSFT"
+    assert _capture_filename_field(SEC_TICKER_PATTERN, "MSFT_8-K_xyz.html") == "MSFT"
 
 
 def test_ticker_none_for_empty() -> None:
-    assert _ticker_from_filename("") is None
-    assert _ticker_from_filename(None) is None
+    assert _capture_filename_field(SEC_TICKER_PATTERN, "") is None
+    assert _capture_filename_field(SEC_TICKER_PATTERN, None) is None
 
 
 def test_ticker_none_for_unprefixed() -> None:
     # No uppercase ticker-shape prefix → None
-    assert _ticker_from_filename("summary_financials.xlsx") is None
-    assert _ticker_from_filename("license.txt") is None
+    assert _capture_filename_field(SEC_TICKER_PATTERN, "summary_financials.xlsx") is None
+    assert _capture_filename_field(SEC_TICKER_PATTERN, "license.txt") is None
 
 
 def test_ticker_only_first_token() -> None:
     # Ensure we don't accidentally grab text after the first separator
-    assert _ticker_from_filename("TSLA_10-K_2024-09-30_000162828024041240.html") == "TSLA"
+    assert (
+        _capture_filename_field(SEC_TICKER_PATTERN, "TSLA_10-K_2024-09-30_000162828024041240.html")
+        == "TSLA"
+    )
+
+
+def test_capture_returns_none_for_bad_pattern() -> None:
+    # Malformed regex should not raise — helper returns None.
+    assert _capture_filename_field("(", "anything.html") is None
+
+
+def test_capture_returns_none_when_pattern_empty() -> None:
+    assert _capture_filename_field(None, "AAPL_10-K.html") is None
+    assert _capture_filename_field("", "AAPL_10-K.html") is None
 
 
 # ─── _metric_canonical ────────────────────────────────────────────────────
