@@ -61,7 +61,9 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     log_level: str = "info"
-    worker_concurrency: int = 4
+    # Default is conservative (2) so the stack runs comfortably on a 16 GB host.
+    # `hi_res` PDF parsing alone uses ~2 GB per worker; see .env.example.
+    worker_concurrency: int = 2
     parse_strategy_default: Literal["auto", "fast", "hi_res", "ocr_only"] = "auto"
     # When set, parse_pdf runs an extra multimodal pass via the configured AI
     # model to extract tables from page images and add them as supplementary
