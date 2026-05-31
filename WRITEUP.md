@@ -1,12 +1,12 @@
 # Knowledge Base: Submission Brief
 
-**Repository:** [github.com/sarthakagrawal927/knowledge-base](https://github.com/sarthakagrawal927/knowledge-base)
+**Repository:** [github.com/sarthak-fleet/knowledge-base](https://github.com/sarthak-fleet/knowledge-base)
 
 Short brief. The depth lives in the repo:
 
-- [NOTES.md](https://github.com/sarthakagrawal927/knowledge-base/blob/main/NOTES.md): decision log with research links.
-- [DESIGN.md](https://github.com/sarthakagrawal927/knowledge-base/blob/main/DESIGN.md): architecture detail and the boundary tests for the domain-agnostic claim.
-- [README.md](https://github.com/sarthakagrawal927/knowledge-base/blob/main/README.md): bootstrap, endpoints, reading guide.
+- [NOTES.md](https://github.com/sarthak-fleet/knowledge-base/blob/main/NOTES.md): decision log with research links.
+- [DESIGN.md](https://github.com/sarthak-fleet/knowledge-base/blob/main/DESIGN.md): architecture detail and the boundary tests for the domain-agnostic claim.
+- [README.md](https://github.com/sarthak-fleet/knowledge-base/blob/main/README.md): bootstrap, endpoints, reading guide.
 
 What I built supports schema-defined domain onboarding: drop a YAML, drop in files, ask questions, get cited answers. The schema layer (`src/kb/schema`) and the vector store (`src/kb/vector`) carry no domain identifiers. Grep confirms zero hits for SEC, Legal, ticker, FinancialMetric, RiskFactor, or Clause across either directory. The two-domain demo (SEC EDGAR + SPDX legal licenses) runs the schema-swap path on the same code.
 
@@ -56,4 +56,4 @@ In rough priority order: real graph storage replacing the current theme-routing 
 
 ---
 
-The remaining rubric items (schema versioning with NL field descriptions, identity merging, lineage, idempotency, scoped + filtered + conversational retrieval, layered configurability) are represented in the implementation under `src/kb/`; the [source-tree map in README](https://github.com/sarthakagrawal927/knowledge-base/blob/main/README.md) walks through where each one lives.
+The remaining rubric items (schema versioning with NL field descriptions, identity merging, lineage, idempotency, scoped + filtered + conversational retrieval, layered configurability) are represented in the implementation under `src/kb/`; the [source-tree map in README](https://github.com/sarthak-fleet/knowledge-base/blob/main/README.md) walks through where each one lives.

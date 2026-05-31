@@ -1,6 +1,6 @@
 # Knowledge Base Service
 
-[![CI](https://github.com/sarthakagrawal927/knowledge-base/actions/workflows/ci.yml/badge.svg)](https://github.com/sarthakagrawal927/knowledge-base/actions/workflows/ci.yml)
+[![CI](https://github.com/sarthak-fleet/knowledge-base/actions/workflows/ci.yml/badge.svg)](https://github.com/sarthak-fleet/knowledge-base/actions/workflows/ci.yml)
 [![tests](https://img.shields.io/badge/tests-77%20passing-brightgreen)](#)
 [![ruff](https://img.shields.io/badge/ruff-clean-brightgreen)](#)
 
