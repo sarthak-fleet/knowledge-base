@@ -1,10 +1,12 @@
-"""HighSignal-styled Streamlit demo.
+"""Project-aware Knowledge Base demo UI.
 
-Pages:
-  - Overview: schema, files (with upload widget), ingest status
-  - Query: ask a question; see cited answer + retrieved nodes + per-stage trace
-  - Entities: browse + drill into lineage / relationships
-  - Eval: read the latest eval report
+Two screens:
+
+  1. Landing — list projects, create a new one.
+  2. Workspace (after selecting a project) — chat with the corpus, add files,
+     pick which kinds (= source-types) to query against.
+
+Backed by the standard REST API on the kb-api container.
 """
 
 from __future__ import annotations
@@ -15,8 +17,10 @@ from typing import Any
 
 import httpx
 import streamlit as st
-
 from streamlit_app.style import inject_css
+
+API = os.environ.get("KB_API_URL", "http://api:8000")
+HTTP = httpx.Client(timeout=180)
 
 
 def _json_safe(o: Any) -> str:
@@ -25,12 +29,9 @@ def _json_safe(o: Any) -> str:
     except Exception:
         return repr(o)
 
-API = os.environ.get("KB_API_URL", "http://api:8000")
-HTTP = httpx.Client(timeout=180)
-
 
 def api_get(path: str, **params: Any) -> Any:
-    r = HTTP.get(f"{API}{path}", params=params)
+    r = HTTP.get(f"{API}{path}", params={k: v for k, v in params.items() if v is not None})
     r.raise_for_status()
     return r.json()
 
@@ -44,285 +45,311 @@ def api_post(path: str, **payload: Any) -> Any:
 st.set_page_config(page_title="Knowledge Base", layout="wide", initial_sidebar_state="expanded")
 inject_css()
 
-st.sidebar.markdown("### KB")
-domain = st.sidebar.selectbox("Domain", options=[d["name"] for d in api_get("/domains")] or ["sec"], index=0)
-page = st.sidebar.radio("View", ["Overview", "Query", "Entities", "Eval"], label_visibility="collapsed")
+# ── Session state ────────────────────────────────────────────────────────────
+if "selected_project" not in st.session_state:
+    st.session_state["selected_project"] = None
+if "chat_history" not in st.session_state:
+    st.session_state["chat_history"] = {}  # project → list[{role, content, citations?, conf?}]
+if "session_ids" not in st.session_state:
+    st.session_state["session_ids"] = {}  # project → session_id
 
-st.sidebar.markdown("---")
-st.sidebar.caption(f"API → {API}")
 
-# ── Overview ───────────────────────────────────────────────────────────────
-if page == "Overview":
-    st.markdown("#### Schema")
-    sch = None
+def _enter_project(name: str) -> None:
+    st.session_state["selected_project"] = name
+    st.session_state["chat_history"].setdefault(name, [])
+    st.rerun()
+
+
+def _leave_project() -> None:
+    st.session_state["selected_project"] = None
+    st.rerun()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# LANDING — list of projects
+# ═══════════════════════════════════════════════════════════════════════════
+if st.session_state["selected_project"] is None:
+    st.markdown("## Knowledge Base")
+    st.caption(f"API → {API}")
+    st.markdown("---")
+
+    projects = []
     try:
-        sch = api_get(f"/schemas/{domain}/active")
-    except Exception:
-        st.warning("No active schema for this domain.")
-    if sch:
-        spec = sch["spec"]
-        st.caption(f"{spec['name']}  ·  v{sch['version']}")
+        projects = api_get("/projects")
+    except Exception as e:
+        st.error(f"Could not load projects: {e}")
+
+    # Project cards in a grid
+    if projects:
+        st.markdown("### Your projects")
         cols = st.columns(3)
-        for i, et in enumerate(spec["entities"]):
-            with cols[i % 3]:
-                st.markdown(f"**{et['name']}** — {et.get('description','')[:120]}")
-                st.caption(", ".join(f["name"] for f in et["fields"]))
-
-    st.markdown("#### Upload")
-    with st.form("upload_form", clear_on_submit=True):
-        uploaded = st.file_uploader(
-            "Drop one or more files (PDF, HTML, XLSX, TXT, DOCX, …)",
-            accept_multiple_files=True,
-        )
-        col_a, col_b = st.columns([1, 5])
-        kick = col_a.checkbox("Auto-ingest after upload", value=True)
-        force = col_b.checkbox("Force re-ingest if file already exists", value=False)
-        submit = st.form_submit_button("Upload", type="primary")
-    if submit and uploaded:
-        ok = 0
-        for f in uploaded:
-            try:
-                r = HTTP.post(
-                    f"{API}/files",
-                    data={"domain": domain},
-                    files={"file": (f.name, f.getvalue(), f.type or "application/octet-stream")},
-                )
-                r.raise_for_status()
-                ok += 1
-            except Exception as e:
-                st.error(f"{f.name}: {e}")
-        st.success(f"Uploaded {ok}/{len(uploaded)} file(s) into domain '{domain}'.")
-        if kick:
-            try:
-                rr = HTTP.post(f"{API}/ingest/run", json={"domain": domain, "force": force})
-                rr.raise_for_status()
-                st.info(f"Enqueued {rr.json().get('enqueued', 0)} jobs; tail `docker compose logs -f worker` to watch.")
-            except Exception as e:
-                st.warning(f"Auto-ingest skipped: {e}")
-        st.rerun()
-
-    st.markdown("#### Files")
-    files = api_get("/files", domain=domain)
-    if not files:
-        st.info("No files yet. Run `make seed` from the host to populate the SEC demo.")
+        for i, p in enumerate(projects):
+            with cols[i % 3], st.container(border=True):
+                st.markdown(f"#### {p['name']}")
+                desc = (p.get("description") or "").strip()
+                if desc:
+                    st.caption(desc[:120])
+                meta = f"{p.get('kind_count', 0)} kind(s)  ·  {p.get('file_count', 0)} file(s)"
+                st.caption(meta)
+                if st.button("Open →", key=f"open_{p['name']}", use_container_width=True):
+                    _enter_project(p["name"])
     else:
-        st.dataframe(
-            [
-                {
-                    "id": f["id"][:8],
-                    "filename": f["filename"],
-                    "bytes": f["bytes"],
-                    "status": f["status"],
-                    "error": (f.get("last_error") or "")[:80],
-                }
-                for f in files
-            ],
-            use_container_width=True,
-            height=320,
+        st.info("No projects yet. Create one below.")
+
+    st.markdown("---")
+    st.markdown("### Create a new project")
+    with st.form("new_project_form", clear_on_submit=True):
+        name = st.text_input(
+            "Project name",
+            placeholder="e.g. biotech-ipo",
+            help="Lowercase, hyphens, no spaces. Used as a namespace key.",
         )
-
-    st.markdown("#### Jobs")
-    jobs = api_get("/ingest/jobs", domain=domain)
-    if jobs:
-        st.dataframe(
-            [
-                {"id": j["id"][:8], "stage": j["stage"], "status": j["status"], "attempts": j["attempts"], "error": (j.get("last_error") or "")[:60]}
-                for j in jobs[:50]
-            ],
-            use_container_width=True,
-            height=240,
+        description = st.text_area(
+            "Description (optional)",
+            placeholder="One sentence on what this project covers.",
+            height=80,
         )
-
-# ── Query ──────────────────────────────────────────────────────────────────
-elif page == "Query":
-    st.markdown("#### Ask the corpus")
-    question = st.text_area("Question", placeholder="e.g. What does NVIDIA say about export controls in their most recent 10-K?", height=80)
-    cols = st.columns([1, 1, 1, 6])
-    submit = cols[0].button("Ask", type="primary")
-    scope_entity = cols[1].text_input("scope:entity_id", "")
-    scope_file = cols[2].text_input("scope:file_id", "")
-    if "session_id" not in st.session_state:
-        st.session_state["session_id"] = None
-
-    if submit and question.strip():
-        scope: dict[str, Any] = {}
-        if scope_entity:
-            scope["entity_id"] = scope_entity
-        if scope_file:
-            scope["file_id"] = scope_file
-        with st.spinner("retrieving + synthesizing..."):
-            res = api_post(
-                "/query",
-                domain=domain,
-                question=question,
-                session_id=st.session_state["session_id"],
-                scope=scope or None,
-            )
-        st.session_state["session_id"] = res.get("session_id")
-
-        st.markdown("##### Answer")
-        st.write(res["answer"])
-        c = res.get("confidence") or {}
-        st.caption(f"confidence: {c.get('value', 0):.2f} — {c.get('reason','')}")
-
-        st.markdown("##### Citations")
-        for i, cit in enumerate(res.get("citations") or [], start=1):
-            with st.container(border=True):
-                page_str = (
-                    f"{cit['page_start']}-{cit['page_end']}"
-                    if cit['page_end'] != cit['page_start']
-                    else str(cit['page_start'])
-                )
-                st.markdown(f"**[{i}]** `{cit['filename']}` — page {page_str}")
-                st.caption(cit["excerpt"])
-                also = cit.get("also_in") or []
-                if also:
-                    st.markdown(
-                        "Same text also appears in: "
-                        + ", ".join(f"`{a['filename']}`" for a in also)
-                    )
-                # Provenance viewer: surface the raw source with the cited excerpt highlighted.
-                with st.expander("View in source"):
-                    try:
-                        files = api_get("/files", domain=domain)
-                        f = next((ff for ff in files if ff["id"] == cit["file_id"]), None)
-                        if f:
-                            st.caption(f"file_id={cit['file_id']} · {f.get('bytes', 0)} bytes · {f.get('mime') or '—'}")
-                            # No download endpoint yet; show the cited excerpt with surrounding chunk text.
-                            for n in res.get("retrieved") or []:
-                                if n.get("file_id") == cit["file_id"]:
-                                    ex = n.get("excerpt", "")
-                                    cited = cit["excerpt"][:120].strip()
-                                    if cited and cited in ex:
-                                        before, _, after = ex.partition(cited)
-                                        st.markdown(
-                                            f"…{before[-200:]}**:violet[{cited}]**{after[:200]}…"
-                                        )
-                                        break
-                                    st.markdown(f"…{ex[:400]}…")
-                                    break
-                    except Exception as e:
-                        st.caption(f"provenance unavailable: {e}")
-
-        with st.expander(f"Retrieved nodes ({len(res.get('retrieved') or [])})"):
-            for n in res.get("retrieved") or []:
-                st.markdown(f"- `{n['node_id'][:8]}` score={n['score']:.3f} file={n.get('file_id','?')[:8]} — {n['excerpt']}")
-
-        if res.get("trace_id"):
+        submit = st.form_submit_button("Create project", type="primary")
+    if submit:
+        clean = (name or "").strip().lower().replace(" ", "-")
+        if not clean:
+            st.error("Project name is required.")
+        else:
             try:
-                trace = api_get(f"/query/trace/{res['trace_id']}")
-                stages = (trace.get("filters") or {}).get("_stages") or []
-                intent = (trace.get("filters") or {}).get("_intent") or {}
-                tok = (trace.get("filters") or {}).get("_token_usage") or {}
-                with st.expander("How did we answer this? (stage decomposition)"):
-                    if stages:
-                        n_cols = min(len(stages), 5)
-                        cols = st.columns(n_cols)
-                        for i, s in enumerate(stages):
-                            cols[i % n_cols].metric(s["stage"], f"{s['latency_ms']} ms")
-                    st.markdown(f"**Intent**: `{intent.get('kind','?')}` — {intent.get('reason','')}")
-                    if intent.get("filters"):
-                        st.code(_json_safe(intent["filters"]), language="json")
-                    st.markdown(
-                        f"**Tokens (synthesis)**: in={tok.get('prompt_tokens', 0)} "
-                        f"out={tok.get('completion_tokens', 0)} total={tok.get('total_tokens', 0)}"
-                    )
-                    st.markdown(f"**Total latency**: {trace.get('latency_ms', 0)} ms")
-                    st.caption(f"trace_id = `{res['trace_id']}`")
+                api_post("/projects", name=clean, description=description.strip())
+                st.success(f"Created project '{clean}'. Click below to open it.")
+                _enter_project(clean)
             except Exception as e:
-                st.caption(f"trace_id={res.get('trace_id')} (visualization unavailable: {e})")
+                st.error(f"Could not create project: {e}")
 
-# ── Entities ───────────────────────────────────────────────────────────────
-elif page == "Entities":
-    spec: dict | None = None
+# ═══════════════════════════════════════════════════════════════════════════
+# WORKSPACE — chat / files / schema for a single project
+# ═══════════════════════════════════════════════════════════════════════════
+else:
+    project = st.session_state["selected_project"]
+
+    # Sidebar
+    st.sidebar.markdown(f"### {project}")
+    if st.sidebar.button("← All projects", use_container_width=True):
+        _leave_project()
+    st.sidebar.markdown("---")
+
+    # Pull schemas + files for this project
+    schemas: list[dict] = []
+    files: list[dict] = []
     try:
-        spec = api_get(f"/schemas/{domain}/active")["spec"]
-    except Exception:
-        st.warning("No active schema."); st.stop()
-    types = [e["name"] for e in spec["entities"]]
-    cols = st.columns([2, 5])
-    etype = cols[0].selectbox("Type", types)
-    q = cols[1].text_input("Search", "")
-    rows = api_get("/entities", domain=domain, type=etype, q=q or None)
-    st.dataframe(
-        [
-            {"id": r["id"][:8], "type": r["type"], "display_name": r.get("display_name"), "identity_key": r["identity_key"][:64]}
-            for r in rows
-        ],
-        use_container_width=True,
-        height=260,
-    )
-    if rows:
-        eid = st.selectbox("Entity", [r["id"] for r in rows], format_func=lambda x: next((r["display_name"] or x for r in rows if r["id"] == x), x))
-        if eid:
-            lineage = api_get(f"/entities/{eid}/lineage")
-            rels = api_get(f"/entities/{eid}/relationships")
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                st.markdown("**Ancestors**")
-                for a in lineage["ancestors"]:
-                    st.markdown(f"- `{a['type']}` {a.get('display_name','')}")
-            with c2:
-                st.markdown("**Children**")
-                for c in lineage["children"][:30]:
-                    st.markdown(f"- `{c['type']}` {c.get('display_name','')}")
-            with c3:
-                st.markdown("**Mentions**")
-                for m in lineage["mentions"][:20]:
-                    st.markdown(f"- `{m['filename']}` (conf {m['confidence']:.2f})")
-            st.markdown("**Relationships**")
-            for r in rels[:30]:
-                st.markdown(f"- `{r['rel_type']}` {r.get('src_name','')} → {r.get('dst_name','')}")
+        schemas = api_get("/schemas", project=project)
+    except Exception as e:
+        st.sidebar.warning(f"schemas: {e}")
+    try:
+        files = api_get("/files", project=project)
+    except Exception as e:
+        st.sidebar.warning(f"files: {e}")
 
-# ── Eval ────────────────────────────────────────────────────────────────────
-elif page == "Eval":
-    st.markdown("#### Eval")
-    st.caption("Trigger from the host with `make eval` (SEC) or `make eval-legal` (legal). Reports load from /app.")
-    import pathlib
-    reports = {
-        "sec": pathlib.Path("/app/eval_report.json"),
-        "legal": pathlib.Path("/app/eval_report_legal.json"),
-    }
-    available = [d for d, p in reports.items() if p.exists()]
-    if not available:
-        st.info("No eval reports yet — run `make eval` or `make eval-legal`.")
-    else:
-        which = st.selectbox("Report", available, index=0)
-        import json as _json
-        j = _json.loads(reports[which].read_text())
-        cols = st.columns(4)
-        cols[0].metric("Citation F1", f"{j['mean_citation_f1']:.3f}")
-        cols[1].metric("Citation P", f"{j['mean_citation_precision']:.3f}")
-        cols[2].metric("Citation R", f"{j['mean_citation_recall']:.3f}")
-        cols[3].metric("Answer pass %", f"{j['answer_pass_rate']*100:.1f}")
-        if j.get("per_tag"):
-            st.markdown("**Per-category breakdown**")
+    available_kinds = sorted({s["domain"] for s in schemas})
+
+    st.sidebar.caption(f"{len(available_kinds)} kind(s)  ·  {len(files)} file(s)  ·  API → {API}")
+
+    # Top bar
+    st.markdown(f"## {project}")
+    st.caption("Add files, define schemas, chat with the corpus across one or many kinds.")
+
+    tab_chat, tab_files, tab_schemas = st.tabs(["Chat", "Files", "Schemas"])
+
+    # ── Chat tab ─────────────────────────────────────────────────────────────
+    with tab_chat:
+        if not available_kinds:
+            st.info(
+                "This project has no schemas yet. Add a schema (in the Schemas tab) and upload "
+                "a file or two before you can chat."
+            )
+        else:
+            # Kind selector — default to all
+            cols = st.columns([3, 2])
+            with cols[0]:
+                selected_kinds = st.multiselect(
+                    "Search across kinds",
+                    options=available_kinds,
+                    default=available_kinds,
+                    help="Each kind is its own schema + source-type. Pick one or many.",
+                )
+            with cols[1]:
+                if st.button("Clear chat", use_container_width=True):
+                    st.session_state["chat_history"][project] = []
+                    st.session_state["session_ids"][project] = None
+                    st.rerun()
+
+            # Show conversation
+            for turn in st.session_state["chat_history"].get(project, []):
+                with st.chat_message(turn["role"]):
+                    st.markdown(turn["content"])
+                    if turn.get("citations"):
+                        with st.expander(f"{len(turn['citations'])} citation(s)"):
+                            for c in turn["citations"]:
+                                excerpt = (c.get("excerpt") or "")[:200]
+                                st.markdown(
+                                    f"- **{c.get('filename', '?')}** "
+                                    f"(p. {c.get('page_start', '?')})  · _{excerpt}_"
+                                )
+                    if turn.get("confidence"):
+                        cf = turn["confidence"]
+                        st.caption(
+                            f"Confidence: {cf.get('value', 0):.2f}  · {cf.get('reason', '')}"
+                        )
+
+            # Chat input
+            if question := st.chat_input("Ask the corpus..."):
+                history = st.session_state["chat_history"].setdefault(project, [])
+                history.append({"role": "user", "content": question})
+
+                # The /query API still needs a primary `domain`; use the first selected kind.
+                primary_kind = selected_kinds[0] if selected_kinds else available_kinds[0]
+                kinds_for_query = selected_kinds or available_kinds
+
+                with st.spinner(f"retrieving across {len(kinds_for_query)} kind(s)..."):
+                    try:
+                        result = api_post(
+                            "/query",
+                            project=project,
+                            domain=primary_kind,
+                            kinds=kinds_for_query,
+                            question=question,
+                            session_id=st.session_state["session_ids"].get(project),
+                        )
+                        st.session_state["session_ids"][project] = result.get("session_id")
+                        history.append(
+                            {
+                                "role": "assistant",
+                                "content": result.get("answer", "(no answer)"),
+                                "citations": result.get("citations", []),
+                                "confidence": result.get("confidence"),
+                            }
+                        )
+                    except Exception as e:
+                        history.append({"role": "assistant", "content": f"_Query failed: {e}_"})
+                st.rerun()
+
+    # ── Files tab ────────────────────────────────────────────────────────────
+    with tab_files:
+        st.markdown("### Files in this project")
+        if not files:
+            st.info("No files yet.")
+        else:
             st.dataframe(
                 [
                     {
-                        "tag": t,
-                        "n": v["n"],
-                        "pass %": round(v["pass_rate"] * 100, 1),
-                        "cit F1": round(v["mean_citation_f1"], 2),
+                        "id": f["id"][:8],
+                        "kind": f.get("domain", "?"),
+                        "filename": f["filename"],
+                        "bytes": f["bytes"],
+                        "status": f["status"],
+                        "error": (f.get("last_error") or "")[:60],
                     }
-                    for t, v in sorted(j["per_tag"].items(), key=lambda x: -x[1]["n"])
+                    for f in files
                 ],
                 use_container_width=True,
-                height=200,
+                height=320,
             )
-        st.markdown("**Per-question results**")
-        st.dataframe(
-            [
-                {
-                    "qid": s["qid"],
-                    "answer_pass": "✓" if s["answer_pass"] else "✗",
-                    "cit_f1": round(s["citation_f1"], 2),
-                    "conf": round(s["confidence"], 2),
-                    "tags": ", ".join(s.get("tags", [])),
-                    "judge_reason": s["judge_reason"][:80],
-                }
-                for s in j["scores"]
-            ],
-            use_container_width=True,
-            height=400,
-        )
+
+        st.markdown("---")
+        st.markdown("### Add files")
+        if not available_kinds:
+            st.info("Add a schema first (Schemas tab) so the file has a kind to land under.")
+        else:
+            with st.form("upload_form", clear_on_submit=True):
+                target_kind = st.selectbox(
+                    "Kind", options=available_kinds, help="Which schema should process these files."
+                )
+                uploaded = st.file_uploader(
+                    "Drop files (PDF, HTML, XLSX, TXT, DOCX, ...)",
+                    accept_multiple_files=True,
+                )
+                cols = st.columns([1, 1, 4])
+                kick = cols[0].checkbox("Auto-ingest", value=True)
+                force = cols[1].checkbox("Force re-ingest", value=False)
+                submit = st.form_submit_button("Upload", type="primary")
+            if submit and uploaded:
+                ok = 0
+                for f in uploaded:
+                    try:
+                        r = HTTP.post(
+                            f"{API}/files",
+                            data={"project": project, "domain": target_kind},
+                            files={
+                                "file": (
+                                    f.name,
+                                    f.getvalue(),
+                                    f.type or "application/octet-stream",
+                                )
+                            },
+                        )
+                        r.raise_for_status()
+                        ok += 1
+                    except Exception as e:
+                        st.error(f"{f.name}: {e}")
+                st.success(
+                    f"Uploaded {ok}/{len(uploaded)} file(s) → project '{project}' / kind '{target_kind}'."
+                )
+                if kick:
+                    try:
+                        rr = HTTP.post(
+                            f"{API}/ingest/run",
+                            json={"project": project, "domain": target_kind, "force": force},
+                        )
+                        rr.raise_for_status()
+                        st.info(
+                            f"Enqueued {rr.json().get('enqueued', 0)} job(s); "
+                            "tail `docker compose logs -f worker` to watch."
+                        )
+                    except Exception as e:
+                        st.warning(f"Auto-ingest skipped: {e}")
+                st.rerun()
+
+        st.markdown("---")
+        st.markdown("### Ingest jobs")
+        try:
+            jobs = api_get("/ingest/jobs", project=project)
+        except Exception as e:
+            jobs = []
+            st.warning(f"jobs: {e}")
+        if jobs:
+            st.dataframe(
+                [
+                    {
+                        "id": j["id"][:8],
+                        "kind": j.get("domain", "?"),
+                        "stage": j["stage"],
+                        "status": j["status"],
+                        "attempts": j["attempts"],
+                        "error": (j.get("last_error") or "")[:60],
+                    }
+                    for j in jobs[:50]
+                ],
+                use_container_width=True,
+                height=240,
+            )
+
+    # ── Schemas tab ──────────────────────────────────────────────────────────
+    with tab_schemas:
+        st.markdown("### Schemas in this project")
+        if not schemas:
+            st.info(
+                "No schemas yet. Use the CLI from the host to apply one:  "
+                f"`kb schema apply --project {project} domains/<kind>/schema.yaml`"
+            )
+        else:
+            for s in schemas:
+                with st.expander(f"{s['domain']}  ·  v{s['version']}  ({s['entity_count']} types)"):
+                    try:
+                        full = api_get(f"/schemas/{s['domain']}/active", project=project)
+                        spec = full["spec"]
+                        st.markdown(f"**Name**: {spec.get('name', '?')}")
+                        st.markdown(
+                            f"**Description**: {(spec.get('description') or '').strip() or '_none_'}"
+                        )
+                        for et in spec.get("entities", []):
+                            st.markdown(f"- **{et['name']}** — {et.get('description', '')[:140]}")
+                            field_names = ", ".join(f["name"] for f in et.get("fields", []))
+                            st.caption(field_names)
+                    except Exception as e:
+                        st.warning(f"Could not fetch schema detail: {e}")
