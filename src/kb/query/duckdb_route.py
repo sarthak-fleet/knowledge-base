@@ -43,7 +43,9 @@ from kb.schema.loader import schema_from_dict
 from kb.storage import repo
 
 
-def _capture_filename_field(pattern: str | None, filename: str | None, group: int = 1) -> str | None:
+def _capture_filename_field(
+    pattern: str | None, filename: str | None, group: int = 1
+) -> str | None:
     """Pure helper: match `pattern` against `filename` and return capture group N.
 
     Used by the per-domain filename → entity-field fallback (see
@@ -265,7 +267,9 @@ async def maybe_duckdb_answer(
                     if val:
                         backfill_by_entity[eid] = val
         except Exception as e:
-            logger.info("duckdb: filename-fallback resolution failed (%s); proceeding without it", e)
+            logger.info(
+                "duckdb: filename-fallback resolution failed (%s); proceeding without it", e
+            )
 
     # Overlay the captured value onto every entity row's `fields` dict, keyed
     # on the per-domain target field, when the entity itself lacks that field.

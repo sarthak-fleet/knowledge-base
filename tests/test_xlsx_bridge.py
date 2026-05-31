@@ -60,7 +60,7 @@ def test_skips_when_disabled() -> None:
 
 def test_skips_when_no_ident_column() -> None:
     rows = [
-        ["Region", "Quarter", "Revenue"],     # no ident-style column
+        ["Region", "Quarter", "Revenue"],  # no ident-style column
         ["NA", "Q1 2024", "119575"],
     ]
     assert extract_xlsx_entities(rows, _sec_cfg()) == []
@@ -68,7 +68,7 @@ def test_skips_when_no_ident_column() -> None:
 
 def test_skips_when_no_value_column() -> None:
     rows = [
-        ["Ticker", "Quarter", "Notes"],        # no value-style column
+        ["Ticker", "Quarter", "Notes"],  # no value-style column
         ["AAPL", "Q1 2024", "see filing"],
     ]
     assert extract_xlsx_entities(rows, _sec_cfg()) == []

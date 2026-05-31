@@ -10,7 +10,7 @@ Short brief. The depth lives in the repo:
 
 What I built supports schema-defined domain onboarding: drop a YAML, drop in files, ask questions, get cited answers. The schema layer (`src/kb/schema`) and the vector store (`src/kb/vector`) carry no domain identifiers. Grep confirms zero hits for SEC, Legal, ticker, FinancialMetric, RiskFactor, or Clause across either directory. The two-domain demo (SEC EDGAR + SPDX legal licenses) runs the schema-swap path on the same code.
 
-What it isn't, end-to-end, is fully domain-neutral. Four places in `src/kb/query` and `src/kb/extract` still carry SEC-flavoured defaults: `graph_route.py` branches on `domain == "sec"` for its default entity type, the intent classifier's few-shot examples are all SEC-flavoured (Apple, NVDA, EPS-Diluted), the DuckDB route has a `TICKER_FROM_FILENAME` regex baked in, and `xlsx_bridge.py` is explicitly financial-metric specific. The right shape is for each to live in `domains/<name>/config.yaml`; queued in §3. The Legal demo proves the schema-swap path (schema, retrieval, citations), but mostly bypasses those domain-flavoured stages because its questions don't trigger them.
+An earlier iteration left four files in `src/kb/query` and `src/kb/extract` with SEC-flavoured defaults baked into code: `graph_route.py` branched on `domain == "sec"` for its default entity type, the intent classifier's few-shot examples were SEC-only (Apple, NVDA, EPS-Diluted), the DuckDB route had a `TICKER_FROM_FILENAME` regex inline, and `xlsx_bridge.py` was explicitly financial-metric specific. The latest commit set moved all four to `domains/<name>/config.yaml`. Defaults are null/empty in `src/kb/config/defaults.yaml`, so a new domain that doesn't configure them just doesn't fire those routes. The Legal demo proves the schema-swap path (schema, retrieval, citations) but doesn't exercise the financial-shape stages because its questions don't trigger them. That's a coverage gap, not a code-level domain leak.
 
 ## 1. Architecture
 
@@ -44,14 +44,14 @@ Every retrieval path converges on the same triple, `(file_id, page, excerpt)`. H
 
 ## 3. What I'd do differently with more time
 
-In rough priority order: real graph storage replacing the current theme-routing sketch (community detection on the entity co-mention graph would give themes a reusable structure across queries); a larger natural-question eval set per domain to push variance below the noise floor; migrating the SEC-flavoured defaults in `query/` and `extract/` out to per-domain config (per the qualifier above); per-token SSE streaming on `/query` (endpoint exists, currently emits stage-level events only); a small set of committed seed fixtures so `make seed` works offline.
+In rough priority order: real graph storage replacing the current theme-routing sketch (community detection on the entity co-mention graph would give themes a reusable structure across queries); a larger natural-question eval set per domain to push variance below the noise floor; per-token SSE streaming on `/query` (the endpoint exists but emits stage-level events only — true per-token streaming needs the synthesis call to be a streaming wrapper and the engine to expose an async-generator variant); a memory-aware semaphore per pipeline stage so worker concurrency stops being a count-based knob; SEC EDGAR fixtures committed alongside the existing Legal ones so `make seed` runs fully offline (each 10-K is several MB, so it's a real ask).
 
 ## 4. Where it breaks today
 
 - **Without an LLM key, structured extraction yields zero entities.** Chunks still ship to Qdrant so retrieval keeps working, but the schema-driven outputs and the DuckDB aggregate route both go quiet.
 - **Cross-file entity merging is one-pass.** A duplicate arriving later under a slightly different display name creates a near-duplicate canonical. A nightly reconciliation pass would fix it; not shipped.
 - **Citations are page + best-sentence-accurate, not character-accurate.** True character-range highlighting in the original PDF would need a sentence-back-to-bbox mapping.
-- **Worker memory isn't bounded.** Concurrency is count-based; `hi_res` on a large 10-K across 4 workers can OOM a small VM. The right fix is a memory-aware semaphore per stage.
+- **Worker memory is count-bounded, not RAM-bounded.** Default concurrency is now 2 (safe on a 16 GB host); `.env.example` has a sizing guide by RAM. The proper fix is a memory-aware semaphore per stage so `hi_res` parsing of a 300-page 10-K can't OOM a small VM even when the count is lifted.
 - **SEC seed depends on live EDGAR.** `make seed` pulls 10 10-K filings live; on failure it falls back to XLSX-only (`src/kb/seed/sec_seed.py:116`). Legal seed reads committed fixtures from `domains/legal/fixtures/` first, so `make seed-legal` runs offline. SEC fixtures aren't committed because each filing is several MB; queued in §3.
 
 ---
