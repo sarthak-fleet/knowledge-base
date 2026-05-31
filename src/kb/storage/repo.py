@@ -2,6 +2,11 @@
 
 This keeps the schema obvious to a reviewer and keeps row shapes flexible for
 the schema-driven `fields` JSONB column.
+
+`project` is the new top-level namespace introduced in migration 05. Every
+function takes `project: str = "default"` so legacy callers (single-namespace
+installs that pre-date the project concept) keep working unchanged. The
+existing `domain` parameter now represents "kind within a project".
 """
 
 from __future__ import annotations
@@ -14,19 +19,20 @@ from sqlalchemy import text
 from kb.storage.db import session
 
 
-# ─── Domains ──────────────────────────────────────────────────────────────
-async def list_domains() -> list[dict[str, Any]]:
+# ─── Projects ─────────────────────────────────────────────────────────────
+async def list_projects() -> list[dict[str, Any]]:
     async with session() as s:
         rows = (
             (
                 await s.execute(
                     text(
                         """
-                    SELECT d.name, d.description,
-                           (SELECT MAX(version) FROM schemas s WHERE s.domain = d.name AND s.is_active) AS schema_version
-                    FROM domains d
-                    ORDER BY d.name
-                    """
+                        SELECT p.name, p.description,
+                               (SELECT COUNT(DISTINCT domain) FROM schemas WHERE project = p.name) AS kind_count,
+                               (SELECT COUNT(*) FROM files WHERE project = p.name) AS file_count
+                          FROM projects p
+                         ORDER BY p.name
+                        """
                     )
                 )
             )
@@ -36,21 +42,20 @@ async def list_domains() -> list[dict[str, Any]]:
         return [dict(r) for r in rows]
 
 
-async def upsert_domain(name: str, description: str | None = None) -> dict[str, Any]:
+async def upsert_project(name: str, description: str | None = None) -> dict[str, Any]:
     async with session() as s:
         row = (
             (
                 await s.execute(
                     text(
                         """
-                    INSERT INTO domains (name, description)
-                    VALUES (:name, :description)
-                    ON CONFLICT (name) DO UPDATE SET
-                      description = COALESCE(EXCLUDED.description, domains.description),
-                      updated_at = now()
-                    RETURNING name, description,
-                              (SELECT MAX(version) FROM schemas s WHERE s.domain = domains.name AND s.is_active) AS schema_version
-                    """
+                        INSERT INTO projects (name, description)
+                        VALUES (:name, COALESCE(:description, ''))
+                        ON CONFLICT (name) DO UPDATE SET
+                          description = COALESCE(EXCLUDED.description, projects.description),
+                          updated_at = now()
+                        RETURNING name, description
+                        """
                     ),
                     {"name": name, "description": description},
                 )
@@ -62,33 +67,100 @@ async def upsert_domain(name: str, description: str | None = None) -> dict[str, 
         return dict(row)
 
 
+# ─── Domains (= "kinds" within a project) ─────────────────────────────────
+async def list_domains(project: str = "default") -> list[dict[str, Any]]:
+    async with session() as s:
+        rows = (
+            (
+                await s.execute(
+                    text(
+                        """
+                        SELECT d.name, d.project, d.description,
+                               (SELECT MAX(version) FROM schemas s
+                                 WHERE s.domain = d.name AND s.project = d.project AND s.is_active
+                               ) AS schema_version
+                          FROM domains d
+                         WHERE d.project = :project
+                         ORDER BY d.name
+                        """
+                    ),
+                    {"project": project},
+                )
+            )
+            .mappings()
+            .all()
+        )
+        return [dict(r) for r in rows]
+
+
+async def upsert_domain(
+    name: str, description: str | None = None, project: str = "default"
+) -> dict[str, Any]:
+    async with session() as s:
+        # Ensure project exists (auto-create non-default ones on first use).
+        if project != "default":
+            await s.execute(
+                text("INSERT INTO projects (name) VALUES (:p) ON CONFLICT (name) DO NOTHING"),
+                {"p": project},
+            )
+        row = (
+            (
+                await s.execute(
+                    text(
+                        """
+                        INSERT INTO domains (name, description, project)
+                        VALUES (:name, :description, :project)
+                        ON CONFLICT (name) DO UPDATE SET
+                          description = COALESCE(EXCLUDED.description, domains.description),
+                          project = EXCLUDED.project,
+                          updated_at = now()
+                        RETURNING name, project, description,
+                                  (SELECT MAX(version) FROM schemas s
+                                    WHERE s.domain = domains.name AND s.project = domains.project AND s.is_active
+                                  ) AS schema_version
+                        """
+                    ),
+                    {"name": name, "description": description, "project": project},
+                )
+            )
+            .mappings()
+            .one()
+        )
+        await s.commit()
+        return dict(row)
+
+
 # ─── Schemas ──────────────────────────────────────────────────────────────
-async def insert_schema_version(*, domain: str, name: str, spec: dict[str, Any]) -> dict[str, Any]:
+async def insert_schema_version(
+    *, domain: str, name: str, spec: dict[str, Any], project: str = "default"
+) -> dict[str, Any]:
     async with session() as s:
         next_version = (
             await s.execute(
                 text(
-                    "SELECT COALESCE(MAX(version), 0) + 1 AS v FROM schemas WHERE domain = :d AND name = :n"
+                    "SELECT COALESCE(MAX(version), 0) + 1 AS v FROM schemas "
+                    "WHERE project = :p AND domain = :d AND name = :n"
                 ),
-                {"d": domain, "n": name},
+                {"p": project, "d": domain, "n": name},
             )
         ).scalar_one()
         spec = {**spec, "version": next_version}
         await s.execute(
-            text("UPDATE schemas SET is_active = FALSE WHERE domain = :d"),
-            {"d": domain},
+            text("UPDATE schemas SET is_active = FALSE WHERE project = :p AND domain = :d"),
+            {"p": project, "d": domain},
         )
         row = (
             (
                 await s.execute(
                     text(
                         """
-                    INSERT INTO schemas (domain, name, version, spec, is_active)
-                    VALUES (:domain, :name, :version, CAST(:spec AS jsonb), TRUE)
-                    RETURNING id, domain, name, version
-                    """
+                        INSERT INTO schemas (project, domain, name, version, spec, is_active)
+                        VALUES (:project, :domain, :name, :version, CAST(:spec AS jsonb), TRUE)
+                        RETURNING id, project, domain, name, version
+                        """
                     ),
                     {
+                        "project": project,
                         "domain": domain,
                         "name": name,
                         "version": next_version,
@@ -103,19 +175,21 @@ async def insert_schema_version(*, domain: str, name: str, spec: dict[str, Any])
         return dict(row)
 
 
-async def list_schemas() -> list[dict[str, Any]]:
+async def list_schemas(project: str = "default") -> list[dict[str, Any]]:
     async with session() as s:
         rows = (
             (
                 await s.execute(
                     text(
                         """
-                    SELECT domain, name, version, jsonb_array_length(spec->'entities') AS entity_count
-                    FROM schemas
-                    WHERE is_active
-                    ORDER BY domain, name
-                    """
-                    )
+                        SELECT project, domain, name, version,
+                               jsonb_array_length(spec->'entities') AS entity_count
+                          FROM schemas
+                         WHERE is_active AND project = :project
+                         ORDER BY domain, name
+                        """
+                    ),
+                    {"project": project},
                 )
             )
             .mappings()
@@ -124,15 +198,16 @@ async def list_schemas() -> list[dict[str, Any]]:
         return [dict(r) for r in rows]
 
 
-async def get_active_schema(domain: str) -> dict[str, Any] | None:
+async def get_active_schema(domain: str, project: str = "default") -> dict[str, Any] | None:
     async with session() as s:
         row = (
             (
                 await s.execute(
                     text(
-                        "SELECT id, domain, name, version, spec FROM schemas WHERE domain = :d AND is_active LIMIT 1"
+                        "SELECT id, project, domain, name, version, spec FROM schemas "
+                        "WHERE project = :p AND domain = :d AND is_active LIMIT 1"
                     ),
-                    {"d": domain},
+                    {"p": project, "d": domain},
                 )
             )
             .mappings()
@@ -141,12 +216,15 @@ async def get_active_schema(domain: str) -> dict[str, Any] | None:
         return dict(row) if row else None
 
 
-async def get_active_schema_id(domain: str) -> str | None:
+async def get_active_schema_id(domain: str, project: str = "default") -> str | None:
     async with session() as s:
         row = (
             await s.execute(
-                text("SELECT id::text AS id FROM schemas WHERE domain = :d AND is_active LIMIT 1"),
-                {"d": domain},
+                text(
+                    "SELECT id::text AS id FROM schemas "
+                    "WHERE project = :p AND domain = :d AND is_active LIMIT 1"
+                ),
+                {"p": project, "d": domain},
             )
         ).first()
         return row[0] if row else None
@@ -161,6 +239,7 @@ async def register_file(
     size: int,
     content_hash: str,
     object_key: str,
+    project: str = "default",
 ) -> dict[str, Any]:
     async with session() as s:
         row = (
@@ -168,17 +247,19 @@ async def register_file(
                 await s.execute(
                     text(
                         """
-                    INSERT INTO files (domain, filename, mime, bytes, content_hash, object_key)
-                    VALUES (:domain, :filename, :mime, :bytes, :content_hash, :object_key)
-                    ON CONFLICT (domain, content_hash) DO UPDATE SET
-                      filename = EXCLUDED.filename,
-                      mime = COALESCE(EXCLUDED.mime, files.mime),
-                      object_key = EXCLUDED.object_key,
-                      updated_at = now()
-                    RETURNING id::text, domain, filename, content_hash, bytes, mime, status, last_error
-                    """
+                        INSERT INTO files (project, domain, filename, mime, bytes, content_hash, object_key)
+                        VALUES (:project, :domain, :filename, :mime, :bytes, :content_hash, :object_key)
+                        ON CONFLICT (domain, content_hash) DO UPDATE SET
+                          filename = EXCLUDED.filename,
+                          mime = COALESCE(EXCLUDED.mime, files.mime),
+                          object_key = EXCLUDED.object_key,
+                          project = EXCLUDED.project,
+                          updated_at = now()
+                        RETURNING id::text, project, domain, filename, content_hash, bytes, mime, status, last_error
+                        """
                     ),
                     {
+                        "project": project,
                         "domain": domain,
                         "filename": filename,
                         "mime": mime,
@@ -195,15 +276,25 @@ async def register_file(
         return dict(row)
 
 
-async def list_files(domain: str | None = None) -> list[dict[str, Any]]:
+async def list_files(
+    domain: str | None = None,
+    project: str = "default",
+    kinds: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    sql = (
+        "SELECT id::text, project, domain, filename, content_hash, bytes, mime, status, last_error "
+        "FROM files WHERE project = :project"
+    )
+    params: dict[str, Any] = {"project": project}
+    if domain:
+        sql += " AND domain = :domain"
+        params["domain"] = domain
+    elif kinds:
+        sql += " AND domain = ANY(:kinds)"
+        params["kinds"] = kinds
+    sql += " ORDER BY uploaded_at DESC"
     async with session() as s:
-        q = "SELECT id::text, domain, filename, content_hash, bytes, mime, status, last_error FROM files"
-        params: dict[str, Any] = {}
-        if domain:
-            q += " WHERE domain = :domain"
-            params["domain"] = domain
-        q += " ORDER BY uploaded_at DESC"
-        rows = (await s.execute(text(q), params)).mappings().all()
+        rows = (await s.execute(text(sql), params)).mappings().all()
         return [dict(r) for r in rows]
 
 
@@ -213,7 +304,8 @@ async def get_file(file_id: str) -> dict[str, Any] | None:
             (
                 await s.execute(
                     text(
-                        "SELECT id::text, domain, filename, content_hash, bytes, mime, status, last_error, object_key FROM files WHERE id = :id"
+                        "SELECT id::text, project, domain, filename, content_hash, bytes, mime, status, "
+                        "last_error, object_key FROM files WHERE id = :id"
                     ),
                     {"id": file_id},
                 )
@@ -290,6 +382,7 @@ async def upsert_entity(
     display_name: str | None,
     fields: dict[str, Any],
     parent_id: str | None = None,
+    project: str = "default",
 ) -> dict[str, Any]:
     async with session() as s:
         row = (
@@ -297,17 +390,19 @@ async def upsert_entity(
                 await s.execute(
                     text(
                         """
-                    INSERT INTO entities (domain, type, identity_key, display_name, fields, parent_id)
-                    VALUES (:domain, :type, :ik, :dn, CAST(:f AS jsonb), :pid)
-                    ON CONFLICT (domain, type, identity_key) DO UPDATE SET
-                      display_name = COALESCE(EXCLUDED.display_name, entities.display_name),
-                      fields = entities.fields || EXCLUDED.fields,
-                      parent_id = COALESCE(EXCLUDED.parent_id, entities.parent_id),
-                      updated_at = now()
-                    RETURNING id::text, type, identity_key, display_name, parent_id::text, fields
-                    """
+                        INSERT INTO entities (project, domain, type, identity_key, display_name, fields, parent_id)
+                        VALUES (:project, :domain, :type, :ik, :dn, CAST(:f AS jsonb), :pid)
+                        ON CONFLICT (domain, type, identity_key) DO UPDATE SET
+                          display_name = COALESCE(EXCLUDED.display_name, entities.display_name),
+                          fields = entities.fields || EXCLUDED.fields,
+                          parent_id = COALESCE(EXCLUDED.parent_id, entities.parent_id),
+                          project = EXCLUDED.project,
+                          updated_at = now()
+                        RETURNING id::text, project, type, identity_key, display_name, parent_id::text, fields
+                        """
                     ),
                     {
+                        "project": project,
                         "domain": domain,
                         "type": type,
                         "ik": identity_key,
@@ -324,16 +419,18 @@ async def upsert_entity(
         return dict(row)
 
 
-async def find_entity(domain: str, type: str, identity_key: str) -> dict[str, Any] | None:
+async def find_entity(
+    domain: str, type: str, identity_key: str, project: str = "default"
+) -> dict[str, Any] | None:
     async with session() as s:
         row = (
             (
                 await s.execute(
                     text(
-                        "SELECT id::text, type, identity_key, display_name, fields, parent_id::text "
-                        "FROM entities WHERE domain = :d AND type = :t AND identity_key = :k"
+                        "SELECT id::text, project, type, identity_key, display_name, fields, parent_id::text "
+                        "FROM entities WHERE project = :p AND domain = :d AND type = :t AND identity_key = :k"
                     ),
-                    {"d": domain, "t": type, "k": identity_key},
+                    {"p": project, "d": domain, "t": type, "k": identity_key},
                 )
             )
             .mappings()
@@ -343,14 +440,26 @@ async def find_entity(domain: str, type: str, identity_key: str) -> dict[str, An
 
 
 async def list_entities(
-    *, domain: str, type: str | None, q: str | None, limit: int
+    *,
+    domain: str | None,
+    type: str | None,
+    q: str | None,
+    limit: int,
+    project: str = "default",
+    kinds: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     sql = """
-        SELECT id::text, domain, type, identity_key, display_name, fields, parent_id::text
+        SELECT id::text, project, domain, type, identity_key, display_name, fields, parent_id::text
         FROM entities
-        WHERE domain = :domain
+        WHERE project = :project
     """
-    params: dict[str, Any] = {"domain": domain, "limit": limit}
+    params: dict[str, Any] = {"project": project, "limit": limit}
+    if domain:
+        sql += " AND domain = :domain"
+        params["domain"] = domain
+    elif kinds:
+        sql += " AND domain = ANY(:kinds)"
+        params["kinds"] = kinds
     if type:
         sql += " AND type = :type"
         params["type"] = type
@@ -369,7 +478,7 @@ async def get_entity(entity_id: str) -> dict[str, Any] | None:
             (
                 await s.execute(
                     text(
-                        "SELECT id::text, domain, type, identity_key, display_name, fields, parent_id::text "
+                        "SELECT id::text, project, domain, type, identity_key, display_name, fields, parent_id::text "
                         "FROM entities WHERE id = :id"
                     ),
                     {"id": entity_id},
@@ -472,18 +581,22 @@ async def insert_mention(
     schema_id: str,
     field_values: dict[str, Any],
     confidence: float,
+    project: str = "default",
+    domain: str = "",
 ) -> None:
     async with session() as s:
         await s.execute(
             text(
                 """
-                INSERT INTO entity_mentions (entity_id, file_id, schema_id, field_values, confidence)
-                VALUES (:e, :f, :s, CAST(:fv AS jsonb), :c)
+                INSERT INTO entity_mentions (project, domain, entity_id, file_id, schema_id, field_values, confidence)
+                VALUES (:project, :domain, :e, :f, :s, CAST(:fv AS jsonb), :c)
                 ON CONFLICT (entity_id, file_id, schema_id) DO UPDATE SET
                   field_values = EXCLUDED.field_values, confidence = EXCLUDED.confidence
                 """
             ),
             {
+                "project": project,
+                "domain": domain,
                 "e": entity_id,
                 "f": file_id,
                 "s": schema_id,
@@ -504,16 +617,20 @@ async def insert_provenance(
     element_id: str | None,
     excerpt: str,
     bbox: list[float] | None = None,
+    project: str = "default",
+    domain: str = "",
 ) -> None:
     async with session() as s:
         await s.execute(
             text(
                 """
-                INSERT INTO provenance_spans (file_id, entity_id, field, page_start, page_end, element_id, excerpt, bbox)
-                VALUES (:fid, :eid, :field, :ps, :pe, :el, :ex, :bb)
+                INSERT INTO provenance_spans (project, domain, file_id, entity_id, field, page_start, page_end, element_id, excerpt, bbox)
+                VALUES (:project, :domain, :fid, :eid, :field, :ps, :pe, :el, :ex, :bb)
                 """
             ),
             {
+                "project": project,
+                "domain": domain,
                 "fid": file_id,
                 "eid": entity_id,
                 "field": field,
@@ -528,25 +645,45 @@ async def insert_provenance(
 
 
 async def insert_relationship(
-    *, domain: str, rel_type: str, src_id: str, dst_id: str, file_id: str | None, page: int | None
+    *,
+    domain: str,
+    rel_type: str,
+    src_id: str,
+    dst_id: str,
+    file_id: str | None,
+    page: int | None,
+    project: str = "default",
 ) -> None:
     async with session() as s:
         await s.execute(
             text(
                 """
-                INSERT INTO entity_relationships (domain, rel_type, src_id, dst_id, evidence_file, evidence_page)
-                VALUES (:d, :rt, :s, :ds, :f, :p)
+                INSERT INTO entity_relationships (project, domain, rel_type, src_id, dst_id, evidence_file, evidence_page)
+                VALUES (:project, :d, :rt, :s, :ds, :f, :p)
                 ON CONFLICT (domain, rel_type, src_id, dst_id) DO NOTHING
                 """
             ),
-            {"d": domain, "rt": rel_type, "s": src_id, "ds": dst_id, "f": file_id, "p": page},
+            {
+                "project": project,
+                "d": domain,
+                "rt": rel_type,
+                "s": src_id,
+                "ds": dst_id,
+                "f": file_id,
+                "p": page,
+            },
         )
         await s.commit()
 
 
 # ─── Jobs ─────────────────────────────────────────────────────────────────
 async def enqueue_job(
-    *, domain: str, file_id: str, schema_id: str | None, stage: str = "parse"
+    *,
+    domain: str,
+    file_id: str,
+    schema_id: str | None,
+    stage: str = "parse",
+    project: str = "default",
 ) -> dict[str, Any]:
     async with session() as s:
         row = (
@@ -554,15 +691,22 @@ async def enqueue_job(
                 await s.execute(
                     text(
                         """
-                    INSERT INTO ingest_jobs (domain, file_id, schema_id, stage, status)
-                    VALUES (:d, :f, :s, :stage, 'queued')
+                    INSERT INTO ingest_jobs (project, domain, file_id, schema_id, stage, status)
+                    VALUES (:project, :d, :f, :s, :stage, 'queued')
                     ON CONFLICT (file_id, schema_id) DO UPDATE SET
                       stage = EXCLUDED.stage, status = 'queued', attempts = 0,
+                      project = EXCLUDED.project,
                       last_error = NULL, updated_at = now()
                     RETURNING id::text
                     """
                     ),
-                    {"d": domain, "f": file_id, "s": schema_id, "stage": stage},
+                    {
+                        "project": project,
+                        "d": domain,
+                        "f": file_id,
+                        "s": schema_id,
+                        "stage": stage,
+                    },
                 )
             )
             .mappings()
@@ -591,7 +735,7 @@ async def claim_next_job(worker_id: str) -> dict[str, Any] | None:
                         attempts = j.attempts + 1, updated_at = now()
                     FROM next_job
                     WHERE j.id = next_job.id
-                    RETURNING j.id::text, j.domain, j.file_id::text, j.schema_id::text, j.stage, j.attempts
+                    RETURNING j.id::text, j.project, j.domain, j.file_id::text, j.schema_id::text, j.stage, j.attempts
                     """
                     ),
                     {"w": worker_id},
@@ -624,18 +768,23 @@ async def mark_job(
         await s.commit()
 
 
-async def list_jobs(*, domain: str | None, status: str | None) -> list[dict[str, Any]]:
-    sql = "SELECT id::text, domain, file_id::text, stage, status, attempts, last_error, updated_at FROM ingest_jobs"
-    params: dict[str, Any] = {}
-    conds: list[str] = []
+async def list_jobs(
+    *,
+    domain: str | None,
+    status: str | None,
+    project: str = "default",
+) -> list[dict[str, Any]]:
+    sql = (
+        "SELECT id::text, project, domain, file_id::text, stage, status, attempts, last_error, updated_at "
+        "FROM ingest_jobs WHERE project = :project"
+    )
+    params: dict[str, Any] = {"project": project}
     if domain:
-        conds.append("domain = :d")
+        sql += " AND domain = :d"
         params["d"] = domain
     if status:
-        conds.append("status = :s")
+        sql += " AND status = :s"
         params["s"] = status
-    if conds:
-        sql += " WHERE " + " AND ".join(conds)
     sql += " ORDER BY updated_at DESC LIMIT 200"
     async with session() as s:
         rows = (await s.execute(text(sql), params)).mappings().all()
@@ -648,8 +797,9 @@ async def get_job(job_id: str) -> dict[str, Any] | None:
             (
                 await s.execute(
                     text(
-                        "SELECT id::text, domain, file_id::text, schema_id::text, stage, status, attempts, last_error, "
-                        "locked_by, locked_at, created_at, updated_at FROM ingest_jobs WHERE id = :id"
+                        "SELECT id::text, project, domain, file_id::text, schema_id::text, stage, status, "
+                        "attempts, last_error, locked_by, locked_at, created_at, updated_at "
+                        "FROM ingest_jobs WHERE id = :id"
                     ),
                     {"id": job_id},
                 )
@@ -707,7 +857,8 @@ async def get_query_trace(trace_id: str) -> dict[str, Any] | None:
             (
                 await s.execute(
                     text(
-                        "SELECT id::text, domain, question, scope, filters, retrieved, answer, citations, confidence, latency_ms, created_at "
+                        "SELECT id::text, project, domain, question, scope, filters, retrieved, "
+                        "answer, citations, confidence, latency_ms, created_at "
                         "FROM query_traces WHERE id = :id"
                     ),
                     {"id": trace_id},
@@ -719,11 +870,16 @@ async def get_query_trace(trace_id: str) -> dict[str, Any] | None:
         return dict(row) if row else None
 
 
-async def list_query_traces(*, domain: str | None, limit: int = 50) -> list[dict[str, Any]]:
-    sql = "SELECT id::text, domain, question, latency_ms, created_at FROM query_traces"
-    params: dict[str, Any] = {"limit": limit}
+async def list_query_traces(
+    *, domain: str | None, limit: int = 50, project: str = "default"
+) -> list[dict[str, Any]]:
+    sql = (
+        "SELECT id::text, project, domain, question, latency_ms, created_at "
+        "FROM query_traces WHERE project = :project"
+    )
+    params: dict[str, Any] = {"project": project, "limit": limit}
     if domain:
-        sql += " WHERE domain = :d"
+        sql += " AND domain = :d"
         params["d"] = domain
     sql += " ORDER BY created_at DESC LIMIT :limit"
     async with session() as s:
@@ -738,12 +894,13 @@ async def insert_query_trace(trace: dict[str, Any]) -> str:
                 await s.execute(
                     text(
                         """
-                    INSERT INTO query_traces (domain, question, scope, filters, retrieved, answer, citations, confidence, latency_ms)
-                    VALUES (:d, :q, CAST(:sc AS jsonb), CAST(:f AS jsonb), CAST(:r AS jsonb), :a, CAST(:c AS jsonb), CAST(:cf AS jsonb), :lat)
+                    INSERT INTO query_traces (project, domain, question, scope, filters, retrieved, answer, citations, confidence, latency_ms)
+                    VALUES (:project, :d, :q, CAST(:sc AS jsonb), CAST(:f AS jsonb), CAST(:r AS jsonb), :a, CAST(:c AS jsonb), CAST(:cf AS jsonb), :lat)
                     RETURNING id::text
                     """
                     ),
                     {
+                        "project": trace.get("project", "default"),
                         "d": trace["domain"],
                         "q": trace["question"],
                         "sc": json.dumps(trace.get("scope") or {}),
