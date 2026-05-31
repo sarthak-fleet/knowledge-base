@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 import re
+from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -40,9 +41,30 @@ if TYPE_CHECKING:
 logger = structlog.get_logger("kb.extract.llm")
 
 
-def make_client() -> AsyncOpenAI:
+@lru_cache(maxsize=1)
+def _shared_client() -> AsyncOpenAI:
+    """Singleton AsyncOpenAI — one connection pool per process.
+
+    Creating a fresh `AsyncOpenAI` per LLM call (the previous shape of
+    `make_client()`) leaks the underlying `httpx.AsyncClient` connection pool
+    each time the client is GC'd. With ~15 LLM calls per query, that grew
+    process RAM by ~500 MB per query and OOM-killed the API around question
+    15 of the SEC eval on a 16 GB host. One shared client + pool fixes it.
+    """
     s = get_settings()
     return AsyncOpenAI(base_url=s.ai_base_url, api_key=s.ai_api_key or "no-key")
+
+
+def make_client() -> AsyncOpenAI:
+    return _shared_client()
+
+
+@lru_cache(maxsize=1)
+def _shared_instructor() -> Any:
+    """Singleton instructor-wrapped client (same lifecycle reason as above)."""
+    import instructor
+
+    return instructor.from_openai(_shared_client(), mode=instructor.Mode.JSON)
 
 
 # --------------------------------------------------------------------------
@@ -198,20 +220,14 @@ _T_MODEL = TypeVar("_T_MODEL", bound="BaseModel")
 
 
 def _instructor_client() -> instructor.AsyncInstructor:
-    """Lazy-build an instructor-wrapped OpenAI client.
-
-    Reuses our existing `make_client()` so the gateway settings + project_id
-    `extra_body` plumb continue to work.
-    """
-    import instructor
-
+    """Return the shared instructor-wrapped client. See `_shared_instructor`."""
     # JSON mode (response_format=json_object) is more reliable across the
     # free-AI gateway's many upstream providers than TOOLS mode. Some
     # providers in the routing fleet (groq-llama-8b, gemini-flash on certain
     # paths) silently return content without tool_calls when
     # tool_choice='required' is sent — instructor then can't parse and burns
     # all its retries. JSON mode sidesteps that entire failure class.
-    return instructor.from_openai(make_client(), mode=instructor.Mode.JSON)
+    return _shared_instructor()
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential_jitter(initial=1, max=10))
