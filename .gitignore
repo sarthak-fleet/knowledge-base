@@ -28,3 +28,4 @@ data/llm_cache/
 node_modules/
 .husky/_/
 eval_results/
+docker-compose.override.yml

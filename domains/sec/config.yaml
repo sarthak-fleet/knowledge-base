@@ -8,10 +8,16 @@ extract:
   window_overlap_pages: 2
 
 retrieve:
-  top_k_dense: 25              # large corpora — surface more candidates before fusion
-  top_k_sparse: 25
-  rerank_top_k: 10
+  top_k_dense: 15              # large corpora — surface candidates before fusion
+  top_k_sparse: 15
+  candidate_k: 25              # union size before cross-encoder rerank (down from default 100;
+                               # caps peak memory on 16 GB hosts during SEC queries)
+  rerank_top_k: 8
   hybrid_alpha: 0.55           # lean slightly more on dense for financial language
+  query_rewriting: false       # disable LLM query expansion — saves 2 LLM calls + 2 embed/retrieve
+                               # rounds per question. Sized for 16 GB hosts (tradeoff vs F1).
+  query_decomposition: false   # same reason — skip multi-hop split on SEC
+  crag_evaluator: false        # skip the per-query CRAG LLM call to save memory + tokens
 
 synthesize:
   excerpt_chars: 600           # SEC sentences are long; keep more excerpt text in citations

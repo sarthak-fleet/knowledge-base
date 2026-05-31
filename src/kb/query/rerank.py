@@ -51,14 +51,25 @@ async def rerank(query: str, hits: list[SearchHit], *, top_k: int) -> list[Searc
     Returns the top-k hits with `.score` replaced by the cross-encoder score
     (preserving original metadata). Falls back to the original order if the
     reranker fails or is disabled.
+
+    Batches the cross-encoder call to bound peak memory: feeding all ~40
+    candidates at once spikes the activation tensor enough to OOM a 16 GB
+    host on the SEC corpus. Batch size defaults to 8 and is tunable via
+    KB_RERANK_BATCH_SIZE.
     """
     global _disabled
     if not hits or _disabled:
         return hits[:top_k]
 
+    batch_size = max(1, int(os.environ.get("KB_RERANK_BATCH_SIZE", "8")))
+
     def _do() -> list[tuple[float, SearchHit]]:
         texts = [h.text for h in hits]
-        scores = list(_model().rerank(query, texts))
+        model = _model()
+        scores: list[float] = []
+        for i in range(0, len(texts), batch_size):
+            chunk = texts[i : i + batch_size]
+            scores.extend(model.rerank(query, chunk))
         return list(zip(scores, hits, strict=True))
 
     try:
