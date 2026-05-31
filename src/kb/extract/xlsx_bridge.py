@@ -46,6 +46,7 @@ class XlsxBridgeConfig:
 
     @classmethod
     def from_pipeline_cfg(cls, cfg: dict[str, Any]) -> XlsxBridgeConfig:
+        """Build from config alone (legacy path; kept for tests + back-compat)."""
         section = cfg.get("xlsx_bridge") or {}
 
         def _set(key: str) -> frozenset[str]:
@@ -55,6 +56,40 @@ class XlsxBridgeConfig:
             enabled=bool(section.get("enabled")),
             target_entity_type=section.get("target_entity_type") or None,
             ident_field=section.get("ident_field") or None,
+            ident_columns=_set("ident_columns"),
+            value_columns=_set("value_columns"),
+            period_columns=_set("period_columns"),
+            name_columns=_set("name_columns"),
+        )
+
+    @classmethod
+    def from_schema_and_cfg(cls, schema: Any, cfg: dict[str, Any]) -> XlsxBridgeConfig:
+        """Build from the active schema (primary source for shape) plus config (for column vocab).
+
+        The schema is the contract: it declares which entity type is `tabular`
+        and which of its fields is the `tabular_identifier`. Config supplies
+        the matching column-header vocab (purely text-matching concern that
+        doesn't belong in the schema). Falls back to the legacy config-only
+        path when the schema doesn't declare any tabular entity types.
+        """
+        try:
+            tabular_types = schema.tabular_entity_types()
+        except AttributeError:
+            return cls.from_pipeline_cfg(cfg)
+        if not tabular_types:
+            return cls.from_pipeline_cfg(cfg)
+
+        target = tabular_types[0]
+        ident_field = target.tabular_identifier_field()
+        section = cfg.get("xlsx_bridge") or {}
+
+        def _set(key: str) -> frozenset[str]:
+            return frozenset(_norm(s) for s in (section.get(key) or []) if s)
+
+        return cls(
+            enabled=bool(section.get("enabled", True)),  # schema opt-in implies enabled
+            target_entity_type=target.name,
+            ident_field=ident_field.name if ident_field else section.get("ident_field"),
             ident_columns=_set("ident_columns"),
             value_columns=_set("value_columns"),
             period_columns=_set("period_columns"),

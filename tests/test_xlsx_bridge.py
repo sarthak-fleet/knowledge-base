@@ -125,3 +125,59 @@ def test_target_entity_type_independent_of_function() -> None:
     assert not cfg.is_actionable()
     rows = [["Ticker", "Revenue"], ["AAPL", "100"]]
     assert extract_xlsx_entities(rows, cfg) == []
+
+
+# ─── from_schema_and_cfg ───────────────────────────────────────────────────
+
+
+def test_from_schema_and_cfg_picks_first_tabular_entity() -> None:
+    """Schema-declared `tabular: true` entity + `tabular_identifier: true` field
+    drive the bridge's shape; column vocab still comes from config."""
+    from kb.schema.model import DomainSchema, EntityType, FieldSpec
+
+    schema = DomainSchema(
+        domain="test",
+        entities=[
+            EntityType(name="OtherType", fields=[]),
+            EntityType(
+                name="Row",
+                tabular=True,
+                fields=[
+                    FieldSpec(name="row_key", tabular_identifier=True),
+                    FieldSpec(name="value"),
+                ],
+            ),
+        ],
+    )
+    cfg = {
+        "xlsx_bridge": {
+            "ident_columns": ["row_key"],
+            "value_columns": ["value"],
+        }
+    }
+    bcfg = XlsxBridgeConfig.from_schema_and_cfg(schema, cfg)
+    assert bcfg.target_entity_type == "Row"
+    assert bcfg.ident_field == "row_key"
+    assert bcfg.enabled is True
+
+
+def test_from_schema_and_cfg_falls_back_when_no_tabular_entity() -> None:
+    """No `tabular: true` entity → fall back to config-only path."""
+    from kb.schema.model import DomainSchema, EntityType, FieldSpec
+
+    schema = DomainSchema(
+        domain="test",
+        entities=[EntityType(name="Plain", fields=[FieldSpec(name="x")])],
+    )
+    cfg = {
+        "xlsx_bridge": {
+            "enabled": True,
+            "target_entity_type": "Plain",
+            "ident_field": "x",
+            "ident_columns": ["x"],
+            "value_columns": ["v"],
+        }
+    }
+    bcfg = XlsxBridgeConfig.from_schema_and_cfg(schema, cfg)
+    assert bcfg.target_entity_type == "Plain"
+    assert bcfg.ident_field == "x"

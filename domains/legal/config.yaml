@@ -14,7 +14,8 @@ retrieve:
   mmr_lambda: 0.7
 
 graph_route:
-  default_entity_type: Clause   # theme questions on legal default to Clause entities
+  # default_entity_type is now declared in domains/legal/schema.yaml
+  # via `graph_route: true` on Clause. Kept for back-compat overrides.
 
 intent:
   few_shot_examples: |

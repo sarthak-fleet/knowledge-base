@@ -28,6 +28,11 @@ class FieldSpec(BaseModel):
     enum: list[str] | None = None
     item_type: FieldType | None = None  # for arrays
     examples: list[Any] = Field(default_factory=list)
+    # Pipeline-shape hints. Optional flags that let the schema declare its
+    # own role in domain-specific pipeline stages, so the query/extract code
+    # can stop needing a per-domain sidecar config to teach it what's what.
+    tabular_identifier: bool = False  # xlsx_bridge: column whose value identifies the row
+    tabular_value: bool = False  # xlsx_bridge: column whose value becomes the metric value
 
     @field_validator("name")
     @classmethod
@@ -55,9 +60,24 @@ class EntityType(BaseModel):
     fields: list[FieldSpec] = Field(default_factory=list)
     summary_field: str | None = None  # field used for embedding tiebreak in ER
     aliases: list[str] = Field(default_factory=list)
+    # Pipeline-shape hints. Schema declares its own roles so the query/extract
+    # stages don't need per-domain config sidecars.
+    graph_route: bool = False  # eligible for graph_route's "themes across documents" path
+    tabular: bool = False  # eligible for xlsx_bridge row-to-entity emission
 
     def identity_fields(self) -> list[FieldSpec]:
         return [f for f in self.fields if f.identity]
+
+    def tabular_identifier_field(self) -> FieldSpec | None:
+        """First field marked tabular_identifier: true. Used by xlsx_bridge."""
+        for f in self.fields:
+            if f.tabular_identifier:
+                return f
+        return None
+
+    def tabular_value_field_names(self) -> list[str]:
+        """Names of fields marked tabular_value: true. Used by xlsx_bridge."""
+        return [f.name for f in self.fields if f.tabular_value]
 
 
 class DomainSchema(BaseModel):
@@ -79,6 +99,14 @@ class DomainSchema(BaseModel):
 
     def children_of(self, parent_type: str) -> list[Relationship]:
         return [r for r in self.relationships if r.kind == "parent" and r.from_type == parent_type]
+
+    def graph_route_entity_types(self) -> list[EntityType]:
+        """Entity types the schema has marked as theme-friendly for graph_route."""
+        return [e for e in self.entities if e.graph_route]
+
+    def tabular_entity_types(self) -> list[EntityType]:
+        """Entity types the schema has marked as eligible for xlsx_bridge."""
+        return [e for e in self.entities if e.tabular]
 
     def validate_self(self) -> None:
         names = {e.name for e in self.entities}

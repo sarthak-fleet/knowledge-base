@@ -174,7 +174,10 @@ async def extract_for_file(*, file_id: str, domain: str) -> ExtractionResult:
     if file_row["filename"].lower().endswith((".xlsx", ".xls")):
         from kb.extract.xlsx_bridge import XlsxBridgeConfig, extract_xlsx_entities
 
-        bridge_cfg = XlsxBridgeConfig.from_pipeline_cfg(cfg)
+        # Schema is the contract — `tabular: true` entity types + `tabular_identifier`
+        # fields drive the bridge's shape. Column-vocab still comes from per-domain
+        # config (purely a text-matching concern, doesn't belong in the schema).
+        bridge_cfg = XlsxBridgeConfig.from_schema_and_cfg(schema, cfg)
         if bridge_cfg.is_actionable():
             # Reconstruct rows from elements: each ListItem element is one row;
             # the Title element is the header.

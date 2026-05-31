@@ -44,7 +44,7 @@ Every retrieval path converges on the same triple, `(file_id, page, excerpt)`. H
 
 ## 3. What I'd do differently with more time
 
-In rough priority order: real graph storage replacing the current theme-routing sketch (community detection on the entity co-mention graph would give themes a reusable structure across queries); a larger natural-question eval set per domain to push variance below the noise floor; per-token SSE streaming on `/query` (the endpoint exists but emits stage-level events only — true per-token streaming needs the synthesis call to be a streaming wrapper and the engine to expose an async-generator variant); a memory-aware semaphore per pipeline stage so worker concurrency stops being a count-based knob; SEC EDGAR fixtures committed alongside the existing Legal ones so `make seed` runs fully offline (each 10-K is several MB, so it's a real ask).
+In rough priority order: real graph storage replacing the current theme-routing sketch (community detection on the entity co-mention graph would give themes a reusable structure across queries); a larger natural-question eval set per domain to push variance below the noise floor; a structured model-and-config benchmark sweep — every model lever is already an env var (`KB_EMBED_MODEL`, `KB_RERANK_MODEL`, `AI_MODEL`, `KB_VECTOR_STORE`), so the missing piece is a `make bench` target that runs eval across N (embedder × reranker × synth) combinations and produces a comparison table; per-token SSE streaming on `/query`; a memory-aware semaphore per pipeline stage so worker concurrency stops being a count-based knob; SEC EDGAR fixtures committed alongside the existing Legal ones so `make seed` runs fully offline.
 
 ## 4. Where it breaks today
 

@@ -23,7 +23,9 @@ synthesize:
   excerpt_chars: 600           # SEC sentences are long; keep more excerpt text in citations
 
 graph_route:
-  default_entity_type: RiskFactor  # theme questions default to RiskFactor entities
+  # default_entity_type is now declared in domains/sec/schema.yaml
+  # via `graph_route: true` on RiskFactor. This block kept for back-compat
+  # if you want to override the schema-derived choice.
 
 duckdb_route:
   filename_to_field:
@@ -31,9 +33,10 @@ duckdb_route:
     field: ticker                  # backfill the ticker field on entities where extraction missed it
 
 xlsx_bridge:
-  enabled: true
-  target_entity_type: FinancialMetric
-  ident_field: ticker
+  # target_entity_type and ident_field are now declared in domains/sec/schema.yaml
+  # via `tabular: true` on FinancialMetric and `tabular_identifier: true` on `ticker`.
+  # Only the column-vocab stays here (purely a text-matching concern that depends
+  # on what xlsx authors actually write in headers, not on the schema's shape).
   ident_columns: [ticker, symbol, company, issuer]
   value_columns:
     - revenue

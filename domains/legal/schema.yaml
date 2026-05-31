@@ -33,6 +33,7 @@ entities:
   - name: Clause
     description: A discrete clause of the contract, by topic.
     summary_field: heading
+    graph_route: true   # theme-route fires on Clauses when the question shape is "themes / patterns across licenses"
     fields:
       - { name: heading, type: string, identity: true, required: true, description: "Short heading, e.g. 'Grant of License', 'Disclaimer of Warranty', 'Limitation of Liability', 'Attribution'" }
       - { name: topic,   type: enum, enum: [grant, restriction, attribution, disclaimer, liability, distribution, modification, termination, patent, other], description: "Topic category" }

@@ -110,11 +110,26 @@ async def maybe_graph_answer(
     `looks_like_themes(question)`. The route itself just looks at intent +
     domain entities and either produces a summary or backs off.
     """
-    # We need an entity type to operate on. Prefer intent.entity_type; otherwise
-    # take the per-domain fallback from config (`graph_route.default_entity_type`).
-    # If neither is set, back off cleanly — better than picking a random type.
-    fallback_type = cfg_get(pipeline_config(domain), "graph_route.default_entity_type")
-    entity_type = intent.entity_type or fallback_type
+    # We need an entity type to operate on. Source order, most-specific first:
+    #   1. intent.entity_type (the question itself named one)
+    #   2. schema-declared entity types with `graph_route: true`
+    #   3. legacy `graph_route.default_entity_type` in domain config (kept for back-compat)
+    # If none of those resolve, back off cleanly.
+    entity_type: str | None = intent.entity_type
+    if not entity_type:
+        try:
+            schema_row = await repo.get_active_schema(domain)
+            if schema_row:
+                from kb.schema.loader import schema_from_dict
+
+                schema = schema_from_dict(schema_row["spec"])
+                graph_types = schema.graph_route_entity_types()
+                if graph_types:
+                    entity_type = graph_types[0].name
+        except Exception as e:
+            logger.info("graph_route: schema-based entity-type lookup failed (%s)", e)
+    if not entity_type:
+        entity_type = cfg_get(pipeline_config(domain), "graph_route.default_entity_type")
     if not entity_type:
         return None
 

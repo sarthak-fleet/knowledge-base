@@ -47,6 +47,7 @@ entities:
   - name: RiskFactor
     description: An individual risk factor disclosed under Item 1A.
     summary_field: title
+    graph_route: true   # theme-route fires on RiskFactors when the question shape is "themes / patterns"
     fields:
       - { name: title,    type: string, identity: true, required: true, description: "Risk factor heading / first sentence" }
       - { name: category, type: enum, enum: [market, operational, regulatory, technology, financial, geopolitical, supply_chain, cybersecurity, climate, other], description: "Inferred risk category" }
@@ -55,7 +56,9 @@ entities:
   - name: FinancialMetric
     description: A reported financial number (revenue, net income, EPS, etc.).
     summary_field: name
+    tabular: true       # xlsx_bridge emits one record per (row × value-column) for this entity type
     fields:
+      - { name: ticker, type: string, tabular_identifier: true, description: "Stock ticker of the filer the metric belongs to" }
       - { name: name,   type: string, identity: true, required: true, description: "Metric name, e.g. 'Revenue', 'Net Income', 'EPS-Diluted'" }
       - { name: value,  type: number, description: "Numerical value in USD unless otherwise noted" }
       - { name: unit,   type: string, description: "USD-millions, USD-billions, %, etc." }
