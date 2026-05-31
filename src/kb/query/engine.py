@@ -326,7 +326,7 @@ async def answer_query(body: QueryIn) -> QueryOut:
         final_queries=len(queries),
     )
 
-    # ── Stage 2: retrieval (multi-query RRF) ─────────────────────────────────
+    # ── Stage 2: retrieval (multi-query RRF, optionally multi-kind RRF) ──────
     explicit_filters = _build_explicit_filters(body.scope, body.filters)
     payload_filters = {**intent_to_payload_filter(intent, schema), **explicit_filters}
     top_k_dense = int(pipeline.get(cfg, "retrieve.top_k_dense", 20))
@@ -334,36 +334,42 @@ async def answer_query(body: QueryIn) -> QueryOut:
     candidate_k = int(pipeline.get(cfg, "retrieve.candidate_k", max(top_k_dense, top_k_sparse) * 2))
     rerank_top_k = int(pipeline.get(cfg, "retrieve.rerank_top_k", 8))
 
-    started = time.time()
-    if len(queries) == 1:
-        hits = await store.hybrid_search(
-            domain=body.domain,
-            query=queries[0],
+    # Project-aware cross-kind retrieval. `body.kinds` (when set) lists every
+    # kind within `body.project` to fan retrieval out across. Default behaviour
+    # (no kinds set) is a single-kind query against `body.domain`, matching
+    # the pre-project shape.
+    target_kinds: list[str] = body.kinds or [body.domain]
+
+    async def _search_one_kind(kind: str, q: str) -> list[Any]:
+        return await store.hybrid_search(
+            domain=kind,
+            query=q,
             top_k_dense=top_k_dense,
             top_k_sparse=top_k_sparse,
             rerank_top_k=candidate_k,
             filters=payload_filters or None,
         )
+
+    started = time.time()
+    if len(queries) == 1 and len(target_kinds) == 1:
+        hits = await _search_one_kind(target_kinds[0], queries[0])
     else:
-        # Multi-query: run each, fuse via RRF on the chunk IDs.
+        # Multi-query and/or multi-kind: run each (kind × query) combo, then
+        # fuse all rankings via RRF on chunk IDs in one pass. This is the same
+        # RRF kernel that multi-query already uses — it scales to any number
+        # of input rankings.
         from kb.query.rewriter import fuse_rrf
 
-        per_query: list[list[Any]] = []
+        per_run: list[list[Any]] = []
         rankings: list[list[str]] = []
-        for q in queries:
-            h = await store.hybrid_search(
-                domain=body.domain,
-                query=q,
-                top_k_dense=top_k_dense,
-                top_k_sparse=top_k_sparse,
-                rerank_top_k=candidate_k,
-                filters=payload_filters or None,
-            )
-            per_query.append(h)
-            rankings.append([x.id for x in h])
+        for kind in target_kinds:
+            for q in queries:
+                h = await _search_one_kind(kind, q)
+                per_run.append(h)
+                rankings.append([x.id for x in h])
         # Deduplicate hits and assign RRF score
         by_id: dict[str, Any] = {}
-        for hlist in per_query:
+        for hlist in per_run:
             for h in hlist:
                 if h.id not in by_id:
                     by_id[h.id] = h
