@@ -34,8 +34,8 @@ dependencies = [
   # torch/torchvision are transitive via unstructured-inference → timm; declared
   # explicitly so [tool.uv.sources] can pin them to the CPU index (the default
   # PyPI wheel bundles ~4.4GB of CUDA libs this project never uses).
-  "torch>=2.4,<3",
-  "torchvision>=0.19,<1",
+  "torch>=2.4,<2.8",
+  "torchvision>=0.19,<0.23",
   "pypdf>=4.3",
   "openpyxl>=3.1",
   "pgvector>=0.3",
