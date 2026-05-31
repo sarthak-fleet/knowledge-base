@@ -13,6 +13,7 @@ router = APIRouter(prefix="/files", tags=["files"])
 
 class FileOut(BaseModel):
     id: str
+    project: str = "default"
     domain: str
     filename: str
     content_hash: str
@@ -25,6 +26,7 @@ class FileOut(BaseModel):
 @router.post("", response_model=FileOut, status_code=201)
 async def upload_file(
     domain: str = Form(...),
+    project: str = Form("default"),
     file: UploadFile = File(...),
 ) -> FileOut:
     blob = await file.read()
@@ -34,6 +36,7 @@ async def upload_file(
         domain=domain, filename=file.filename or "file", blob=blob
     )
     row = await repo.register_file(
+        project=project,
         domain=domain,
         filename=file.filename or "file",
         mime=file.content_type,
@@ -45,8 +48,11 @@ async def upload_file(
 
 
 @router.get("", response_model=list[FileOut])
-async def list_files(domain: str | None = None) -> list[FileOut]:
-    return [FileOut(**r) for r in await repo.list_files(domain=domain)]
+async def list_files(
+    domain: str | None = None,
+    project: str = "default",
+) -> list[FileOut]:
+    return [FileOut(**r) for r in await repo.list_files(domain=domain, project=project)]
 
 
 @router.get("/{file_id}", response_model=FileOut)

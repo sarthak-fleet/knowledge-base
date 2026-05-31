@@ -13,7 +13,8 @@ router = APIRouter(prefix="/ingest", tags=["ingest"])
 
 class RunIn(BaseModel):
     domain: str
-    file_ids: list[str] | None = None  # None = all pending in domain
+    project: str = "default"
+    file_ids: list[str] | None = None  # None = all pending in (project, domain)
     force: bool = False  # re-run even if already indexed
 
 
@@ -23,13 +24,19 @@ class RunOut(BaseModel):
 
 @router.post("/run", response_model=RunOut)
 async def run(body: RunIn) -> RunOut:
-    n = await enqueue.enqueue_files(domain=body.domain, file_ids=body.file_ids, force=body.force)
+    n = await enqueue.enqueue_files(
+        project=body.project, domain=body.domain, file_ids=body.file_ids, force=body.force
+    )
     return RunOut(enqueued=n)
 
 
 @router.get("/jobs")
-async def list_jobs(domain: str | None = None, status: str | None = None) -> list[dict]:
-    return await repo.list_jobs(domain=domain, status=status)
+async def list_jobs(
+    domain: str | None = None,
+    status: str | None = None,
+    project: str = "default",
+) -> list[dict]:
+    return await repo.list_jobs(domain=domain, status=status, project=project)
 
 
 @router.get("/jobs/{job_id}")

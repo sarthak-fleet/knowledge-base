@@ -65,8 +65,12 @@ async def query_stream(body: QueryIn) -> StreamingResponse:
 
 
 @router.get("/traces", summary="List recent query traces")
-async def list_traces(domain: str | None = None, limit: int = 50) -> list[dict]:
-    return await repo.list_query_traces(domain=domain, limit=limit)
+async def list_traces(
+    domain: str | None = None,
+    limit: int = 50,
+    project: str = "default",
+) -> list[dict]:
+    return await repo.list_query_traces(domain=domain, limit=limit, project=project)
 
 
 @router.get("/trace/{trace_id}", summary="Full record of what the system did for one answer")

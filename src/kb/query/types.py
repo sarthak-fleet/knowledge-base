@@ -47,6 +47,8 @@ class Confidence(BaseModel):
 class QueryIn(BaseModel):
     domain: str
     question: str
+    project: str = "default"  # top-level namespace; legacy callers default to 'default'
+    kinds: list[str] | None = None  # if set, fan out retrieval across these kinds within `project`
     session_id: str | None = None
     scope: dict | None = None  # e.g. {"entity_id": "..."} or {"parent_id": "..."}
     filters: dict | None = None  # e.g. {"date_gte": "2024-01-01", "filing_type": "10-K"}

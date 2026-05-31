@@ -27,35 +27,48 @@ def db_init() -> None:
 
 
 @schema_app.command("apply")
-def schema_apply(path: Path) -> None:
-    """Load a YAML schema and upsert it into the domain registry."""
+def schema_apply(
+    path: Path,
+    project: str = typer.Option("default", help="Project namespace (default: 'default')."),
+) -> None:
+    """Load a YAML schema and upsert it into the (project, kind) registry."""
     from kb.schema.loader import apply_schema_file
 
-    result = asyncio.run(apply_schema_file(path))
+    result = asyncio.run(apply_schema_file(path, project=project))
     print(
-        f"[green]Applied[/green] schema [bold]{result.name}[/bold] v{result.version} for domain [bold]{result.domain}[/bold]"
+        f"[green]Applied[/green] schema [bold]{result.name}[/bold] v{result.version} "
+        f"for project=[bold]{project}[/bold] kind=[bold]{result.domain}[/bold]"
     )
 
 
 @schema_app.command("list")
-def schema_list() -> None:
+def schema_list(
+    project: str = typer.Option("default", help="Project to list schemas from."),
+) -> None:
     from kb.schema.loader import list_schemas
 
-    rows = asyncio.run(list_schemas())
+    rows = asyncio.run(list_schemas(project=project))
     for r in rows:
-        print(f"- {r['domain']}/{r['name']} v{r['version']}  ({r['entity_count']} types)")
+        print(
+            f"- {r.get('project', 'default')}/{r['domain']}/{r['name']} "
+            f"v{r['version']}  ({r['entity_count']} types)"
+        )
 
 
 @ingest_app.command("run")
 def ingest_run(
-    domain: str = typer.Option(..., help="Domain name (e.g. 'sec')"),
+    domain: str = typer.Option(..., help="Kind name (e.g. 'sec')."),
+    project: str = typer.Option("default", help="Project namespace (default: 'default')."),
     force: bool = typer.Option(False, help="Re-enqueue files even if already 'ready'."),
 ) -> None:
-    """Enqueue all unprocessed files in the given domain."""
+    """Enqueue all unprocessed files in the given (project, kind)."""
     from kb.jobs.enqueue import enqueue_files
 
-    n = asyncio.run(enqueue_files(domain=domain, file_ids=None, force=force))
-    print(f"[green]Enqueued[/green] {n} files for domain [bold]{domain}[/bold]")
+    n = asyncio.run(enqueue_files(domain=domain, file_ids=None, force=force, project=project))
+    print(
+        f"[green]Enqueued[/green] {n} files for project=[bold]{project}[/bold] "
+        f"kind=[bold]{domain}[/bold]"
+    )
 
 
 if __name__ == "__main__":
