@@ -28,6 +28,9 @@ Sorted by how much time you have:
 **5 min — the rubric write-up**
 - [`WRITEUP.md`](WRITEUP.md) — 4-page submission write-up: architecture diagram, three trickiest decisions, what I'd do differently, where it breaks. This is what to read if you're scoring against the assignment.
 
+**Post-submission additions** (after the original deliverable shipped):
+- [`SESSION_LOG.md`](SESSION_LOG.md) — what changed since: project namespace, cross-kind retrieval, unified `/ingest/*` endpoints, project-aware Streamlit UI, the OpenAI-client memory-leak fix, configurable reranker.
+
 **15 min — decision depth + the empirical headline**
 1. [`LEARNING.md`](LEARNING.md) Part 4 (decision log) — every architectural choice, why, what surfaced it. Includes the 4 production bugs called out above.
 2. [`LEARNING.md`](LEARNING.md) Part 8 (five distilled lessons) — what to take away.
