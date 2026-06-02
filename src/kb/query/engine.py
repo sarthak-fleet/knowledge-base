@@ -107,7 +107,7 @@ async def answer_query(body: QueryIn) -> QueryOut:
     token_usage: dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
     # ── Stage 0: session + intent ────────────────────────────────────────────
-    sess = await repo.get_or_create_session(body.session_id, body.domain)
+    sess = await repo.get_or_create_session(body.session_id, body.domain, project=body.project)
     session_id = sess["id"]
     history = sess.get("history") or []
     history_block = ""
@@ -117,7 +117,7 @@ async def answer_query(body: QueryIn) -> QueryOut:
             f"Q: {t.get('q', '')}\nA: {t.get('a', '')[:200]}" for t in last
         )
 
-    schema_row = await repo.get_active_schema(body.domain)
+    schema_row = await repo.get_active_schema(body.domain, project=body.project)
     if not schema_row:
         raise RuntimeError(f"no active schema for domain {body.domain}")
     schema = schema_from_dict(schema_row["spec"])
@@ -134,7 +134,7 @@ async def answer_query(body: QueryIn) -> QueryOut:
     if intent.kind in ("aggregate", "compare"):
         started = time.time()
         structured = await maybe_structured_answer(
-            intent=intent, domain=body.domain, question=body.question
+            intent=intent, domain=body.domain, question=body.question, project=body.project
         )
         stages.append(
             _stage(
@@ -176,7 +176,7 @@ async def answer_query(body: QueryIn) -> QueryOut:
             from kb.query.duckdb_route import maybe_duckdb_answer
 
             dr = await maybe_duckdb_answer(
-                intent=intent, domain=body.domain, question=body.question
+                intent=intent, domain=body.domain, question=body.question, project=body.project
             )
         except Exception as e:
             logger.warning("duckdb route failed: %s", e)
@@ -207,7 +207,7 @@ async def answer_query(body: QueryIn) -> QueryOut:
             started = time.time()
             try:
                 gr = await maybe_graph_answer(
-                    intent=intent, domain=body.domain, question=body.question
+                    intent=intent, domain=body.domain, question=body.question, project=body.project
                 )
             except Exception as e:
                 logger.warning("graph route failed: %s", e)
@@ -328,7 +328,11 @@ async def answer_query(body: QueryIn) -> QueryOut:
 
     # ── Stage 2: retrieval (multi-query RRF, optionally multi-kind RRF) ──────
     explicit_filters = _build_explicit_filters(body.scope, body.filters)
-    payload_filters = {**intent_to_payload_filter(intent, schema), **explicit_filters}
+    payload_filters = {
+        **intent_to_payload_filter(intent, schema),
+        **explicit_filters,
+        "project": body.project,
+    }
     top_k_dense = int(pipeline.get(cfg, "retrieve.top_k_dense", 20))
     top_k_sparse = int(pipeline.get(cfg, "retrieve.top_k_sparse", 20))
     candidate_k = int(pipeline.get(cfg, "retrieve.candidate_k", max(top_k_dense, top_k_sparse) * 2))
@@ -381,7 +385,7 @@ async def answer_query(body: QueryIn) -> QueryOut:
                 # Overwrite the retrieval score with the fused RRF score.
                 h.score = float(rrf_score)
                 hits.append(h)
-    intent_entity_ids = await intent_to_entity_ids(intent, body.domain)
+    intent_entity_ids = await intent_to_entity_ids(intent, body.domain, project=body.project)
     stages.append(
         _stage(
             "retrieve",
@@ -661,11 +665,24 @@ async def answer_query(body: QueryIn) -> QueryOut:
     # per-claim entailment pass isn't worth ~16s. The synth-level
     # refuse_if_no_citations guard still fires regardless.
     verify_enabled = bool(pipeline.get(cfg, "synthesize.verify_citations", True))
+    hard_citation_gate = bool(pipeline.get(cfg, "synthesize.hard_citation_gate", False))
+    require_verified_citations = bool(
+        pipeline.get(cfg, "synthesize.require_verified_citations", hard_citation_gate)
+    )
+    min_verified_claim_pass_rate = float(
+        pipeline.get(cfg, "synthesize.min_verified_claim_pass_rate", 1.0)
+    )
     verify_skip_threshold = float(pipeline.get(cfg, "synthesize.verify_skip_threshold", 0.7))
     should_verify = (
         verify_enabled
         and cited_indices
-        and not (crag_score >= verify_skip_threshold and confidence_value >= verify_skip_threshold)
+        and (
+            hard_citation_gate
+            or not (
+                crag_score >= verify_skip_threshold
+                and confidence_value >= verify_skip_threshold
+            )
+        )
     )
     verify_summary: dict[str, Any] = {}
     if should_verify:
@@ -688,6 +705,20 @@ async def answer_query(body: QueryIn) -> QueryOut:
                 **{k: v for k, v in verify_summary.items() if k != "failed_claims"},
             )
         )
+        pass_rate = verify_summary.get("pass_rate")
+        gate_failed = False
+        if pass_rate is None:
+            gate_failed = require_verified_citations
+        else:
+            gate_failed = float(pass_rate) < min_verified_claim_pass_rate
+        if hard_citation_gate and gate_failed:
+            answer_text = (
+                "I cannot answer with verified citations from the provided sources. "
+                "The retrieved excerpts did not pass the citation support check."
+            )
+            confidence_value = min(confidence_value, 0.2)
+            confidence_reason = "citation verification gate failed"
+            cited_indices = []
     elif verify_enabled and cited_indices:
         # Recorded for trace-transparency — verify is configured on but we
         # skipped it because retrieval + synth were both highly confident.
@@ -793,6 +824,7 @@ async def answer_query(body: QueryIn) -> QueryOut:
     latency_ms = int((time.time() - started_total) * 1000)
     trace_id = await repo.insert_query_trace(
         {
+            "project": body.project,
             "domain": body.domain,
             "question": body.question,
             "scope": body.scope,

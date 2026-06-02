@@ -11,6 +11,7 @@ router = APIRouter(prefix="/schemas", tags=["schemas"])
 
 
 class InferIn(BaseModel):
+    project: str = "default"
     domain: str
     sample_texts: list[str] | None = None  # if None, sample from chunks table
     sample_count: int = 12
@@ -20,13 +21,16 @@ class InferIn(BaseModel):
 async def infer(body: InferIn) -> dict:
     samples = body.sample_texts
     if not samples:
-        samples = await collect_samples_from_domain(body.domain, n=body.sample_count)
+        samples = await collect_samples_from_domain(
+            body.domain, n=body.sample_count, project=body.project
+        )
     if not samples:
         raise HTTPException(400, "no samples available — upload files first or pass sample_texts")
     schema = await infer_schema(domain_hint=body.domain, samples=samples)
     return {
         "domain": schema.domain,
         "name": schema.name,
+        "project": body.project,
         "spec": schema.model_dump(),
         "sample_count": len(samples),
         "note": "Review + edit, then POST to /schemas to commit.",

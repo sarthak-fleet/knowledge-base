@@ -14,6 +14,7 @@ from kb.api.routes import (
     projects,
     query,
     schemas,
+    sources,
 )
 
 
@@ -25,5 +26,6 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(files.router)
     app.include_router(ingest.router)
     app.include_router(ingest_data.router)  # /ingest/record, /ingest/text
+    app.include_router(sources.router)
     app.include_router(entities.router)
     app.include_router(query.router)

@@ -42,6 +42,7 @@ async def index_extraction(result: ExtractionResult, parent_index: dict[str, str
 
     entity_id = _entity_id_for_element(result.elements, parent_index)
     base_meta: dict[str, Any] = {
+        "project": result.project,
         "domain": result.domain,
         "file_id": result.file_id,
         "entity_id": entity_id,

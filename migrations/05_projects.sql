@@ -39,8 +39,5 @@ CREATE INDEX IF NOT EXISTS chunks_project_idx             ON chunks (project, do
 CREATE INDEX IF NOT EXISTS ingest_jobs_project_status_idx ON ingest_jobs (project, domain, status);
 CREATE INDEX IF NOT EXISTS query_traces_project_idx       ON query_traces (project, domain);
 
--- Note: existing UNIQUE constraints (schemas(domain, name, version),
--- files(domain, content_hash), entities(domain, type, identity_key), etc.) still
--- apply. They effectively scope to (project='default', domain) for legacy rows.
--- For per-project uniqueness, future migrations can drop+recreate those keys to
--- include `project`. Deferred until needed — risks breaking legacy callers.
+-- Per-project uniqueness is finalized in 06_project_uniqueness.sql so existing
+-- databases that already ran this migration are repaired without a rebuild.

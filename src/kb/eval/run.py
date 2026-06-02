@@ -196,6 +196,7 @@ async def _run(args: argparse.Namespace) -> int:
                 r = await client.post(
                     f"{api}/query",
                     json={
+                        "project": args.project,
                         "domain": args.domain,
                         "question": question,
                         "scope": scope,
@@ -263,7 +264,7 @@ async def _run(args: argparse.Namespace) -> int:
             )
 
     # Report
-    table = Table(title=f"Eval — {args.domain} ({len(scores)} questions)")
+    table = Table(title=f"Eval — {args.project}/{args.domain} ({len(scores)} questions)")
     table.add_column("qid", style="cyan")
     table.add_column("cit P", justify="right")
     table.add_column("cit R", justify="right")
@@ -310,6 +311,7 @@ async def _run(args: argparse.Namespace) -> int:
     print(tag_tbl)
 
     summary = {
+        "project": args.project,
         "domain": args.domain,
         "n": len(scores),
         "mean_citation_precision": statistics.mean(s.citation_precision for s in scores)
@@ -345,6 +347,7 @@ async def _run(args: argparse.Namespace) -> int:
 
 def main() -> None:
     p = argparse.ArgumentParser()
+    p.add_argument("--project", default="default")
     p.add_argument("--domain", required=True)
     p.add_argument("--dataset", required=True)
     p.add_argument("--output", default="eval_report.json")

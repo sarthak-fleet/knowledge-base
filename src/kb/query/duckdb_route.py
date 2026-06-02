@@ -225,21 +225,23 @@ def _sql_user_prompt(question: str, views: dict[str, list[str]]) -> str:
 
 
 async def maybe_duckdb_answer(
-    *, intent: QueryIntent, domain: str, question: str
+    *, intent: QueryIntent, domain: str, question: str, project: str = "default"
 ) -> DuckResult | None:
     """Try the DuckDB route. Returns None if it finds nothing or SQL fails.
 
     The caller decides when to fire (intent.kind in {aggregate,compare} OR a
     keyword fallback). This function just runs the SQL pipeline.
     """
-    schema_row = await repo.get_active_schema(domain)
+    schema_row = await repo.get_active_schema(domain, project=project)
     if not schema_row:
         return None
     schema = schema_from_dict(schema_row["spec"])
 
     entities_by_type: dict[str, list[dict]] = {}
     for et in schema.entities:
-        rows = await repo.list_entities(domain=domain, type=et.name, q=None, limit=500)
+        rows = await repo.list_entities(
+            domain=domain, type=et.name, q=None, limit=500, project=project
+        )
         if rows:
             entities_by_type[et.name] = rows
 
@@ -258,7 +260,7 @@ async def maybe_duckdb_answer(
     if extractor and all_ids:
         pattern, _ = extractor
         try:
-            ments = await mentions_for(all_ids)
+            ments = await mentions_for(all_ids, project=project)
             # Keep the first non-empty capture per entity.
             for m in ments:
                 eid = m.get("entity_id")
@@ -336,7 +338,7 @@ async def maybe_duckdb_answer(
 
         # Resolve provenance: mentions for every entity_id we returned
         entity_ids = [str(r.get("id")) for r in rows if r.get("id")]
-        mentions = await mentions_for(entity_ids) if entity_ids else []
+        mentions = await mentions_for(entity_ids, project=project) if entity_ids else []
 
         # Natural-language summary the synthesizer can cite
         col_strs = ", ".join(cols)

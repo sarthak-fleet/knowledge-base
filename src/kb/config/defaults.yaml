@@ -19,7 +19,13 @@ embedding:
   batch_size: 32
 
 parse:
+  parser_engine: unstructured       # unstructured | docling (docling is optional; install separately)
   default_strategy: auto
+  pdf_strategy: auto
+  strategy_by_extension:
+    .pdf: auto
+    .xlsx: xlsx
+  reuse_cache_across_strategies: false
   hi_res_pages_max: 200
   ocr_languages: [eng]
 
@@ -70,6 +76,10 @@ synthesize:
   excerpt_chars: 400
   refuse_if_no_citations: true
   verify_citations: true             # per-claim entailment check (AIS/FActScore pattern)
+  hard_citation_gate: true            # if verification fails, refuse instead of returning weak claims
+  min_verified_claim_pass_rate: 1.0
+  require_verified_citations: true
+  verify_skip_threshold: 0.7
   contextual_retrieval: false         # Anthropic Sep-2024: prefix each chunk with a 1-sentence
                                      # "where this chunk sits in the doc" context before embedding.
                                      # Trades extra LLM calls at INGEST for −49% retrieval failures.

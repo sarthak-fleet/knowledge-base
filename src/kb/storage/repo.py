@@ -6,7 +6,10 @@ the schema-driven `fields` JSONB column.
 `project` is the new top-level namespace introduced in migration 05. Every
 function takes `project: str = "default"` so legacy callers (single-namespace
 installs that pre-date the project concept) keep working unchanged. The
-existing `domain` parameter now represents "kind within a project".
+existing `domain` parameter now represents "kind within a project". The
+`domains` table remains a global kind registry because the original schema has
+foreign keys to `domains(name)`; user data is isolated by project on the data
+tables.
 """
 
 from __future__ import annotations
@@ -112,11 +115,10 @@ async def upsert_domain(
                         VALUES (:name, :description, :project)
                         ON CONFLICT (name) DO UPDATE SET
                           description = COALESCE(EXCLUDED.description, domains.description),
-                          project = EXCLUDED.project,
                           updated_at = now()
-                        RETURNING name, project, description,
+                        RETURNING name, :project AS project, description,
                                   (SELECT MAX(version) FROM schemas s
-                                    WHERE s.domain = domains.name AND s.project = domains.project AND s.is_active
+                                    WHERE s.domain = domains.name AND s.project = :project AND s.is_active
                                   ) AS schema_version
                         """
                     ),
@@ -249,11 +251,10 @@ async def register_file(
                         """
                         INSERT INTO files (project, domain, filename, mime, bytes, content_hash, object_key)
                         VALUES (:project, :domain, :filename, :mime, :bytes, :content_hash, :object_key)
-                        ON CONFLICT (domain, content_hash) DO UPDATE SET
+                        ON CONFLICT (project, domain, content_hash) DO UPDATE SET
                           filename = EXCLUDED.filename,
                           mime = COALESCE(EXCLUDED.mime, files.mime),
                           object_key = EXCLUDED.object_key,
-                          project = EXCLUDED.project,
                           updated_at = now()
                         RETURNING id::text, project, domain, filename, content_hash, bytes, mime, status, last_error
                         """
@@ -327,6 +328,16 @@ async def set_file_status(file_id: str, status: str, *, error: str | None = None
         await s.commit()
 
 
+async def delete_file(file_id: str, *, project: str = "default") -> bool:
+    async with session() as s:
+        result = await s.execute(
+            text("DELETE FROM files WHERE id = :id AND project = :project"),
+            {"id": file_id, "project": project},
+        )
+        await s.commit()
+        return bool(result.rowcount)
+
+
 # ─── Parse artifacts ──────────────────────────────────────────────────────
 async def get_parse_artifact(content_hash: str) -> dict[str, Any] | None:
     async with session() as s:
@@ -392,11 +403,10 @@ async def upsert_entity(
                         """
                         INSERT INTO entities (project, domain, type, identity_key, display_name, fields, parent_id)
                         VALUES (:project, :domain, :type, :ik, :dn, CAST(:f AS jsonb), :pid)
-                        ON CONFLICT (domain, type, identity_key) DO UPDATE SET
+                        ON CONFLICT (project, domain, type, identity_key) DO UPDATE SET
                           display_name = COALESCE(EXCLUDED.display_name, entities.display_name),
                           fields = entities.fields || EXCLUDED.fields,
                           parent_id = COALESCE(EXCLUDED.parent_id, entities.parent_id),
-                          project = EXCLUDED.project,
                           updated_at = now()
                         RETURNING id::text, project, type, identity_key, display_name, parent_id::text, fields
                         """
@@ -626,6 +636,7 @@ async def insert_provenance(
                 """
                 INSERT INTO provenance_spans (project, domain, file_id, entity_id, field, page_start, page_end, element_id, excerpt, bbox)
                 VALUES (:project, :domain, :fid, :eid, :field, :ps, :pe, :el, :ex, :bb)
+                ON CONFLICT DO NOTHING
                 """
             ),
             {
@@ -660,7 +671,7 @@ async def insert_relationship(
                 """
                 INSERT INTO entity_relationships (project, domain, rel_type, src_id, dst_id, evidence_file, evidence_page)
                 VALUES (:project, :d, :rt, :s, :ds, :f, :p)
-                ON CONFLICT (domain, rel_type, src_id, dst_id) DO NOTHING
+                ON CONFLICT (project, domain, rel_type, src_id, dst_id) DO NOTHING
                 """
             ),
             {
@@ -695,7 +706,6 @@ async def enqueue_job(
                     VALUES (:project, :d, :f, :s, :stage, 'queued')
                     ON CONFLICT (file_id, schema_id) DO UPDATE SET
                       stage = EXCLUDED.stage, status = 'queued', attempts = 0,
-                      project = EXCLUDED.project,
                       last_error = NULL, updated_at = now()
                     RETURNING id::text
                     """
@@ -811,14 +821,19 @@ async def get_job(job_id: str) -> dict[str, Any] | None:
 
 
 # ─── Sessions + traces ────────────────────────────────────────────────────
-async def get_or_create_session(session_id: str | None, domain: str) -> dict[str, Any]:
+async def get_or_create_session(
+    session_id: str | None, domain: str, project: str = "default"
+) -> dict[str, Any]:
     async with session() as s:
         if session_id:
             row = (
                 (
                     await s.execute(
-                        text("SELECT id::text, history FROM sessions WHERE id = :id"),
-                        {"id": session_id},
+                        text(
+                            "SELECT id::text, project, domain, history FROM sessions "
+                            "WHERE id = :id AND project = :project"
+                        ),
+                        {"id": session_id, "project": project},
                     )
                 )
                 .mappings()
@@ -829,8 +844,11 @@ async def get_or_create_session(session_id: str | None, domain: str) -> dict[str
         row = (
             (
                 await s.execute(
-                    text("INSERT INTO sessions (domain) VALUES (:d) RETURNING id::text, history"),
-                    {"d": domain},
+                    text(
+                        "INSERT INTO sessions (project, domain) VALUES (:project, :d) "
+                        "RETURNING id::text, project, domain, history"
+                    ),
+                    {"project": project, "d": domain},
                 )
             )
             .mappings()

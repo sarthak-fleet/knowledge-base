@@ -16,12 +16,16 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import uuid
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from kb.storage import objects, repo
+from kb.vector.base import Chunk
+from kb.vector.dedup import content_hash as chunk_content_hash
+from kb.vector.factory import get_store
 
 router = APIRouter(prefix="/ingest", tags=["ingest"])
 
@@ -42,6 +46,7 @@ class RecordOut(BaseModel):
     type: str
     file_id: str  # virtual file that holds the JSON dump for provenance
     entities_upserted: int
+    chunks_indexed: int
 
 
 def _normalize_identity_value(v: Any) -> str:
@@ -162,6 +167,7 @@ async def ingest_record(body: RecordIn) -> RecordOut:
     # Upsert each record as an entity + a mention pointing back to the virtual file.
     schema_id = schema_row["id"]
     upserted = 0
+    chunks: list[Chunk] = []
     for rec in records:
         identity_key = _build_identity_key(rec, body.type, schema_spec)
         display_name = (
@@ -184,7 +190,51 @@ async def ingest_record(body: RecordIn) -> RecordOut:
             field_values=rec,
             confidence=1.0,
         )
+        excerpt = json.dumps(rec, sort_keys=True, default=str)
+        await repo.insert_provenance(
+            project=body.project,
+            domain=body.kind,
+            file_id=file_id,
+            entity_id=ent["id"],
+            field=None,
+            page_start=0,
+            page_end=0,
+            element_id=f"record:{identity_key}",
+            excerpt=excerpt[:1000],
+        )
+        chunk_id = str(
+            uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"kb-record:{body.project}:{body.kind}:{file_id}:{ent['id']}:{identity_key}",
+            )
+        )
+        chunks.append(
+            Chunk(
+                id=chunk_id,
+                text=excerpt,
+                metadata={
+                    "project": body.project,
+                    "domain": body.kind,
+                    "file_id": file_id,
+                    "entity_id": ent["id"],
+                    "entity_type": body.type,
+                    "page_start": 0,
+                    "page_end": 0,
+                    "is_parent": False,
+                    "source": "record",
+                },
+                content_hash=chunk_content_hash(f"record:{body.project}:{body.kind}:{body.type}:{excerpt}"),
+            )
+        )
         upserted += 1
+
+    try:
+        store = get_store()
+        await store.delete_by_file(body.kind, file_id)
+        await store.upsert(body.kind, chunks)
+    except Exception as e:
+        await repo.set_file_status(file_id, "failed", error=f"record vector indexing failed: {e}"[:500])
+        raise HTTPException(503, f"record stored but vector indexing failed: {e}") from e
 
     return RecordOut(
         project=body.project,
@@ -192,6 +242,7 @@ async def ingest_record(body: RecordIn) -> RecordOut:
         type=body.type,
         file_id=file_id,
         entities_upserted=upserted,
+        chunks_indexed=len(chunks),
     )
 
 
@@ -223,6 +274,13 @@ async def ingest_text(body: TextIn) -> TextOut:
     """
     if not body.text.strip():
         raise HTTPException(400, "text must be non-empty")
+    schema_id = await repo.get_active_schema_id(body.kind, project=body.project)
+    if not schema_id:
+        raise HTTPException(
+            404,
+            f"no active schema for project='{body.project}' kind='{body.kind}'. "
+            "Apply a schema first via POST /schemas or `kb schema apply`.",
+        )
 
     blob = body.text.encode()
     content_hash = hashlib.sha256(blob).hexdigest()
@@ -242,16 +300,14 @@ async def ingest_text(body: TextIn) -> TextOut:
     file_id = file_row["id"]
 
     # Queue the normal parse→extract→vector pipeline. The worker picks it up.
-    schema_id = await repo.get_active_schema_id(body.kind, project=body.project)
     job_id: str | None = None
-    if schema_id:
-        job = await repo.enqueue_job(
-            project=body.project,
-            domain=body.kind,
-            file_id=file_id,
-            schema_id=schema_id,
-            stage="parse",
-        )
-        job_id = job["id"]
+    job = await repo.enqueue_job(
+        project=body.project,
+        domain=body.kind,
+        file_id=file_id,
+        schema_id=schema_id,
+        stage="parse",
+    )
+    job_id = job["id"]
 
     return TextOut(project=body.project, kind=body.kind, file_id=file_id, job_id=job_id)

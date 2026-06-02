@@ -46,7 +46,7 @@ async def query_stream(body: QueryIn) -> StreamingResponse:
         # Ship a started event immediately so the client sees TTFB even
         # though the rest is batched after the pipeline ends.
         yield (
-            f"event: started\ndata: {json.dumps({'domain': body.domain, 'question': body.question})}\n\n"
+            f"event: started\ndata: {json.dumps({'project': body.project, 'domain': body.domain, 'question': body.question})}\n\n"
         ).encode()
         try:
             # Kick the full pipeline; collect the result.

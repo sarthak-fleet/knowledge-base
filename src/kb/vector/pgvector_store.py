@@ -12,7 +12,7 @@ from kb.vector.base import Chunk, SearchHit, VectorStore
 from kb.vector.embed import embed_dense
 
 # Whitelist filter columns — anything not in here is silently dropped to keep SQL safe.
-_ALLOWED_FILTER_COLS = {"file_id", "entity_id", "parent_chunk", "domain"}
+_ALLOWED_FILTER_COLS = {"project", "file_id", "entity_id", "parent_chunk", "domain"}
 
 
 def _vec_literal(v: list[float]) -> str:
@@ -37,6 +37,7 @@ class PgvectorStore(VectorStore):
         await self.ensure_collection(domain)
 
         # Look up existing rows by content_hash to short-circuit duplicate inserts.
+        project = str(chunks[0].metadata.get("project") or "default")
         hashes = [c.content_hash for c in chunks if c.content_hash]
         existing: dict[str, dict[str, Any]] = {}
         if hashes:
@@ -46,9 +47,9 @@ class PgvectorStore(VectorStore):
                         await s.execute(
                             text(
                                 "SELECT id, content_hash, file_id, COALESCE(also_in_files, '{}') AS also "
-                                "FROM chunks WHERE domain = :d AND content_hash = ANY(:hashes)"
+                                "FROM chunks WHERE project = :project AND domain = :d AND content_hash = ANY(:hashes)"
                             ),
-                            {"d": domain, "hashes": list(set(hashes))},
+                            {"project": project, "d": domain, "hashes": list(set(hashes))},
                         )
                     )
                     .mappings()
@@ -86,16 +87,18 @@ class PgvectorStore(VectorStore):
                     await s.execute(
                         text(
                             """
-                            INSERT INTO chunks (id, domain, file_id, entity_id, parent_chunk, page_start, page_end,
+                            INSERT INTO chunks (id, project, domain, file_id, entity_id, parent_chunk, page_start, page_end,
                                                 text, embedding, bbox, content_hash)
-                            VALUES (:id, :d, :fid, :eid, :pc, :ps, :pe, :tx, CAST(:emb AS vector), :bb, :ch)
+                            VALUES (:id, :project, :d, :fid, :eid, :pc, :ps, :pe, :tx, CAST(:emb AS vector), :bb, :ch)
                             ON CONFLICT (id) DO UPDATE SET
+                              project = EXCLUDED.project,
                               text = EXCLUDED.text, embedding = EXCLUDED.embedding,
                               content_hash = EXCLUDED.content_hash
                             """
                         ),
                         {
                             "id": uuid.UUID(c.id) if not isinstance(c.id, uuid.UUID) else c.id,
+                            "project": project,
                             "d": domain,
                             "fid": md.get("file_id"),
                             "eid": md.get("entity_id"),
@@ -147,7 +150,8 @@ class PgvectorStore(VectorStore):
                     await s.execute(
                         text(
                             f"""
-                        SELECT id::text, text, file_id::text, entity_id::text, parent_chunk::text,
+                        SELECT id::text, project, text, file_id::text, entity_id::text, parent_chunk::text,
+                               page_start, page_end,
                                1 - (embedding <=> CAST(:qv AS vector)) AS score
                         FROM chunks
                         WHERE {wsql} AND embedding IS NOT NULL
@@ -166,7 +170,8 @@ class PgvectorStore(VectorStore):
                     await s.execute(
                         text(
                             f"""
-                        SELECT id::text, text, file_id::text, entity_id::text, parent_chunk::text,
+                        SELECT id::text, project, text, file_id::text, entity_id::text, parent_chunk::text,
+                               page_start, page_end,
                                ts_rank(tsv, plainto_tsquery('english', :q)) AS score
                         FROM chunks
                         WHERE {wsql} AND tsv @@ plainto_tsquery('english', :q)
@@ -185,25 +190,28 @@ class PgvectorStore(VectorStore):
         ranks: dict[str, float] = {}
         rows_by_id: dict[str, dict[str, Any]] = {}
         for arr in (dense_rows, lex_rows):
-            for i, r in enumerate(arr):
-                rid = r["id"]
+            for i, row in enumerate(arr):
+                rid = row["id"]
                 ranks[rid] = ranks.get(rid, 0.0) + 1.0 / (60 + i + 1)
-                rows_by_id[rid] = dict(r)
+                rows_by_id[rid] = dict(row)
         fused = sorted(ranks.items(), key=lambda x: x[1], reverse=True)[:rerank_top_k]
         hits: list[SearchHit] = []
         for rid, score in fused:
-            r = rows_by_id[rid]
+            hit_row = rows_by_id[rid]
             hits.append(
                 SearchHit(
                     id=rid,
-                    text=r["text"],
+                    text=hit_row["text"],
                     score=float(score),
                     metadata={
-                        "file_id": r["file_id"],
-                        "entity_id": r["entity_id"],
-                        "parent_chunk": r["parent_chunk"],
+                        "file_id": hit_row["file_id"],
+                        "project": hit_row["project"],
+                        "entity_id": hit_row["entity_id"],
+                        "parent_chunk": hit_row["parent_chunk"],
+                        "page_start": hit_row["page_start"],
+                        "page_end": hit_row["page_end"],
                     },
-                    parent_id=r["parent_chunk"],
+                    parent_id=hit_row["parent_chunk"],
                 )
             )
         return hits

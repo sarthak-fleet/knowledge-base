@@ -24,7 +24,11 @@ def test_cache_hit_uses_artifact(monkeypatch) -> None:
     ]
 
     async def fake_get_parse_artifact_db(content_hash):
-        return {"content_hash": content_hash, "object_key": "parse/abc/elements.json"}
+        return {
+            "content_hash": content_hash,
+            "object_key": "parse/abc/elements.json",
+            "parser": "unstructured:pdf:auto",
+        }
 
     async def fake_get_parse_artifact_obj(object_key):
         return cached_elements

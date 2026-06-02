@@ -16,6 +16,7 @@ async def run_job(job: dict) -> None:
     """Execute one full ingest job for a single file."""
     file_id: str = job["file_id"]
     domain: str = job["domain"]
+    project: str = job.get("project", "default")
     job_id: str = job["id"]
 
     try:
@@ -25,7 +26,7 @@ async def run_job(job: dict) -> None:
         # parse is implicitly invoked inside extract_for_file (cache-aware).
         await repo.mark_job(job_id, status="running", stage="extract")
         await repo.set_file_status(file_id, "extracting")
-        extraction = await extract_for_file(file_id=file_id, domain=domain)
+        extraction = await extract_for_file(file_id=file_id, domain=domain, project=project)
 
         await repo.mark_job(job_id, status="running", stage="resolve")
         await repo.set_file_status(file_id, "resolving")

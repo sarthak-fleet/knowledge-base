@@ -14,6 +14,7 @@ import os
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import structlog
 
@@ -48,6 +49,10 @@ def _filing_html(filing: object) -> str | None:
     return None
 
 
+def _get_filings(company: Any, form: str) -> Any:
+    return company.get_filings(form=form)
+
+
 @dataclass
 class EdgarSource(Source):
     tickers: list[str] = field(default_factory=list)
@@ -73,7 +78,7 @@ class EdgarSource(Source):
                 continue
             for form in self.forms:
                 try:
-                    filings = await asyncio.to_thread(lambda c=co, f=form: c.get_filings(form=f))
+                    filings = await asyncio.to_thread(_get_filings, co, form)
                 except Exception:
                     continue
                 taken = 0

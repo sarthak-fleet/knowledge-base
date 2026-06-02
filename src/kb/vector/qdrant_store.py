@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Any, cast
 
 import structlog
 from qdrant_client import AsyncQdrantClient
@@ -97,7 +97,14 @@ class QdrantStore(VectorStore):
                             )
                         },
                     )
-                    for fld in ("file_id", "entity_id", "parent_id", "entity_type", "content_hash"):
+                    for fld in (
+                        "project",
+                        "file_id",
+                        "entity_id",
+                        "parent_id",
+                        "entity_type",
+                        "content_hash",
+                    ):
                         await self._client.create_payload_index(
                             name,
                             field_name=fld,
@@ -161,6 +168,7 @@ class QdrantStore(VectorStore):
         await self.ensure_collection(domain)
 
         # Look up existing points by content_hash (cheap — indexed payload field).
+        project = str(chunks[0].metadata.get("project") or "default")
         hashes = [c.content_hash for c in chunks if c.content_hash]
         existing_by_hash: dict[str, dict[str, Any]] = {}
         if hashes:
@@ -168,6 +176,9 @@ class QdrantStore(VectorStore):
                 collection_name=_collection(domain),
                 scroll_filter=qm.Filter(
                     must=[
+                        qm.FieldCondition(
+                            key="project", match=qm.MatchValue(value=project)
+                        ),
                         qm.FieldCondition(
                             key="content_hash", match=qm.MatchAny(any=list(set(hashes)))
                         )
@@ -258,7 +269,7 @@ class QdrantStore(VectorStore):
                 must.append(qm.FieldCondition(key=k, match=qm.MatchAny(any=v)))
             else:
                 must.append(qm.FieldCondition(key=k, match=qm.MatchValue(value=v)))
-        return qm.Filter(must=must) if must else None
+        return qm.Filter(must=cast(Any, must)) if must else None
 
     async def hybrid_search(
         self,

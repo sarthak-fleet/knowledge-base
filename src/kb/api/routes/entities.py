@@ -15,8 +15,9 @@ async def list_entities(
     type: str | None = None,
     q: str | None = None,
     limit: int = 50,
+    project: str = "default",
 ) -> list[dict]:
-    return await repo.list_entities(domain=domain, type=type, q=q, limit=limit)
+    return await repo.list_entities(domain=domain, type=type, q=q, limit=limit, project=project)
 
 
 @router.get("/{entity_id}")

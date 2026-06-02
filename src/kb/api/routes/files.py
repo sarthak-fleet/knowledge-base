@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from kb.storage import repo
 from kb.storage.objects import put_raw_file
+from kb.vector.factory import get_store
 
 router = APIRouter(prefix="/files", tags=["files"])
 
@@ -61,3 +62,41 @@ async def get_file(file_id: str) -> FileOut:
     if not row:
         raise HTTPException(404, "file not found")
     return FileOut(**row)
+
+
+@router.post("/{file_id}/reprocess")
+async def reprocess_file(file_id: str, project: str = "default", force_parse: bool = False) -> dict:
+    row = await repo.get_file(file_id)
+    if not row or row.get("project") != project:
+        raise HTTPException(404, "file not found")
+    schema_id = await repo.get_active_schema_id(row["domain"], project=project)
+    if not schema_id:
+        raise HTTPException(400, f"no active schema for kind '{row['domain']}'")
+    await get_store().delete_by_file(row["domain"], file_id)
+    await repo.set_file_status(file_id, "pending")
+    job = await repo.enqueue_job(
+        project=project,
+        domain=row["domain"],
+        file_id=file_id,
+        schema_id=schema_id,
+        stage="parse" if force_parse else "extract",
+    )
+    return {
+        "project": project,
+        "domain": row["domain"],
+        "file_id": file_id,
+        "job_id": job["id"],
+        "stage": "parse" if force_parse else "extract",
+    }
+
+
+@router.delete("/{file_id}")
+async def delete_file(file_id: str, project: str = "default") -> dict:
+    row = await repo.get_file(file_id)
+    if not row or row.get("project") != project:
+        raise HTTPException(404, "file not found")
+    await get_store().delete_by_file(row["domain"], file_id)
+    deleted = await repo.delete_file(file_id, project=project)
+    if not deleted:
+        raise HTTPException(404, "file not found")
+    return {"deleted": True, "project": project, "domain": row["domain"], "file_id": file_id}

@@ -81,6 +81,7 @@ async def _embedding_tiebreak(
 async def _resolve_one(
     *,
     schema: DomainSchema,
+    project: str,
     domain: str,
     record: ExtractedRecord,
     cfg: dict[str, Any],
@@ -93,14 +94,18 @@ async def _resolve_one(
 
     canonical: dict[str, Any] | None = None
     if ik:
-        canonical = await repo.find_entity(domain=domain, type=et.name, identity_key=ik)
+        canonical = await repo.find_entity(
+            domain=domain, type=et.name, identity_key=ik, project=project
+        )
 
     confident_threshold = float(pipeline.get(cfg, "resolve.confident_threshold", 0.90))
     ambiguous_floor = float(pipeline.get(cfg, "resolve.ambiguous_floor", 0.70))
     emb_threshold = float(pipeline.get(cfg, "resolve.embedding_tiebreak_threshold", 0.86))
 
     if not canonical and display:
-        cands = await repo.list_entities(domain=domain, type=et.name, q=display[:32], limit=25)
+        cands = await repo.list_entities(
+            domain=domain, type=et.name, q=display[:32], limit=25, project=project
+        )
         best_lex = (0.0, None)
         for c in cands:
             cn = c.get("display_name") or ""
@@ -147,6 +152,7 @@ async def _resolve_one(
     )
 
     entity = await repo.upsert_entity(
+        project=project,
         domain=domain,
         type=et.name,
         identity_key=ik,
@@ -183,7 +189,7 @@ def _topological_entity_order(schema: DomainSchema) -> list[str]:
 
 
 async def resolve_extraction(result: ExtractionResult) -> dict[str, Any]:
-    schema_row = await repo.get_active_schema(result.domain)
+    schema_row = await repo.get_active_schema(result.domain, project=result.project)
     if not schema_row:
         raise RuntimeError(f"no active schema for domain {result.domain}")
     schema = schema_from_dict(schema_row["spec"])
@@ -202,6 +208,7 @@ async def resolve_extraction(result: ExtractionResult) -> dict[str, Any]:
         for rec in records_by_type.get(etype, []):
             entity = await _resolve_one(
                 schema=schema,
+                project=result.project,
                 domain=result.domain,
                 record=rec,
                 cfg=cfg,
@@ -211,6 +218,8 @@ async def resolve_extraction(result: ExtractionResult) -> dict[str, Any]:
                 continue
             prov = rec.provenance
             await repo.insert_mention(
+                project=result.project,
+                domain=result.domain,
                 entity_id=entity["id"],
                 file_id=result.file_id,
                 schema_id=result.schema_id,
@@ -218,6 +227,8 @@ async def resolve_extraction(result: ExtractionResult) -> dict[str, Any]:
                 confidence=float(prov.get("confidence", 0.0)),
             )
             await repo.insert_provenance(
+                project=result.project,
+                domain=result.domain,
                 file_id=result.file_id,
                 entity_id=entity["id"],
                 field=None,
@@ -234,6 +245,7 @@ async def resolve_extraction(result: ExtractionResult) -> dict[str, Any]:
         dst_id = parent_index.get(ref.to_type)
         if src_id and dst_id and src_id != dst_id:
             await repo.insert_relationship(
+                project=result.project,
                 domain=result.domain,
                 rel_type=ref.name,
                 src_id=src_id,

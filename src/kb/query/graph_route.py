@@ -102,7 +102,7 @@ def _format_entities_for_prompt(entities: list[dict[str, Any]], grouping_field: 
 
 
 async def maybe_graph_answer(
-    *, intent: QueryIntent, domain: str, question: str
+    *, intent: QueryIntent, domain: str, question: str, project: str = "default"
 ) -> GraphResult | None:
     """Try the graph route. Returns None if the route doesn't fire or finds nothing.
 
@@ -118,7 +118,7 @@ async def maybe_graph_answer(
     entity_type: str | None = intent.entity_type
     if not entity_type:
         try:
-            schema_row = await repo.get_active_schema(domain)
+            schema_row = await repo.get_active_schema(domain, project=project)
             if schema_row:
                 from kb.schema.loader import schema_from_dict
 
@@ -134,7 +134,9 @@ async def maybe_graph_answer(
         return None
 
     # Pull entities — bounded; if we have hundreds, sample.
-    rows = await repo.list_entities(domain=domain, type=entity_type, q=None, limit=200)
+    rows = await repo.list_entities(
+        domain=domain, type=entity_type, q=None, limit=200, project=project
+    )
     if not rows:
         return None
 
@@ -153,7 +155,7 @@ async def maybe_graph_answer(
 
     # Resolve mentions for provenance.
     entity_ids = [str(r.get("id")) for r in rows if r.get("id")]
-    mentions = await mentions_for(entity_ids) if entity_ids else []
+    mentions = await mentions_for(entity_ids, project=project) if entity_ids else []
 
     prompt = _format_entities_for_prompt(rows, grouping_field)
     try:

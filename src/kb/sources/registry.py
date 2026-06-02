@@ -31,3 +31,4 @@ def build_source(name: str, **kwargs: Any) -> Source:
 # Import side-effect: register built-in sources
 from kb.sources import edgar as _edgar  # noqa: E402,F401
 from kb.sources import upload as _upload  # noqa: E402,F401
+from kb.sources import url as _url  # noqa: E402,F401

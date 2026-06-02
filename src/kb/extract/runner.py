@@ -39,6 +39,7 @@ class ExtractedRecord:
 class ExtractionResult:
     file_id: str
     schema_id: str
+    project: str
     domain: str
     records: list[ExtractedRecord]
     elements: list[Element]
@@ -126,14 +127,18 @@ async def _extract_window(
     return out
 
 
-async def extract_for_file(*, file_id: str, domain: str) -> ExtractionResult:
+async def extract_for_file(
+    *, file_id: str, domain: str, project: str = "default"
+) -> ExtractionResult:
     file_row = await repo.get_file(file_id)
     if not file_row:
         raise RuntimeError(f"file {file_id} not found")
-    schema_row = await repo.get_active_schema(domain)
+    project = file_row.get("project") or project
+    schema_row = await repo.get_active_schema(domain, project=project)
     if not schema_row:
         raise RuntimeError(f"no active schema for domain {domain}")
     schema = schema_from_dict(schema_row["spec"])
+    cfg = pipeline.pipeline_config(domain)
 
     elements = await parse_file(
         file_id=file_id,
@@ -141,9 +146,9 @@ async def extract_for_file(*, file_id: str, domain: str) -> ExtractionResult:
         object_key=file_row["object_key"],
         filename=file_row["filename"],
         mime=file_row["mime"],
+        parse_config=cfg.get("parse") if isinstance(cfg.get("parse"), dict) else None,
     )
 
-    cfg = pipeline.pipeline_config(domain)
     window_pages = int(pipeline.get(cfg, "extract.window_pages", 8))
     overlap = int(pipeline.get(cfg, "extract.window_overlap_pages", 1))
     max_calls = int(pipeline.get(cfg, "extract.max_concurrent_calls", 4))
@@ -231,6 +236,7 @@ async def extract_for_file(*, file_id: str, domain: str) -> ExtractionResult:
     return ExtractionResult(
         file_id=file_id,
         schema_id=schema_row["id"],
+        project=project,
         domain=domain,
         records=records,
         elements=elements,

@@ -19,18 +19,24 @@ from kb.storage import repo
 logger = structlog.get_logger("kb.schema.migrate")
 
 
-async def reindex_domain_with_schema(*, domain: str, schema_id: str) -> int:
-    """Enqueue every ready file in `domain` for re-extraction under `schema_id`.
+async def reindex_domain_with_schema(
+    *, domain: str, schema_id: str, project: str = "default", file_ids: list[str] | None = None
+) -> int:
+    """Enqueue every ready file in `(project, domain)` for re-extraction under `schema_id`.
 
     Returns the number of jobs enqueued.
     """
-    files = await repo.list_files(domain=domain)
+    files = await repo.list_files(domain=domain, project=project)
+    wanted = set(file_ids or [])
     enq = 0
     for f in files:
+        if wanted and f["id"] not in wanted:
+            continue
         # Skip files that have never reached `ready` — they'll be re-attempted normally
         if f.get("status") not in ("ready", "failed"):
             continue
         await repo.enqueue_job(
+            project=project,
             domain=domain,
             file_id=f["id"],
             schema_id=schema_id,
@@ -38,6 +44,10 @@ async def reindex_domain_with_schema(*, domain: str, schema_id: str) -> int:
         )
         enq += 1
     logger.info(
-        "schema migrate: enqueued %d files for domain %s under schema %s", enq, domain, schema_id
+        "schema migrate: enqueued %d files for %s/%s under schema %s",
+        enq,
+        project,
+        domain,
+        schema_id,
     )
     return enq

@@ -20,7 +20,7 @@ fundamentally a retrieval metric, not a synthesis one).
 
 Usage:
     docker compose exec api python -m kb.eval.run_retrieval_only \
-        --domain sec --dataset domains/sec/eval/dataset.yaml \
+        --project default --domain sec --dataset domains/sec/eval/dataset.yaml \
         --output /data/eval_results/sec_post-abcd_retrieval_only.json
 """
 
@@ -154,6 +154,7 @@ async def _run(args: argparse.Namespace) -> int:
                 top_k_dense=top_k_dense,
                 top_k_sparse=top_k_sparse,
                 rerank_top_k=top_k_dense,
+                filters={"project": args.project},
             )
             if hits:
                 hits = await cross_rerank(question, hits, top_k=max(rerank_top_k, 8))
@@ -172,7 +173,12 @@ async def _run(args: argparse.Namespace) -> int:
         top_files = [fid_to_name.get(fid, "") for fid in file_ids if fid_to_name.get(fid)]
         # Dedup preserving order
         seen: set[str] = set()
-        unique_top_files = [f for f in top_files if not (f in seen or seen.add(f))]
+        unique_top_files = []
+        for f in top_files:
+            if f in seen:
+                continue
+            seen.add(f)
+            unique_top_files.append(f)
 
         p, rec, f1 = _citation_pr(unique_top_files, expected_files)
         scores.append(Score(qid, question, tags, p, rec, f1, unique_top_files, boosted))
@@ -194,6 +200,7 @@ async def _run(args: argparse.Namespace) -> int:
     print(table)
 
     summary = {
+        "project": args.project,
         "domain": args.domain,
         "n": len(scores),
         "mode": "retrieval_only",
@@ -217,6 +224,7 @@ async def _run(args: argparse.Namespace) -> int:
 
 def main() -> None:
     p = argparse.ArgumentParser()
+    p.add_argument("--project", default="default")
     p.add_argument("--domain", required=True)
     p.add_argument("--dataset", required=True)
     p.add_argument("--output", default="retrieval_only_eval.json")

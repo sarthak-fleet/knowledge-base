@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from kb.schema.loader import apply_schema_dict, get_active_schema, list_schemas
+from kb.schema.migrate import reindex_domain_with_schema
 
 router = APIRouter(prefix="/schemas", tags=["schemas"])
 
@@ -23,6 +24,11 @@ class SchemaSummary(BaseModel):
     name: str
     version: int
     entity_count: int
+
+
+class ReprocessIn(BaseModel):
+    project: str = "default"
+    file_ids: list[str] | None = None
 
 
 @router.get("", response_model=list[SchemaSummary])
@@ -44,3 +50,25 @@ async def apply_schema(body: SchemaIn) -> dict:
         domain=body.domain, name=body.name, spec=body.spec, project=body.project
     )
     return {"project": body.project, "domain": out.domain, "name": out.name, "version": out.version}
+
+
+@router.post("/{domain}/reprocess")
+async def reprocess_for_active_schema(domain: str, body: ReprocessIn | None = None) -> dict:
+    body = body or ReprocessIn()
+    sch = await get_active_schema(domain, project=body.project)
+    if not sch:
+        raise HTTPException(404, f"No active schema for domain '{domain}' in project '{body.project}'")
+    enqueued = await reindex_domain_with_schema(
+        project=body.project,
+        domain=domain,
+        schema_id=str(sch["id"]),
+        file_ids=body.file_ids,
+    )
+    return {
+        "project": body.project,
+        "domain": domain,
+        "schema_id": str(sch["id"]),
+        "schema_version": sch["version"],
+        "enqueued": enqueued,
+        "stage": "extract",
+    }

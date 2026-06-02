@@ -19,7 +19,7 @@ from typing import Any
 
 import structlog
 
-from kb.config import get_settings
+from kb.config import get_settings, pipeline
 from kb.storage import objects, repo
 
 logger = structlog.get_logger("kb.parse")
@@ -41,12 +41,42 @@ class Element:
         return asdict(self)
 
 
-def _strategy_for(filename: str, mime: str | None, default: str) -> str:
+def _parse_options(
+    filename: str,
+    mime: str | None,
+    default: str,
+    parse_config: dict[str, Any] | None,
+) -> tuple[str, str, list[str], str]:
+    cfg = parse_config or {}
     name = filename.lower()
+    ext = Path(name).suffix
+    raw_by_ext = cfg.get("strategy_by_extension")
+    by_ext = raw_by_ext if isinstance(raw_by_ext, dict) else {}
+    strategy = str(by_ext.get(ext) or cfg.get("default_strategy") or default)
+    pdf_strategy = str(cfg.get("pdf_strategy") or strategy)
+    engine = str(cfg.get("parser_engine") or cfg.get("engine") or "unstructured")
+    raw_languages = cfg.get("ocr_languages")
+    languages = raw_languages if isinstance(raw_languages, list) else ["eng"]
+    languages = [str(x) for x in languages if x]
+
     # Only .xlsx hits the per-row branch — _parse_xlsx_sync uses openpyxl, which
     # doesn't read .xls. Legacy .xls falls through to unstructured.partition.auto
     # (which converts via LibreOffice). We lose per-row chunking on .xls, but
     # routing it to openpyxl would just fail.
+    if name.endswith(".xlsx"):
+        parser_id = "unstructured:xlsx"
+        return "xlsx", "unstructured", languages, parser_id
+    if name.endswith(".pdf"):
+        parser_id = f"{engine}:pdf:{pdf_strategy}"
+        return pdf_strategy, engine, languages, parser_id
+    parser_id = f"{engine}:auto"
+    return "auto", engine, languages, parser_id
+
+
+def _strategy_for(filename: str, mime: str | None, default: str) -> str:
+    # Kept for tests and older callers; parse_file now uses _parse_options so
+    # domain config can drive parser engine + per-extension strategy.
+    name = filename.lower()
     if name.endswith(".xlsx"):
         return "xlsx"
     if name.endswith(".pdf"):
@@ -74,6 +104,38 @@ def _parse_pdf_sync(
         tmp.unlink(missing_ok=True)
 
     return [_element_from_unstructured(e, i) for i, e in enumerate(elements)]
+
+
+def _parse_docling_sync(blob: bytes, filename: str) -> list[Element]:
+    try:
+        from docling.document_converter import DocumentConverter  # type: ignore[import-not-found]
+    except ImportError as e:
+        raise RuntimeError(
+            "parser_engine=docling was configured, but docling is not installed"
+        ) from e
+
+    with tempfile.NamedTemporaryFile(suffix=Path(filename).suffix or ".pdf", delete=False) as tf:
+        tf.write(blob)
+        tmp = Path(tf.name)
+    try:
+        result = DocumentConverter().convert(str(tmp))
+        text = result.document.export_to_markdown()
+    finally:
+        tmp.unlink(missing_ok=True)
+
+    blocks = [b.strip() for b in re.split(r"\n{2,}", text) if b.strip()]
+    return [
+        Element(
+            id=f"docling-{i:06d}",
+            type="Title" if _is_title_like(block) else "NarrativeText",
+            text=block,
+            page=1,
+            bbox=None,
+            parent_id=None,
+            metadata={"parser": "docling"},
+        )
+        for i, block in enumerate(blocks)
+    ]
 
 
 # Title-promotion heuristics. Unstructured's HTML parser categorises every
@@ -174,7 +236,7 @@ def _parse_xlsx_sync(blob: bytes, filename: str) -> list[Element]:
     ("what was X for Y in Q3?"). We use openpyxl directly to emit per-row text so
     each row is independently searchable.
     """
-    import openpyxl
+    import openpyxl  # type: ignore[import-untyped]
 
     with tempfile.NamedTemporaryFile(suffix=Path(filename).suffix or ".xlsx", delete=False) as tf:
         tf.write(blob)
@@ -258,7 +320,13 @@ def _element_from_unstructured(e: Any, idx: int, default_page: int = 1) -> Eleme
 
 
 async def parse_file(
-    *, file_id: str, content_hash: str, object_key: str, filename: str, mime: str | None
+    *,
+    file_id: str,
+    content_hash: str,
+    object_key: str,
+    filename: str,
+    mime: str | None,
+    parse_config: dict[str, Any] | None = None,
 ) -> list[Element]:
     """Return cached elements if present; otherwise parse, cache, return.
 
@@ -266,37 +334,65 @@ async def parse_file(
     tampering, format change) is now treated as a cache miss rather than
     crashing the extract stage.
     """
+    settings = get_settings()
+    strategy, engine, languages, parser_id = _parse_options(
+        filename,
+        mime,
+        settings.parse_strategy_default,
+        parse_config,
+    )
     cached = await repo.get_parse_artifact(content_hash)
-    if cached:
+    reuse_across_strategies = bool(
+        pipeline.get(parse_config or {}, "reuse_cache_across_strategies", False)
+    )
+    if cached and (reuse_across_strategies or cached.get("parser") == parser_id):
         try:
             raw = await objects.get_parse_artifact(cached["object_key"])
-            logger.info("parse cache hit for %s", content_hash[:12])
+            logger.info("parse cache hit for %s parser=%s", content_hash[:12], cached.get("parser"))
             return [Element(**r) for r in raw]
         except objects.ParseArtifactCorruptError:
             logger.warning("parse cache for %s is corrupt; re-parsing", content_hash[:12])
             # Fall through to fresh parse below.
+    elif cached:
+        logger.info(
+            "parse cache miss for %s: parser changed %s -> %s",
+            content_hash[:12],
+            cached.get("parser"),
+            parser_id,
+        )
 
     blob = await objects.get_raw_file(object_key)
-    settings = get_settings()
-    strategy = _strategy_for(filename, mime, settings.parse_strategy_default)
-    logger.info("parsing file_id=%s strategy=%s bytes=%d", file_id, strategy, len(blob))
+    logger.info(
+        "parsing file_id=%s engine=%s strategy=%s bytes=%d",
+        file_id,
+        engine,
+        strategy,
+        len(blob),
+    )
 
     if strategy == "xlsx":
         elements = await asyncio.to_thread(_parse_xlsx_sync, blob, filename)
-        parser = "unstructured:xlsx"
+        parser = parser_id
     elif filename.lower().endswith(".pdf"):
-        elements = await asyncio.to_thread(_parse_pdf_sync, blob, filename, strategy, ["eng"])
-        parser = f"unstructured:pdf:{strategy}"
+        if engine == "docling":
+            elements = await asyncio.to_thread(_parse_docling_sync, blob, filename)
+        else:
+            elements = await asyncio.to_thread(_parse_pdf_sync, blob, filename, strategy, languages)
+        parser = parser_id
         # Optional supplementary vision-LLM pass to pick up tables that
         # Unstructured + tesseract miss. Opt-in via KB_PARSE_USE_VISION.
-        if settings.parse_use_vision:
+        if engine != "docling" and settings.parse_use_vision:
             from kb.parse.vision import augment_elements_with_vision_tables
 
             elements = await augment_elements_with_vision_tables(elements, blob, filename=filename)
             parser += "+vision"
     else:
-        elements = await asyncio.to_thread(_parse_auto_sync, blob, filename)
-        parser = "unstructured:auto"
+        if engine == "docling":
+            elements = await asyncio.to_thread(_parse_docling_sync, blob, filename)
+            parser = parser_id
+        else:
+            elements = await asyncio.to_thread(_parse_auto_sync, blob, filename)
+            parser = parser_id
 
     artifact_key = await objects.put_parse_artifact(content_hash, [e.to_dict() for e in elements])
     page_count = max((e.page for e in elements), default=0)

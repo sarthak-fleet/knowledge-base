@@ -121,7 +121,9 @@ async def infer_schema(
     return schema
 
 
-async def collect_samples_from_domain(domain: str, *, n: int = 12) -> list[str]:
+async def collect_samples_from_domain(
+    domain: str, *, n: int = 12, project: str = "default"
+) -> list[str]:
     """Pull representative chunk texts from the chunks table for a given domain."""
     from sqlalchemy import text as _sql
 
@@ -130,8 +132,12 @@ async def collect_samples_from_domain(domain: str, *, n: int = 12) -> list[str]:
     async with session() as s:
         rows = (
             await s.execute(
-                _sql("SELECT text FROM chunks WHERE domain = :d ORDER BY random() LIMIT :n"),
-                {"d": domain, "n": n},
+                _sql(
+                    "SELECT text FROM chunks "
+                    "WHERE project = :project AND domain = :d "
+                    "ORDER BY random() LIMIT :n"
+                ),
+                {"project": project, "d": domain, "n": n},
             )
         ).all()
     return [r[0] for r in rows if r[0]]

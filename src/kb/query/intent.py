@@ -204,7 +204,9 @@ def looks_aggregate(question: str) -> bool:
     return any(kw in q_low for kw in _AGGREGATE_KEYWORDS)
 
 
-async def intent_to_entity_ids(intent: QueryIntent, domain: str) -> list[str]:
+async def intent_to_entity_ids(
+    intent: QueryIntent, domain: str, project: str = "default"
+) -> list[str]:
     """Resolve intent (entity_type + facet filters) -> matching entity IDs."""
     from kb.query.structured import list_entities_matching
 
@@ -215,5 +217,6 @@ async def intent_to_entity_ids(intent: QueryIntent, domain: str) -> list[str]:
         entity_type=intent.entity_type,
         filters={k: v for k, v in intent.filters.items() if isinstance(v, (str, int))},
         limit=50,
+        project=project,
     )
     return [r["id"] for r in rows]

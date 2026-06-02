@@ -36,6 +36,7 @@ async def list_entities_matching(
     entity_type: str | None,
     filters: dict[str, Any],
     limit: int = 50,
+    project: str = "default",
 ) -> list[dict[str, Any]]:
     """Lightweight structured query over the entities table.
 
@@ -43,8 +44,8 @@ async def list_entities_matching(
       - Plain value:    `{"ticker": "AAPL"}`              → `fields->>'ticker' = 'AAPL'`
       - Compare tuple:  `{"value": (">", 60000)}`         → `(fields->>'value')::numeric > 60000`
     """
-    conds: list[str] = ["domain = :d"]
-    params: dict[str, Any] = {"d": domain, "_limit": limit}
+    conds: list[str] = ["project = :project", "domain = :d"]
+    params: dict[str, Any] = {"project": project, "d": domain, "_limit": limit}
     if entity_type:
         conds.append("type = :t")
         params["t"] = entity_type
@@ -71,7 +72,7 @@ async def list_entities_matching(
         return [dict(r) for r in rows]
 
 
-async def mentions_for(entity_ids: list[str]) -> list[dict[str, Any]]:
+async def mentions_for(entity_ids: list[str], project: str = "default") -> list[dict[str, Any]]:
     """Pull mentions + provenance for a set of canonical entities."""
     if not entity_ids:
         return []
@@ -86,12 +87,12 @@ async def mentions_for(entity_ids: list[str]) -> list[dict[str, Any]]:
                     FROM entity_mentions m
                     JOIN files f ON f.id = m.file_id
                     LEFT JOIN provenance_spans p ON p.entity_id = m.entity_id AND p.file_id = m.file_id
-                    WHERE m.entity_id = ANY(:ids)
+                    WHERE m.project = :project AND m.entity_id = ANY(:ids)
                     ORDER BY m.created_at DESC
                     LIMIT 200
                     """
                     ),
-                    {"ids": entity_ids},
+                    {"project": project, "ids": entity_ids},
                 )
             )
             .mappings()
@@ -125,6 +126,7 @@ async def maybe_structured_answer(
     intent: QueryIntent,
     domain: str,
     question: str,
+    project: str = "default",
 ) -> dict[str, Any] | None:
     """Try to answer aggregation-shape questions from the entities table.
 
@@ -155,10 +157,11 @@ async def maybe_structured_answer(
         entity_type=et,
         filters=filters,
         limit=50,
+        project=project,
     )
     if not entities:
         return None
-    mentions = await mentions_for([e["id"] for e in entities])
+    mentions = await mentions_for([e["id"] for e in entities], project=project)
     summary_lines = [
         f"Found {len(entities)} {et or 'entities'} matching filters {json.dumps(filters)}:"
     ]
