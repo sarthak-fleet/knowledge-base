@@ -1,10 +1,25 @@
-# Knowledge Base Service
+# Private Agent Search
 
 [![CI](https://github.com/sarthak-fleet/knowledge-base/actions/workflows/ci.yml/badge.svg)](https://github.com/sarthak-fleet/knowledge-base/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-77%20passing-brightgreen)](#)
+[![tests](https://img.shields.io/badge/tests-108%20passing-brightgreen)](#)
 [![ruff](https://img.shields.io/badge/ruff-clean-brightgreen)](#)
 
-A domain-agnostic Knowledge Base over unstructured documents. Define a schema, drop in PDFs / HTMLs / spreadsheets, ask questions, get cited answers.
+Exa-style search for private, specialized document collections, with schemas,
+citations, and provenance for agents.
+
+Bring your own project and documents, or start from the included SEC/legal
+templates. Drop in research papers, company private information, spreadsheets,
+manuals, contracts, notes, filings, and other niche sources; infer/confirm a
+schema; then expose them through a cited search API (`/search`) and a grounded
+answer API (`/query`).
+
+The wedge is intentionally narrower than "generic RAG":
+
+- Exa searches the open web; this searches your private/specialized corpus.
+- Agents get ranked cited evidence directly, not only a chat response.
+- Schemas make extraction and filtering explicit when the corpus has domain shape.
+- Schema inference can start from representative uploaded files before ingestion.
+- Every useful response points back to file, page, and excerpt.
 
 ## What's interesting about this one
 
@@ -44,6 +59,9 @@ Sorted by how much time you have:
 - [`docs/runbook.md`](docs/runbook.md) — operator runbook
 - [`docs/demo-walkthrough.md`](docs/demo-walkthrough.md) — guided demo
 - [`docs/onboard-new-domain.md`](docs/onboard-new-domain.md) — adding a third domain in ~30 min
+- [`docs/agent-search-direction.md`](docs/agent-search-direction.md) — product direction + gap map for private agent search
+- [`docs/bring-your-own-corpus.md`](docs/bring-your-own-corpus.md) — self-serve private corpus flow
+- [`docs/agent-tool-contract.md`](docs/agent-tool-contract.md) — how agents should call `/search` and `/query`
 
 **Appendix**
 - [`LIVE_VERIFICATION.md`](LIVE_VERIFICATION.md) — recorded live-run output of the eval pipeline.
@@ -54,7 +72,7 @@ Sorted by how much time you have:
 
 ```mermaid
 flowchart LR
-    User[User] -->|HTTP /query| API[FastAPI api]
+    User[User or agent] -->|HTTP /search or /query| API[FastAPI api]
     API --> Pipeline
 
     subgraph Pipeline[Query pipeline, 9+ stages]
@@ -66,6 +84,7 @@ flowchart LR
         S5 --> S6[rerank jina-v2]
         S6 --> S7[MMR diversity]
         S7 --> S8[CRAG + Self-RAG retry]
+        S8 --> SearchOut[ranked cited evidence]
         S8 --> S9[synthesize cited]
         S9 --> S10[AIS verify]
         S10 --> S11[span_cite]
@@ -104,30 +123,44 @@ The `api` container runs `python -m kb.cli db init` on startup to apply migratio
 Then open:
 
 - API + Swagger → http://localhost:8000/docs
-- Streamlit demo → http://localhost:8501
+- Streamlit agent-search UI → http://localhost:8501
 - Prometheus metrics → http://localhost:8000/metrics
 - MinIO console → http://localhost:9001
 - Qdrant dashboard → http://localhost:6333/dashboard
 
 ## Try it from the command line
 
-The four most interesting endpoints, copy-paste-ready:
+The six most interesting endpoints, copy-paste-ready:
 
 ```bash
 # 1. Health check (DB + vector store + object store probes)
 curl -s http://localhost:8000/readyz | jq
 
-# 2. Cited answer on the SEC corpus
+# 2. Infer a schema from representative files before ingestion
+curl -s -X POST http://localhost:8000/schemas/infer/files \
+  -F project=default \
+  -F domain=research-papers \
+  -F stage_files=true \
+  -F "files=@paper.pdf" \
+  | jq '{domain, sample_count, staged_files: (.staged_files | length)}'
+
+# 3. Agent-native cited search on the SEC corpus, no answer synthesis
+curl -s -X POST http://localhost:8000/search \
+  -H 'Content-Type: application/json' \
+  -d '{"domain":"sec","query":"NVIDIA U.S. export controls","top_k":3}' \
+  | jq '.results[] | {rank, filename, page_start, excerpt}'
+
+# 4. Cited answer on the SEC corpus
 curl -s -X POST http://localhost:8000/query \
   -H 'Content-Type: application/json' \
   -d '{"domain":"sec","question":"What does NVIDIA disclose about U.S. export controls?"}' \
   | jq '{answer, citations: [.citations[] | {filename, page_start, excerpt}], confidence}'
 
-# 3. The full trace for that answer (every stage, every latency, every token count)
+# 5. The full trace for that answer (every stage, every latency, every token count)
 curl -s "http://localhost:8000/query/traces?domain=sec&limit=1" | jq '.[0].id' \
   | xargs -I {} curl -s "http://localhost:8000/query/trace/{}" | jq '.filters._stages'
 
-# 4. The same question on the Legal domain — same code, different schema
+# 6. The same question on the Legal domain — same code, different schema
 curl -s -X POST http://localhost:8000/query \
   -H 'Content-Type: application/json' \
   -d '{"domain":"legal","question":"What permission does the MIT License grant?"}' \
@@ -136,6 +169,8 @@ curl -s -X POST http://localhost:8000/query \
 
 | Endpoint | What it does |
 | --- | --- |
+| `POST /search` | Agent-native cited search; returns ranked evidence with file, page, excerpt |
+| `POST /agent/search` | Alias for `/search` when wiring agent tools |
 | `POST /query` | Run the full 9-stage pipeline; returns cited answer + confidence + trace_id |
 | `POST /query/stream` | Same, but as Server-Sent Events with per-stage progress |
 | `GET /query/traces?domain=X` | List recent query traces with timings + token usage |
@@ -143,6 +178,7 @@ curl -s -X POST http://localhost:8000/query \
 | `POST /files` | Upload a doc; enqueues an ingest job |
 | `GET /ingest/jobs?domain=X` | Job queue state |
 | `POST /schemas/infer` | Propose a schema from sample chunks (Phase-2, opt-in) |
+| `POST /schemas/infer/files` | Upload representative files, parse samples, infer schema, optionally stage files |
 | `GET /metrics` | Prometheus-format counters + summaries |
 | `GET /readyz` | DB + vector + object store readiness probe |
 
@@ -198,7 +234,7 @@ The decision log in `LEARNING.md` was written from my own session notes; it's wh
 | `domains/legal/` | Demo schema + config + 12-question eval set for SPDX licenses |
 | `migrations/` | Postgres schema (extensions, tables, indexes), idempotent SQL |
 | `streamlit_app/` | Single-page demo UI |
-| `tests/` | 77 unit + integration tests, ruff + ruff-format + mypy in CI |
+| `tests/` | 108 unit + integration tests, ruff + ruff-format + mypy in CI |
 
 ## Performance
 

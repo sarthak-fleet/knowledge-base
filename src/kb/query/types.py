@@ -61,3 +61,37 @@ class QueryOut(BaseModel):
     confidence: Confidence
     session_id: str | None = None
     trace_id: str
+
+
+class AgentSearchIn(BaseModel):
+    query: str
+    domain: str
+    project: str = "default"
+    kinds: list[str] | None = None
+    top_k: int = Field(default=8, ge=1, le=50)
+    scope: dict | None = None
+    filters: dict | None = None
+    rerank: bool = True
+    mmr: bool | None = None
+
+
+class AgentSearchResult(BaseModel):
+    rank: int
+    score: float
+    kind: str
+    node_id: str
+    file_id: str
+    filename: str
+    page_start: int
+    page_end: int
+    excerpt: str
+    entity_id: str | None = None
+    metadata: dict = Field(default_factory=dict)
+
+
+class AgentSearchOut(BaseModel):
+    project: str
+    query: str
+    domain: str
+    kinds: list[str]
+    results: list[AgentSearchResult]

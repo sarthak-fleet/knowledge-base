@@ -45,9 +45,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     app = FastAPI(
-        title="Knowledge Base",
+        title="Private Agent Search",
         version="0.1.0",
-        description="Domain-agnostic KB service: schema-driven ingestion, hybrid retrieval, cited answers.",
+        description=(
+            "Exa-style cited search and grounded answers for private, "
+            "specialized document collections."
+        ),
         lifespan=_lifespan,
         # Modern FastAPI serialises Pydantic models to JSON via orjson under
         # the hood when a response_model is set — no custom response class

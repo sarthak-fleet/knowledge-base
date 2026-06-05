@@ -1,10 +1,10 @@
-"""Project-aware Knowledge Base demo UI.
+"""Project-aware private document search UI.
 
 Two screens:
 
   1. Landing — list projects, create a new one.
-  2. Workspace (after selecting a project) — chat with the corpus, add files,
-     pick which kinds (= source-types) to query against.
+  2. Workspace (after selecting a project) — search/chat with the corpus,
+     add sources, and expose cited evidence for agents.
 
 Backed by the standard REST API on the kb-api container.
 """
@@ -56,7 +56,11 @@ def _parse_mapping(raw: str) -> dict[str, Any]:
     return parsed
 
 
-st.set_page_config(page_title="Knowledge Base", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(
+    page_title="Agent Search for Private Docs",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 inject_css()
 
 # ── Session state ────────────────────────────────────────────────────────────
@@ -68,6 +72,8 @@ if "session_ids" not in st.session_state:
     st.session_state["session_ids"] = {}  # project → session_id
 if "inferred_schemas" not in st.session_state:
     st.session_state["inferred_schemas"] = {}  # project:kind → schema spec
+if "inferred_schema_meta" not in st.session_state:
+    st.session_state["inferred_schema_meta"] = {}  # project:kind → staged files / errors
 
 
 def _enter_project(name: str) -> None:
@@ -85,7 +91,7 @@ def _leave_project() -> None:
 # LANDING — list of projects
 # ═══════════════════════════════════════════════════════════════════════════
 if st.session_state["selected_project"] is None:
-    st.markdown("## Knowledge Base")
+    st.markdown("## Agent Search for Private Docs")
     st.caption(f"API → {API}")
     st.markdown("---")
 
@@ -168,11 +174,53 @@ else:
 
     # Top bar
     st.markdown(f"## {project}")
-    st.caption("Add files, define schemas, chat with the corpus across one or many kinds.")
-
-    tab_chat, tab_onboard, tab_files, tab_data, tab_schemas, tab_eval = st.tabs(
-        ["Chat", "Onboard Kind", "Files", "Add Data", "Schemas", "Eval"]
+    st.caption(
+        "Turn specialized document sets into cited search and answer APIs for agents."
     )
+
+    tab_search, tab_chat, tab_onboard, tab_files, tab_data, tab_schemas, tab_eval = st.tabs(
+        ["Agent Search", "Chat", "Onboard Kind", "Files", "Add Data", "Schemas", "Eval"]
+    )
+
+    # ── Agent Search tab ────────────────────────────────────────────────────
+    with tab_search:
+        st.markdown("### Cited search API")
+        if not available_kinds:
+            st.info("Add a schema and ingest data before searching.")
+        else:
+            search_cols = st.columns([3, 2, 1])
+            with search_cols[0]:
+                search_query = st.text_input("Search query", placeholder="Find evidence for...")
+            with search_cols[1]:
+                search_kinds = st.multiselect(
+                    "Kinds",
+                    options=available_kinds,
+                    default=available_kinds,
+                    key="agent_search_kinds",
+                )
+            with search_cols[2]:
+                search_top_k = st.number_input("Top K", min_value=1, max_value=25, value=8)
+            if st.button("Search", type="primary", use_container_width=True):
+                try:
+                    primary_kind = (search_kinds or available_kinds)[0]
+                    out = api_post(
+                        "/search",
+                        project=project,
+                        domain=primary_kind,
+                        kinds=search_kinds or available_kinds,
+                        query=search_query,
+                        top_k=int(search_top_k),
+                    )
+                    for r in out.get("results", []):
+                        with st.container(border=True):
+                            st.markdown(
+                                f"**#{r['rank']} · {r.get('filename', 'unknown')}** "
+                                f"· {r.get('kind', '?')} · p. {r.get('page_start', 0)}"
+                            )
+                            st.caption(f"score {float(r.get('score', 0)):.3f}")
+                            st.write(r.get("excerpt", ""))
+                except Exception as e:
+                    st.error(f"Search failed: {e}")
 
     # ── Chat tab ─────────────────────────────────────────────────────────────
     with tab_chat:
@@ -251,11 +299,24 @@ else:
     with tab_onboard:
         st.markdown("### Infer and confirm a new kind")
         with st.form("infer_kind_form"):
-            infer_kind = st.text_input("Kind key", placeholder="e.g. contracts, notes, filings")
+            infer_kind = st.text_input(
+                "Kind key",
+                placeholder="e.g. research-papers, company-info, contracts",
+            )
+            sample_files = st.file_uploader(
+                "Representative files",
+                accept_multiple_files=True,
+                help="Use a few PDFs, spreadsheets, notes, or internal docs to infer the schema before ingestion.",
+            )
             sample_text = st.text_area(
-                "Sample text",
+                "Or paste sample text",
                 height=220,
                 placeholder="Paste representative data. Separate multiple samples with a line containing ---.",
+            )
+            stage_sample_files = st.checkbox(
+                "Stage uploaded files for ingestion after schema confirmation",
+                value=True,
+                disabled=not sample_files,
             )
             infer_submit = st.form_submit_button("Infer schema", type="primary")
         if infer_submit:
@@ -263,19 +324,54 @@ else:
                 clean_kind = (infer_kind or "").strip().lower().replace(" ", "-")
                 if not clean_kind:
                     raise ValueError("kind key is required")
-                samples = [
-                    s.strip()
-                    for s in sample_text.split("\n---\n")
-                    if s.strip()
-                ] or [sample_text.strip()]
-                out = api_post(
-                    "/schemas/infer",
-                    project=project,
-                    domain=clean_kind,
-                    sample_texts=samples,
-                )
+                if not sample_files and not sample_text.strip():
+                    raise ValueError("upload representative files or paste sample text")
+                if sample_files:
+                    multipart = [
+                        (
+                            "files",
+                            (
+                                f.name,
+                                f.getvalue(),
+                                f.type or "application/octet-stream",
+                            ),
+                        )
+                        for f in sample_files
+                    ]
+                    r = HTTP.post(
+                        f"{API}/schemas/infer/files",
+                        data={
+                            "project": project,
+                            "domain": clean_kind,
+                            "stage_files": str(bool(stage_sample_files)).lower(),
+                        },
+                        files=multipart,
+                    )
+                    r.raise_for_status()
+                    out = r.json()
+                else:
+                    samples = [
+                        s.strip()
+                        for s in sample_text.split("\n---\n")
+                        if s.strip()
+                    ] or [sample_text.strip()]
+                    out = api_post(
+                        "/schemas/infer",
+                        project=project,
+                        domain=clean_kind,
+                        sample_texts=samples,
+                    )
                 st.session_state["inferred_schemas"][f"{project}:{clean_kind}"] = out["spec"]
+                st.session_state["inferred_schema_meta"][f"{project}:{clean_kind}"] = {
+                    "staged_files": out.get("staged_files", []),
+                    "errors": out.get("errors", []),
+                    "sample_count": out.get("sample_count", 0),
+                }
                 st.success(f"Inferred schema for {clean_kind}. Review it below before applying.")
+                if out.get("staged_files"):
+                    st.info(f"Staged {len(out['staged_files'])} file(s) for later ingestion.")
+                if out.get("errors"):
+                    st.warning(_json_safe(out["errors"]))
             except Exception as e:
                 st.error(f"Could not infer schema: {e}")
 
@@ -285,14 +381,27 @@ else:
         if inferred_keys:
             selected_inferred = st.selectbox("Pending inferred schema", options=inferred_keys)
             pending_spec = st.session_state["inferred_schemas"][selected_inferred]
+            pending_meta = st.session_state["inferred_schema_meta"].get(selected_inferred, {})
+            if pending_meta:
+                st.caption(
+                    f"{pending_meta.get('sample_count', 0)} sample(s)"
+                    f" · {len(pending_meta.get('staged_files', []))} staged file(s)"
+                )
             edited_schema = st.text_area(
                 "Confirmed schema JSON/YAML",
                 height=340,
                 value=yaml.safe_dump(pending_spec, sort_keys=False),
                 key=f"schema_editor_{selected_inferred}",
             )
+            staged_files = pending_meta.get("staged_files", [])
             ingest_after_apply = st.checkbox(
-                "Ingest the sample text after applying", value=bool(sample_text.strip())
+                "Ingest staged files after applying",
+                value=bool(staged_files),
+                disabled=not staged_files,
+            )
+            ingest_sample_text_after_apply = st.checkbox(
+                "Ingest pasted sample text after applying",
+                value=bool(sample_text.strip()) and not bool(staged_files),
             )
             if st.button("Apply confirmed schema", type="primary"):
                 try:
@@ -306,7 +415,7 @@ else:
                         name=name,
                         spec=spec,
                     )
-                    if ingest_after_apply and sample_text.strip():
+                    if ingest_sample_text_after_apply and sample_text.strip():
                         api_post(
                             "/ingest/text",
                             project=project,
@@ -314,10 +423,18 @@ else:
                             title=f"{domain}-sample",
                             text=sample_text,
                         )
+                    if ingest_after_apply:
+                        api_post(
+                            "/ingest/run",
+                            project=project,
+                            domain=domain,
+                            force=False,
+                        )
                     st.success(
                         f"Applied {out['project']}/{out['domain']} schema v{out['version']}."
                     )
                     st.session_state["inferred_schemas"].pop(selected_inferred, None)
+                    st.session_state["inferred_schema_meta"].pop(selected_inferred, None)
                     st.rerun()
                 except Exception as e:
                     st.error(f"Could not apply schema: {e}")
@@ -424,7 +541,10 @@ else:
                 st.rerun()
 
         st.markdown("---")
-        st.markdown("### Import from source")
+        st.markdown("### Optional imports from demo sources")
+        st.caption(
+            "Manual files and records are the first-class path. These adapters are convenience demos."
+        )
         try:
             source_names = api_get("/sources").get("sources", [])
         except Exception as e:
