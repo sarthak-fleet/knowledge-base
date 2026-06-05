@@ -21,6 +21,7 @@ class InferIn(BaseModel):
     domain: str
     sample_texts: list[str] | None = None  # if None, sample from chunks table
     sample_count: int = 12
+    save_draft: bool = True
 
 
 def _sample_texts_from_elements(
@@ -56,12 +57,23 @@ async def infer(body: InferIn) -> dict:
     if not samples:
         raise HTTPException(400, "no samples available — upload files first or pass sample_texts")
     schema = await infer_schema(domain_hint=body.domain, samples=samples)
+    draft = None
+    if body.save_draft:
+        draft = await repo.save_schema_draft(
+            project=body.project,
+            domain=schema.domain,
+            name=schema.name,
+            spec=schema.model_dump(),
+            source="sample_text",
+            sample_count=len(samples),
+        )
     return {
         "domain": schema.domain,
         "name": schema.name,
         "project": body.project,
         "spec": schema.model_dump(),
         "sample_count": len(samples),
+        "draft_id": draft["id"] if draft else None,
         "note": "Review + edit, then POST to /schemas to commit.",
     }
 
@@ -75,6 +87,7 @@ async def infer_from_files(
     project: str = Form("default"),
     sample_count: int = Form(12),
     stage_files: bool = Form(True),
+    save_draft: bool = Form(True),
     files: list[UploadFile] = File(...),
 ) -> dict:
     """Infer a schema from raw docs before a schema exists.
@@ -142,12 +155,25 @@ async def infer_from_files(
         )
 
     schema = await infer_schema(domain_hint=domain, samples=samples[:sample_count])
+    draft = None
+    if save_draft:
+        draft = await repo.save_schema_draft(
+            project=project,
+            domain=schema.domain,
+            name=schema.name,
+            spec=schema.model_dump(),
+            source="sample_files",
+            sample_count=len(samples[:sample_count]),
+            staged_file_ids=[str(f["id"]) for f in staged if f.get("id")],
+            errors=errors,
+        )
     return {
         "domain": schema.domain,
         "name": schema.name,
         "project": project,
         "spec": schema.model_dump(),
         "sample_count": len(samples[:sample_count]),
+        "draft_id": draft["id"] if draft else None,
         "staged_files": staged,
         "errors": errors,
         "note": "Review + edit, then POST to /schemas to commit. If files were staged, POST /ingest/run after commit.",

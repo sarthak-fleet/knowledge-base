@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from kb.query import search as search_mod
-from kb.query.types import AgentSearchIn
+from kb.query.types import AgentSearchEvalIn, AgentSearchEvalItem, AgentSearchIn
 from kb.vector.base import SearchHit
 
 
@@ -64,3 +64,45 @@ def test_agent_search_returns_cited_results(monkeypatch) -> None:
     assert out.results[0].filename.endswith(".txt")
     assert out.results[0].page_start == 2
     assert "Postgres" in out.results[0].excerpt
+    assert "store" in out.results[0].highlights
+
+
+def test_agent_search_eval_scores_expected_files(monkeypatch) -> None:
+    store = FakeStore()
+
+    async def fake_get_file(file_id: str):
+        return {"id": file_id, "filename": f"{file_id}.txt"}
+
+    async def fake_span(*, query: str, chunk_text: str, max_chars: int):
+        return chunk_text[:max_chars]
+
+    async def fake_rerank(query: str, hits, top_k: int):
+        return hits[:top_k]
+
+    monkeypatch.setattr(search_mod, "get_store", lambda: store)
+    monkeypatch.setattr(search_mod.repo, "get_file", fake_get_file)
+    monkeypatch.setattr(search_mod, "pick_best_span", fake_span)
+    monkeypatch.setattr(search_mod, "cross_rerank", fake_rerank)
+
+    out = asyncio.run(
+        search_mod.evaluate_search(
+            AgentSearchEvalIn(
+                project="p1",
+                domain="notes",
+                kinds=["notes"],
+                top_k=2,
+                questions=[
+                    AgentSearchEvalItem(
+                        id="q1",
+                        query="operational store",
+                        expected_files=["notes-file"],
+                    )
+                ],
+            )
+        )
+    )
+
+    assert out.question_count == 1
+    assert out.mean_recall == 1.0
+    assert out.mean_mrr == 1.0
+    assert out.rows[0].top_files == ["notes-file.txt"]

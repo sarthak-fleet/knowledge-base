@@ -232,6 +232,226 @@ async def get_active_schema_id(domain: str, project: str = "default") -> str | N
         return row[0] if row else None
 
 
+async def save_schema_draft(
+    *,
+    project: str,
+    domain: str,
+    name: str,
+    spec: dict[str, Any],
+    source: str,
+    sample_count: int,
+    staged_file_ids: list[str] | None = None,
+    errors: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    async with session() as s:
+        await s.execute(
+            text("INSERT INTO projects (name) VALUES (:p) ON CONFLICT (name) DO NOTHING"),
+            {"p": project},
+        )
+        await s.execute(
+            text(
+                """
+                INSERT INTO domains (name, project)
+                VALUES (:domain, :project)
+                ON CONFLICT (name) DO NOTHING
+                """
+            ),
+            {"domain": domain, "project": project},
+        )
+        row = (
+            (
+                await s.execute(
+                    text(
+                        """
+                        INSERT INTO schema_drafts (
+                          project, domain, name, spec, source, sample_count,
+                          staged_file_ids, errors, status
+                        )
+                        VALUES (
+                          :project, :domain, :name, CAST(:spec AS jsonb), :source,
+                          :sample_count, CAST(:staged_file_ids AS uuid[]),
+                          CAST(:errors AS jsonb), 'pending'
+                        )
+                        RETURNING id::text, project, domain, name, spec, source,
+                                  sample_count,
+                                  ARRAY(SELECT x::text FROM unnest(staged_file_ids) AS x) AS staged_file_ids,
+                                  errors, status, created_at, updated_at
+                        """
+                    ),
+                    {
+                        "project": project,
+                        "domain": domain,
+                        "name": name,
+                        "spec": json.dumps(spec),
+                        "source": source,
+                        "sample_count": sample_count,
+                        "staged_file_ids": staged_file_ids or [],
+                        "errors": json.dumps(errors or []),
+                    },
+                )
+            )
+            .mappings()
+            .one()
+        )
+        await s.commit()
+        return dict(row)
+
+
+async def list_schema_drafts(
+    *, project: str = "default", domain: str | None = None, status: str | None = "pending"
+) -> list[dict[str, Any]]:
+    sql = (
+        "SELECT id::text, project, domain, name, spec, source, sample_count, "
+        "ARRAY(SELECT x::text FROM unnest(staged_file_ids) AS x) AS staged_file_ids, "
+        "errors, status, created_at, updated_at "
+        "FROM schema_drafts WHERE project = :project"
+    )
+    params: dict[str, Any] = {"project": project}
+    if domain:
+        sql += " AND domain = :domain"
+        params["domain"] = domain
+    if status:
+        sql += " AND status = :status"
+        params["status"] = status
+    sql += " ORDER BY updated_at DESC"
+    async with session() as s:
+        rows = (await s.execute(text(sql), params)).mappings().all()
+        return [dict(r) for r in rows]
+
+
+async def get_schema_draft(draft_id: str, *, project: str = "default") -> dict[str, Any] | None:
+    async with session() as s:
+        row = (
+            (
+                await s.execute(
+                    text(
+                        """
+                        SELECT id::text, project, domain, name, spec, source,
+                               sample_count,
+                               ARRAY(SELECT x::text FROM unnest(staged_file_ids) AS x) AS staged_file_ids,
+                               errors, status, created_at, updated_at
+                          FROM schema_drafts
+                         WHERE id = :id AND project = :project
+                        """
+                    ),
+                    {"id": draft_id, "project": project},
+                )
+            )
+            .mappings()
+            .first()
+        )
+        return dict(row) if row else None
+
+
+async def update_schema_draft_status(
+    draft_id: str, *, project: str = "default", status: str
+) -> dict[str, Any] | None:
+    async with session() as s:
+        row = (
+            (
+                await s.execute(
+                    text(
+                        """
+                        UPDATE schema_drafts
+                           SET status = :status, updated_at = now()
+                         WHERE id = :id AND project = :project
+                        RETURNING id::text, project, domain, name, status
+                        """
+                    ),
+                    {"id": draft_id, "project": project, "status": status},
+                )
+            )
+            .mappings()
+            .first()
+        )
+        await s.commit()
+        return dict(row) if row else None
+
+
+async def corpus_status(project: str = "default") -> list[dict[str, Any]]:
+    async with session() as s:
+        rows = (
+            (
+                await s.execute(
+                    text(
+                        """
+                        WITH kinds AS (
+                          SELECT domain FROM schemas WHERE project = :project
+                          UNION
+                          SELECT domain FROM files WHERE project = :project
+                          UNION
+                          SELECT domain FROM ingest_jobs WHERE project = :project
+                          UNION
+                          SELECT domain FROM schema_drafts WHERE project = :project
+                          UNION
+                          SELECT name AS domain FROM domains WHERE project = :project
+                        ),
+                        agg AS (
+                          SELECT k.domain,
+                                 EXISTS (
+                                   SELECT 1 FROM schemas s
+                                    WHERE s.project = :project
+                                      AND s.domain = k.domain
+                                      AND s.is_active
+                                 ) AS has_schema,
+                                 (SELECT COUNT(*) FROM schema_drafts d
+                                   WHERE d.project = :project
+                                     AND d.domain = k.domain
+                                     AND d.status = 'pending') AS draft_count,
+                                 (SELECT COUNT(*) FROM files f
+                                   WHERE f.project = :project
+                                     AND f.domain = k.domain) AS file_count,
+                                 (SELECT COUNT(*) FROM files f
+                                   WHERE f.project = :project
+                                     AND f.domain = k.domain
+                                     AND f.status = 'ready') AS ready_files,
+                                 (SELECT COUNT(*) FROM files f
+                                   WHERE f.project = :project
+                                     AND f.domain = k.domain
+                                     AND f.status = 'failed') AS failed_files,
+                                 (SELECT COUNT(*) FROM files f
+                                   WHERE f.project = :project
+                                     AND f.domain = k.domain
+                                     AND f.status IN ('pending')) AS staged_files,
+                                 (SELECT COUNT(*) FROM files f
+                                   WHERE f.project = :project
+                                     AND f.domain = k.domain
+                                     AND f.status IN ('parsing', 'extracting', 'resolving', 'indexing')) AS active_files,
+                                 (SELECT COUNT(*) FROM ingest_jobs j
+                                   WHERE j.project = :project
+                                     AND j.domain = k.domain
+                                     AND j.status IN ('queued', 'running')) AS active_jobs,
+                                 (SELECT COUNT(*) FROM ingest_jobs j
+                                   WHERE j.project = :project
+                                     AND j.domain = k.domain
+                                     AND j.status = 'failed') AS failed_jobs
+                            FROM kinds k
+                        )
+                        SELECT domain, has_schema, draft_count, file_count,
+                               ready_files, failed_files, staged_files,
+                               active_files, active_jobs, failed_jobs,
+                               CASE
+                                 WHEN failed_files > 0 OR failed_jobs > 0 THEN 'failed'
+                                 WHEN active_files > 0 OR active_jobs > 0 THEN 'ingesting'
+                                 WHEN ready_files > 0 AND has_schema THEN 'ready'
+                                 WHEN staged_files > 0 AND has_schema THEN 'files_staged'
+                                 WHEN draft_count > 0 THEN 'schema_draft'
+                                 WHEN has_schema THEN 'schema_ready'
+                                 ELSE 'no_schema'
+                               END AS state
+                          FROM agg
+                         ORDER BY domain
+                        """
+                    ),
+                    {"project": project},
+                )
+            )
+            .mappings()
+            .all()
+        )
+        return [dict(r) for r in rows]
+
+
 # ─── Files ────────────────────────────────────────────────────────────────
 async def register_file(
     *,
@@ -335,7 +555,7 @@ async def delete_file(file_id: str, *, project: str = "default") -> bool:
             {"id": file_id, "project": project},
         )
         await s.commit()
-        return bool(result.rowcount)
+        return bool(getattr(result, "rowcount", 0))
 
 
 # ─── Parse artifacts ──────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 # Private Agent Search
 
 [![CI](https://github.com/sarthak-fleet/knowledge-base/actions/workflows/ci.yml/badge.svg)](https://github.com/sarthak-fleet/knowledge-base/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-108%20passing-brightgreen)](#)
+[![tests](https://img.shields.io/badge/tests-111%20passing-brightgreen)](#)
 [![ruff](https://img.shields.io/badge/ruff-clean-brightgreen)](#)
 
 Exa-style search for private, specialized document collections, with schemas,
@@ -62,6 +62,8 @@ Sorted by how much time you have:
 - [`docs/agent-search-direction.md`](docs/agent-search-direction.md) — product direction + gap map for private agent search
 - [`docs/bring-your-own-corpus.md`](docs/bring-your-own-corpus.md) — self-serve private corpus flow
 - [`docs/agent-tool-contract.md`](docs/agent-tool-contract.md) — how agents should call `/search` and `/query`
+- [`docs/agent-integration-examples.md`](docs/agent-integration-examples.md) — tool contract + wrapper examples
+- [`docs/hosting-personal.md`](docs/hosting-personal.md) — personal hosting checklist and smoke tests
 
 **Appendix**
 - [`LIVE_VERIFICATION.md`](LIVE_VERIFICATION.md) — recorded live-run output of the eval pipeline.
@@ -171,6 +173,7 @@ curl -s -X POST http://localhost:8000/query \
 | --- | --- |
 | `POST /search` | Agent-native cited search; returns ranked evidence with file, page, excerpt |
 | `POST /agent/search` | Alias for `/search` when wiring agent tools |
+| `POST /search/eval` | Search-quality eval: precision, recall, MRR, p95 latency |
 | `POST /query` | Run the full 9-stage pipeline; returns cited answer + confidence + trace_id |
 | `POST /query/stream` | Same, but as Server-Sent Events with per-stage progress |
 | `GET /query/traces?domain=X` | List recent query traces with timings + token usage |
@@ -179,6 +182,9 @@ curl -s -X POST http://localhost:8000/query \
 | `GET /ingest/jobs?domain=X` | Job queue state |
 | `POST /schemas/infer` | Propose a schema from sample chunks (Phase-2, opt-in) |
 | `POST /schemas/infer/files` | Upload representative files, parse samples, infer schema, optionally stage files |
+| `GET /schemas/drafts?project=X` | List durable inferred schema drafts awaiting confirmation |
+| `POST /schemas/drafts/{id}/apply` | Apply a confirmed draft and optionally ingest staged files |
+| `GET /projects/{project}/status` | Per-kind corpus state: draft, staged, ingesting, ready, failed |
 | `GET /metrics` | Prometheus-format counters + summaries |
 | `GET /readyz` | DB + vector + object store readiness probe |
 
@@ -234,7 +240,7 @@ The decision log in `LEARNING.md` was written from my own session notes; it's wh
 | `domains/legal/` | Demo schema + config + 12-question eval set for SPDX licenses |
 | `migrations/` | Postgres schema (extensions, tables, indexes), idempotent SQL |
 | `streamlit_app/` | Single-page demo UI |
-| `tests/` | 108 unit + integration tests, ruff + ruff-format + mypy in CI |
+| `tests/` | 111 unit + integration tests, ruff + ruff-format + mypy in CI |
 
 ## Performance
 

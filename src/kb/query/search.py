@@ -2,15 +2,26 @@
 
 from __future__ import annotations
 
+import re
+import time
 from typing import Any
 
 from kb.config import pipeline
 from kb.query.mmr import mmr_rerank
 from kb.query.rerank import rerank as cross_rerank
 from kb.query.spans import pick_best_span
-from kb.query.types import AgentSearchIn, AgentSearchOut, AgentSearchResult
+from kb.query.types import (
+    AgentSearchEvalIn,
+    AgentSearchEvalOut,
+    AgentSearchEvalRow,
+    AgentSearchIn,
+    AgentSearchOut,
+    AgentSearchResult,
+)
 from kb.storage import repo
 from kb.vector.factory import get_store
+
+_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{2,}")
 
 
 def _explicit_filters(scope: dict[str, Any] | None, filters: dict[str, Any] | None) -> dict[str, Any]:
@@ -22,6 +33,33 @@ def _explicit_filters(scope: dict[str, Any] | None, filters: dict[str, Any] | No
     if filters:
         out.update(filters)
     return out
+
+
+def _highlights(query: str, excerpt: str, *, limit: int = 8) -> list[str]:
+    terms = []
+    seen = set()
+    excerpt_lower = excerpt.lower()
+    for term in _TOKEN_RE.findall(query.lower()):
+        if term in seen or term not in excerpt_lower:
+            continue
+        seen.add(term)
+        terms.append(term)
+        if len(terms) >= limit:
+            break
+    return terms
+
+
+def _neighbor_context(chunk_text: str, excerpt: str, *, chars: int = 220) -> tuple[str, str]:
+    if not chunk_text or not excerpt:
+        return "", ""
+    pos = chunk_text.find(excerpt)
+    if pos < 0:
+        pos = chunk_text.lower().find(excerpt.lower())
+    if pos < 0:
+        return "", ""
+    before = " ".join(chunk_text[max(0, pos - chars) : pos].split())
+    after = " ".join(chunk_text[pos + len(excerpt) : pos + len(excerpt) + chars].split())
+    return before, after
 
 
 async def _resolve_filenames(file_ids: list[str]) -> dict[str, str]:
@@ -106,6 +144,12 @@ async def search_corpus(body: AgentSearchIn) -> AgentSearchOut:
         file_id = str(md.get("file_id") or "")
         page_start = int(md.get("page_start") or 0)
         page_end = int(md.get("page_end") or page_start)
+        excerpt = await pick_best_span(
+            query=body.query,
+            chunk_text=h.text,
+            max_chars=excerpt_chars,
+        )
+        context_before, context_after = _neighbor_context(h.text, excerpt)
         results.append(
             AgentSearchResult(
                 rank=rank,
@@ -116,11 +160,10 @@ async def search_corpus(body: AgentSearchIn) -> AgentSearchOut:
                 filename=filenames.get(file_id, "unknown"),
                 page_start=page_start,
                 page_end=page_end,
-                excerpt=await pick_best_span(
-                    query=body.query,
-                    chunk_text=h.text,
-                    max_chars=excerpt_chars,
-                ),
+                excerpt=excerpt,
+                context_before=context_before,
+                context_after=context_after,
+                highlights=_highlights(body.query, excerpt),
                 entity_id=md.get("entity_id"),
                 metadata={
                     k: v
@@ -136,4 +179,70 @@ async def search_corpus(body: AgentSearchIn) -> AgentSearchOut:
         domain=body.domain,
         kinds=target_kinds,
         results=results,
+    )
+
+
+def _file_match(filename: str, expected_files: list[str]) -> bool:
+    hay = (filename or "").lower()
+    return any((needle or "").lower() in hay for needle in expected_files)
+
+
+async def evaluate_search(body: AgentSearchEvalIn) -> AgentSearchEvalOut:
+    rows: list[AgentSearchEvalRow] = []
+    for item in body.questions:
+        started = time.perf_counter()
+        out = await search_corpus(
+            AgentSearchIn(
+                project=body.project,
+                domain=body.domain,
+                kinds=body.kinds,
+                query=item.query,
+                top_k=body.top_k,
+                filters=item.filters,
+                scope=item.scope,
+                rerank=True,
+            )
+        )
+        latency_ms = (time.perf_counter() - started) * 1000
+        top_files = [r.filename for r in out.results]
+        expected = [x for x in item.expected_files if x]
+        if expected:
+            matched_results = sum(1 for f in top_files if _file_match(f, expected))
+            matched_expected = sum(1 for e in expected if _file_match(" ".join(top_files), [e]))
+            precision = matched_results / max(len(top_files), 1)
+            recall = matched_expected / max(len(expected), 1)
+            reciprocal = 0.0
+            for rank, filename in enumerate(top_files, start=1):
+                if _file_match(filename, expected):
+                    reciprocal = 1.0 / rank
+                    break
+        else:
+            precision = 1.0 if not top_files else 0.0
+            recall = 1.0
+            reciprocal = 1.0
+        rows.append(
+            AgentSearchEvalRow(
+                id=item.id,
+                query=item.query,
+                expected_files=expected,
+                top_files=top_files,
+                precision=precision,
+                recall=recall,
+                mrr=reciprocal,
+                latency_ms=latency_ms,
+            )
+        )
+
+    latencies = sorted((r.latency_ms for r in rows), reverse=False)
+    p95_idx = max(0, min(len(latencies) - 1, int(len(latencies) * 0.95) - 1)) if latencies else 0
+    return AgentSearchEvalOut(
+        project=body.project,
+        domain=body.domain,
+        kinds=body.kinds or [body.domain],
+        question_count=len(rows),
+        mean_precision=sum(r.precision for r in rows) / max(len(rows), 1),
+        mean_recall=sum(r.recall for r in rows) / max(len(rows), 1),
+        mean_mrr=sum(r.mrr for r in rows) / max(len(rows), 1),
+        p95_latency_ms=latencies[p95_idx] if latencies else 0.0,
+        rows=rows,
     )

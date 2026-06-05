@@ -85,6 +85,9 @@ class AgentSearchResult(BaseModel):
     page_start: int
     page_end: int
     excerpt: str
+    context_before: str = ""
+    context_after: str = ""
+    highlights: list[str] = Field(default_factory=list)
     entity_id: str | None = None
     metadata: dict = Field(default_factory=dict)
 
@@ -95,3 +98,43 @@ class AgentSearchOut(BaseModel):
     domain: str
     kinds: list[str]
     results: list[AgentSearchResult]
+
+
+class AgentSearchEvalItem(BaseModel):
+    id: str
+    query: str
+    expected_files: list[str] = Field(default_factory=list)
+    key_facts: list[str] = Field(default_factory=list)
+    filters: dict | None = None
+    scope: dict | None = None
+
+
+class AgentSearchEvalIn(BaseModel):
+    project: str = "default"
+    domain: str
+    kinds: list[str] | None = None
+    top_k: int = Field(default=8, ge=1, le=50)
+    questions: list[AgentSearchEvalItem]
+
+
+class AgentSearchEvalRow(BaseModel):
+    id: str
+    query: str
+    expected_files: list[str]
+    top_files: list[str]
+    precision: float
+    recall: float
+    mrr: float
+    latency_ms: float
+
+
+class AgentSearchEvalOut(BaseModel):
+    project: str
+    domain: str
+    kinds: list[str]
+    question_count: int
+    mean_precision: float
+    mean_recall: float
+    mean_mrr: float
+    p95_latency_ms: float
+    rows: list[AgentSearchEvalRow]

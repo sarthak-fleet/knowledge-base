@@ -70,10 +70,6 @@ if "chat_history" not in st.session_state:
     st.session_state["chat_history"] = {}  # project → list[{role, content, citations?, conf?}]
 if "session_ids" not in st.session_state:
     st.session_state["session_ids"] = {}  # project → session_id
-if "inferred_schemas" not in st.session_state:
-    st.session_state["inferred_schemas"] = {}  # project:kind → schema spec
-if "inferred_schema_meta" not in st.session_state:
-    st.session_state["inferred_schema_meta"] = {}  # project:kind → staged files / errors
 
 
 def _enter_project(name: str) -> None:
@@ -159,6 +155,8 @@ else:
     # Pull schemas + files for this project
     schemas: list[dict] = []
     files: list[dict] = []
+    corpus_status: list[dict] = []
+    schema_drafts: list[dict] = []
     try:
         schemas = api_get("/schemas", project=project)
     except Exception as e:
@@ -167,16 +165,49 @@ else:
         files = api_get("/files", project=project)
     except Exception as e:
         st.sidebar.warning(f"files: {e}")
+    try:
+        corpus_status = api_get(f"/projects/{project}/status")
+    except Exception as e:
+        st.sidebar.warning(f"status: {e}")
+    try:
+        schema_drafts = api_get("/schemas/drafts", project=project, status="pending")
+    except Exception as e:
+        st.sidebar.warning(f"drafts: {e}")
 
     available_kinds = sorted({s["domain"] for s in schemas})
 
     st.sidebar.caption(f"{len(available_kinds)} kind(s)  ·  {len(files)} file(s)  ·  API → {API}")
+    if corpus_status:
+        st.sidebar.markdown("#### Corpus status")
+        for row in corpus_status[:12]:
+            st.sidebar.caption(
+                f"{row['domain']}: {row['state']} · "
+                f"{row.get('ready_files', 0)}/{row.get('file_count', 0)} ready"
+            )
 
     # Top bar
     st.markdown(f"## {project}")
     st.caption(
         "Turn specialized document sets into cited search and answer APIs for agents."
     )
+    if corpus_status:
+        st.dataframe(
+            [
+                {
+                    "kind": r["domain"],
+                    "state": r["state"],
+                    "schema": "yes" if r.get("has_schema") else "no",
+                    "drafts": r.get("draft_count", 0),
+                    "files": r.get("file_count", 0),
+                    "ready": r.get("ready_files", 0),
+                    "active": r.get("active_jobs", 0) + r.get("active_files", 0),
+                    "failed": r.get("failed_jobs", 0) + r.get("failed_files", 0),
+                }
+                for r in corpus_status
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
 
     tab_search, tab_chat, tab_onboard, tab_files, tab_data, tab_schemas, tab_eval = st.tabs(
         ["Agent Search", "Chat", "Onboard Kind", "Files", "Add Data", "Schemas", "Eval"]
@@ -218,7 +249,13 @@ else:
                                 f"· {r.get('kind', '?')} · p. {r.get('page_start', 0)}"
                             )
                             st.caption(f"score {float(r.get('score', 0)):.3f}")
+                            if r.get("highlights"):
+                                st.caption("matched: " + ", ".join(r["highlights"]))
+                            if r.get("context_before"):
+                                st.caption("..." + r["context_before"])
                             st.write(r.get("excerpt", ""))
+                            if r.get("context_after"):
+                                st.caption(r["context_after"] + "...")
                 except Exception as e:
                     st.error(f"Search failed: {e}")
 
@@ -361,83 +398,69 @@ else:
                         domain=clean_kind,
                         sample_texts=samples,
                     )
-                st.session_state["inferred_schemas"][f"{project}:{clean_kind}"] = out["spec"]
-                st.session_state["inferred_schema_meta"][f"{project}:{clean_kind}"] = {
-                    "staged_files": out.get("staged_files", []),
-                    "errors": out.get("errors", []),
-                    "sample_count": out.get("sample_count", 0),
-                }
-                st.success(f"Inferred schema for {clean_kind}. Review it below before applying.")
+                st.success(
+                    f"Inferred schema for {clean_kind}. Draft {out.get('draft_id') or ''} is ready below."
+                )
                 if out.get("staged_files"):
                     st.info(f"Staged {len(out['staged_files'])} file(s) for later ingestion.")
                 if out.get("errors"):
                     st.warning(_json_safe(out["errors"]))
+                st.rerun()
             except Exception as e:
                 st.error(f"Could not infer schema: {e}")
 
-        inferred_keys = sorted(
-            k for k in st.session_state["inferred_schemas"] if k.startswith(f"{project}:")
-        )
-        if inferred_keys:
-            selected_inferred = st.selectbox("Pending inferred schema", options=inferred_keys)
-            pending_spec = st.session_state["inferred_schemas"][selected_inferred]
-            pending_meta = st.session_state["inferred_schema_meta"].get(selected_inferred, {})
-            if pending_meta:
-                st.caption(
-                    f"{pending_meta.get('sample_count', 0)} sample(s)"
-                    f" · {len(pending_meta.get('staged_files', []))} staged file(s)"
-                )
+        if schema_drafts:
+            draft_labels = {
+                f"{d['domain']} · {d['source']} · {d['id'][:8]}": d for d in schema_drafts
+            }
+            selected_label = st.selectbox("Pending schema draft", options=list(draft_labels))
+            pending_draft = draft_labels[selected_label]
+            pending_spec = pending_draft["spec"]
+            staged_file_ids = pending_draft.get("staged_file_ids", [])
+            st.caption(
+                f"{pending_draft.get('sample_count', 0)} sample(s)"
+                f" · {len(staged_file_ids)} staged file(s)"
+            )
+            if pending_draft.get("errors"):
+                with st.expander("Parse errors"):
+                    st.json(pending_draft["errors"])
             edited_schema = st.text_area(
                 "Confirmed schema JSON/YAML",
                 height=340,
                 value=yaml.safe_dump(pending_spec, sort_keys=False),
-                key=f"schema_editor_{selected_inferred}",
+                key=f"schema_editor_{pending_draft['id']}",
             )
-            staged_files = pending_meta.get("staged_files", [])
             ingest_after_apply = st.checkbox(
                 "Ingest staged files after applying",
-                value=bool(staged_files),
-                disabled=not staged_files,
+                value=bool(staged_file_ids),
+                disabled=not staged_file_ids,
             )
-            ingest_sample_text_after_apply = st.checkbox(
-                "Ingest pasted sample text after applying",
-                value=bool(sample_text.strip()) and not bool(staged_files),
-            )
-            if st.button("Apply confirmed schema", type="primary"):
+            cols = st.columns([2, 1])
+            if cols[0].button("Apply confirmed schema", type="primary", use_container_width=True):
                 try:
                     spec = _parse_mapping(edited_schema)
-                    domain = str(spec.get("domain") or selected_inferred.split(":", 1)[1]).strip()
-                    name = str(spec.get("name") or "inferred").strip()
                     out = api_post(
-                        "/schemas",
+                        f"/schemas/drafts/{pending_draft['id']}/apply",
                         project=project,
-                        domain=domain,
-                        name=name,
                         spec=spec,
+                        ingest_staged_files=ingest_after_apply,
                     )
-                    if ingest_sample_text_after_apply and sample_text.strip():
-                        api_post(
-                            "/ingest/text",
-                            project=project,
-                            kind=domain,
-                            title=f"{domain}-sample",
-                            text=sample_text,
-                        )
-                    if ingest_after_apply:
-                        api_post(
-                            "/ingest/run",
-                            project=project,
-                            domain=domain,
-                            force=False,
-                        )
                     st.success(
-                        f"Applied {out['project']}/{out['domain']} schema v{out['version']}."
+                        f"Applied {out['project']}/{out['domain']} schema v{out['version']}; "
+                        f"enqueued {out.get('enqueued', 0)} file(s)."
                     )
-                    st.session_state["inferred_schemas"].pop(selected_inferred, None)
-                    st.session_state["inferred_schema_meta"].pop(selected_inferred, None)
                     st.rerun()
                 except Exception as e:
                     st.error(f"Could not apply schema: {e}")
+            if cols[1].button("Discard draft", use_container_width=True):
+                try:
+                    api_post(f"/schemas/drafts/{pending_draft['id']}/discard", project=project)
+                    st.success("Discarded draft.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Could not discard draft: {e}")
+        else:
+            st.info("No pending schema drafts.")
 
     # ── Files tab ────────────────────────────────────────────────────────────
     with tab_files:
@@ -772,37 +795,68 @@ else:
                 height=260,
                 value="questions:\n  - id: q1\n    question: \"What is the most important fact in this project?\"\n    expected_files: []\n    key_facts: []\n",
             )
+            eval_top_k = st.number_input("Eval Top K", min_value=1, max_value=25, value=8)
+            run_answer_eval = st.checkbox("Also run answer synthesis eval", value=False)
             if st.button("Run eval", type="primary"):
                 try:
                     ds = _parse_mapping(eval_yaml)
                     qs = ds.get("questions") or []
                     if not isinstance(qs, list) or not qs:
                         raise ValueError("questions must be a non-empty list")
-                    rows = []
-                    for item in qs:
-                        result = api_post(
-                            "/query",
-                            project=project,
-                            domain=eval_kind,
-                            kinds=eval_kinds or [eval_kind],
-                            question=str(item.get("question", "")),
-                        )
-                        expected = [str(x).lower() for x in item.get("expected_files", [])]
-                        cited = [str(c.get("filename", "")).lower() for c in result.get("citations", [])]
-                        file_hit = (
-                            None
-                            if not expected
-                            else any(any(e in c or c in e for c in cited) for e in expected)
-                        )
-                        rows.append(
-                            {
-                                "id": item.get("id", ""),
-                                "citations": len(result.get("citations", [])),
-                                "expected_file_hit": file_hit,
-                                "confidence": (result.get("confidence") or {}).get("value", 0),
-                                "answer": result.get("answer", "")[:220],
-                            }
-                        )
-                    st.dataframe(rows, use_container_width=True)
+                    search_questions = [
+                        {
+                            "id": str(item.get("id", f"q{i + 1}")),
+                            "query": str(item.get("query") or item.get("question") or ""),
+                            "expected_files": item.get("expected_files", []),
+                            "key_facts": item.get("key_facts", []),
+                        }
+                        for i, item in enumerate(qs)
+                    ]
+                    search_eval = api_post(
+                        "/search/eval",
+                        project=project,
+                        domain=eval_kind,
+                        kinds=eval_kinds or [eval_kind],
+                        top_k=int(eval_top_k),
+                        questions=search_questions,
+                    )
+                    metric_cols = st.columns(4)
+                    metric_cols[0].metric("Recall", f"{search_eval['mean_recall']:.2f}")
+                    metric_cols[1].metric("MRR", f"{search_eval['mean_mrr']:.2f}")
+                    metric_cols[2].metric("Precision", f"{search_eval['mean_precision']:.2f}")
+                    metric_cols[3].metric("p95 ms", f"{search_eval['p95_latency_ms']:.0f}")
+                    st.dataframe(search_eval["rows"], use_container_width=True)
+
+                    if run_answer_eval:
+                        rows = []
+                        for item in qs:
+                            result = api_post(
+                                "/query",
+                                project=project,
+                                domain=eval_kind,
+                                kinds=eval_kinds or [eval_kind],
+                                question=str(item.get("question") or item.get("query") or ""),
+                            )
+                            expected = [str(x).lower() for x in item.get("expected_files", [])]
+                            cited = [
+                                str(c.get("filename", "")).lower()
+                                for c in result.get("citations", [])
+                            ]
+                            file_hit = (
+                                None
+                                if not expected
+                                else any(any(e in c or c in e for c in cited) for e in expected)
+                            )
+                            rows.append(
+                                {
+                                    "id": item.get("id", ""),
+                                    "citations": len(result.get("citations", [])),
+                                    "expected_file_hit": file_hit,
+                                    "confidence": (result.get("confidence") or {}).get("value", 0),
+                                    "answer": result.get("answer", "")[:220],
+                                }
+                            )
+                        st.markdown("#### Answer synthesis")
+                        st.dataframe(rows, use_container_width=True)
                 except Exception as e:
                     st.error(f"Eval failed: {e}")

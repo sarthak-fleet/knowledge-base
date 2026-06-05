@@ -61,6 +61,9 @@ payload filters applied during retrieval.
       "page_start": 4,
       "page_end": 5,
       "excerpt": "The reranker improved precision on hard negatives...",
+      "context_before": "The baseline retriever returned broad topical matches.",
+      "context_after": "The ablation showed lower recall when reranking was disabled.",
+      "highlights": ["reranker", "precision"],
       "entity_id": "optional-entity-id",
       "metadata": {}
     }
@@ -70,7 +73,9 @@ payload filters applied during retrieval.
 
 The agent should treat each result as evidence, not as a final answer. If it
 uses a fact from a result, it should carry the `filename`, page range, and
-excerpt forward into its response.
+excerpt forward into its response. `context_before`, `context_after`, and
+`highlights` are supporting fields for deciding whether the excerpt is relevant;
+the excerpt remains the citeable unit.
 
 ## Empty Results
 

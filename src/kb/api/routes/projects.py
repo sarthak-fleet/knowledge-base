@@ -27,9 +27,28 @@ class ProjectSummary(BaseModel):
     file_count: int = 0
 
 
+class CorpusStatus(BaseModel):
+    domain: str
+    state: str
+    has_schema: bool = False
+    draft_count: int = 0
+    file_count: int = 0
+    ready_files: int = 0
+    failed_files: int = 0
+    staged_files: int = 0
+    active_files: int = 0
+    active_jobs: int = 0
+    failed_jobs: int = 0
+
+
 @router.get("", response_model=list[ProjectSummary])
 async def list_all() -> list[ProjectSummary]:
     return [ProjectSummary(**r) for r in await repo.list_projects()]
+
+
+@router.get("/{project}/status", response_model=list[CorpusStatus])
+async def status(project: str) -> list[CorpusStatus]:
+    return [CorpusStatus(**r) for r in await repo.corpus_status(project=project)]
 
 
 @router.post("", status_code=201, response_model=ProjectSummary)

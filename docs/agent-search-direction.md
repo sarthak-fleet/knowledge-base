@@ -7,10 +7,11 @@ This project is now best framed as:
 > Exa-style search for private, specialized document collections, with schemas,
 > citations, and provenance for agents.
 
-The product is not a generic chatbot over files and it is not a connector
-platform. It is a private search and evidence layer that agents can call when
-they need reliable answers from niche documents: research papers, company
-private information, filings, contracts, policies, manuals, notes, spreadsheets,
+The product is not a generic chatbot over files and it should not start as a
+connector marketplace. It is a private search and evidence layer that agents can
+call when they need reliable answers from niche documents and company memory:
+research papers, company private information, filings, contracts, policies,
+manuals, notes, spreadsheets, Slack exports, Linear issues, meeting transcripts,
 and other sources that are too small or private for web-scale search.
 
 ## What Is Real Today
@@ -18,13 +19,16 @@ and other sources that are too small or private for web-scale search.
 - Project-scoped corpora: each project has its own schemas, files, entities,
   sessions, traces, and indexed chunks.
 - Bring-your-own corpus: users can start from pasted samples or representative
-  files, infer a schema, confirm it, and then ingest those staged files.
+  files, infer a durable schema draft, confirm it, and then ingest those staged
+  files.
 - Bring-your-own schema: schemas are user-defined, versioned, and can be
   inferred before confirmation.
 - Schema-driven ingestion: files and records produce structured entities,
   provenance spans, relationships, and searchable chunks.
 - Source input: manual upload, schema-inference sample files, structured
-  records/text, EDGAR demos, and URL fetches.
+  records/text, EDGAR demos, and URL fetches. The source adapter boundary should
+  also support future company-memory imports such as Slack, Linear, meeting
+  recordings/transcripts, docs, tickets, and support logs.
 - Agent search API: `POST /search` and `POST /agent/search` return ranked cited
   evidence without answer synthesis.
 - Answer API: `POST /query` synthesizes cited answers and records traces.
@@ -32,6 +36,10 @@ and other sources that are too small or private for web-scale search.
   generated claims.
 - Lifecycle controls: file delete, file reprocess, and schema-version reprocess.
 - Eval hooks: project-aware eval runner plus quick UI eval.
+- Search eval: `POST /search/eval` reports precision, recall, MRR, and p95
+  latency for ranked evidence.
+- Corpus status: `GET /projects/{project}/status` reports per-kind readiness
+  state.
 - Agent docs: `docs/agent-tool-contract.md` describes when to call `/search`
   versus `/query`.
 - Bring-your-own-corpus docs: `docs/bring-your-own-corpus.md` covers upload,
@@ -61,9 +69,9 @@ Do not pitch this as:
 
 1. **Search ranking evals**
 
-   `/search` is real, but it needs its own benchmark: recall@k, MRR, citation
-   precision, latency, and per-kind breakdown. Current evals are mostly answer
-   oriented or retrieval-only scripts, not productized search quality reports.
+   A v1 `/search/eval` endpoint exists with precision, recall, MRR, and p95
+   latency. The next step is saved eval reports per project/kind, trend history,
+   and per-filter/per-kind breakdowns.
 
 2. **Agent tool contract**
 
@@ -73,27 +81,29 @@ Do not pitch this as:
 
 3. **Bring-your-own corpus onboarding**
 
-   The self-serve path now exists: upload representative files, infer a schema,
-   confirm it, and ingest staged files. It still needs hardening: better
-   first-run state, progress visibility while sample files are parsed, clearer
-   handling when schema inference fails, and a saved "confirm schema then ingest"
-   flow instead of session-local pending state.
+   The self-serve path now exists: upload representative files, infer a durable
+   schema draft, confirm it, and ingest staged files. It still needs hardening:
+   live progress visibility while sample files are parsed and clearer handling
+   when schema inference fails.
 
-4. **Corpus management**
+4. **Company-memory ingestion**
 
-   Manual upload is first-class. The missing piece is source-set management:
-   bulk replace, re-run a folder worth of uploaded docs, file grouping,
-   collection-level metadata, and clear stale/failed/ready counts per kind.
+   Manual upload is first-class, but nothing in the architecture should block
+   company-memory sources. Slack, Linear, meeting recordings/transcripts, docs,
+   tickets, support logs, and similar inputs should enter through the same
+   adapter contract: collect source objects, normalize them into files or
+   records, infer/confirm schema when needed, preserve source metadata, ingest,
+   and expose cited search.
 
-   Slack or other SaaS connectors can be added later, but they should not define
-   the product. The core use case is people bringing research papers, private
-   company information, manuals, contracts, notes, and records.
+   The missing pieces are source-set management and sync state: bulk replace,
+   file grouping, collection metadata, cursors, deletion handling, stale/failed
+   counts, and transcript/media normalization.
 
 5. **Search snippets and metadata**
 
-   `/search` returns cited spans, but snippet quality is still derived from chunk
-   text. Better search would add highlights, matched fields, neighboring context,
-   structured metadata facets, and source-level summaries.
+   `/search` returns cited spans, highlights, and neighboring context. Better
+   search would add matched fields, structured metadata facets, source-level
+   summaries, and explicit "why this matched" explanations.
 
 6. **Schema evolution UX**
 
@@ -115,9 +125,10 @@ Do not pitch this as:
 
 9. **Hosted personal product**
 
-   The local stack works. A hosted version needs durable storage policy,
-   backups, observability, usage limits, background ingest jobs, and a deployment
-   target. ACLs are intentionally out of scope while this stays personal.
+   The local stack works and `docs/hosting-personal.md` defines the safe hosting
+   checklist. A real hosted version still needs durable storage policy, backups,
+   observability, usage limits, background ingest jobs, and a deployment target.
+   ACLs are intentionally out of scope while this stays personal.
 
 10. **Templates**
 
@@ -127,11 +138,10 @@ Do not pitch this as:
 
 ## Near-Term Roadmap
 
-1. Add `/search` eval reports and a saved eval tab for each project.
-2. Write agent tool docs with copy-paste examples for common agent frameworks.
-3. Harden the bring-your-own corpus flow: upload samples, infer, confirm,
-   ingest, search.
-4. Add corpus-level management for uploaded file sets.
+1. Persist `/search/eval` reports and trend them per project/kind.
+2. Add framework-specific agent examples around the stable HTTP contract.
+3. Add live progress for sample-file parsing and schema inference.
+4. Add source-set management for uploaded and imported company-memory sources.
 5. Add project templates for research papers, company knowledge, notes, manuals,
    and contracts.
 6. Add a schema-diff/reprocess wizard in the UI.

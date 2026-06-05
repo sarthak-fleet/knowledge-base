@@ -86,9 +86,14 @@ async def test_infer_from_files_stages_and_infers(monkeypatch) -> None:
             ],
         )
 
+    async def fake_save_schema_draft(**kwargs):
+        assert kwargs["staged_file_ids"] == ["file-1"]
+        return {"id": "draft-1", **kwargs}
+
     monkeypatch.setattr(infer_route, "put_raw_file", fake_put_raw_file)
     monkeypatch.setattr(infer_route.repo, "upsert_domain", fake_upsert_domain)
     monkeypatch.setattr(infer_route.repo, "register_file", fake_register_file)
+    monkeypatch.setattr(infer_route.repo, "save_schema_draft", fake_save_schema_draft)
     monkeypatch.setattr(infer_route, "parse_file", fake_parse_file)
     monkeypatch.setattr(infer_route, "infer_schema", fake_infer_schema)
 
@@ -103,6 +108,7 @@ async def test_infer_from_files_stages_and_infers(monkeypatch) -> None:
     assert out["project"] == "personal"
     assert out["domain"] == "research-papers"
     assert out["sample_count"] == 1
+    assert out["draft_id"] == "draft-1"
     assert out["staged_files"][0]["id"] == "file-1"
     assert out["errors"] == []
     assert calls == [("personal", "research-papers")]

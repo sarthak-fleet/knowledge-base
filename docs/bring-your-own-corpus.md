@@ -13,9 +13,13 @@ Good starting corpora:
 - private notes;
 - spreadsheets or JSON records;
 - small docs-site snapshots.
+- future company-memory exports such as Slack threads, Linear issues, meeting
+  transcripts, support tickets, and internal docs.
 
-Slack, Google Drive, Notion, and similar connectors can be useful later, but
-they are not required for the core workflow.
+SaaS connectors are not required for the core workflow, but they should fit the
+same ingestion shape later: collect source objects, normalize them into files or
+records, preserve source metadata, infer or confirm schema, ingest, and return
+cited search results.
 
 ## Flow
 
@@ -27,6 +31,7 @@ they are not required for the core workflow.
 6. Apply the confirmed schema.
 7. Ingest the staged files.
 8. Use `/search` for ranked cited evidence or `/query` for cited answers.
+9. Run `/search/eval` against your expected source files.
 
 ## API Flow
 
@@ -42,12 +47,12 @@ curl -s -X POST http://localhost:8000/schemas/infer/files \
   | jq '{domain, sample_count, staged_files: (.staged_files | length), spec}'
 ```
 
-Apply the reviewed schema:
+Apply the reviewed draft:
 
 ```bash
-curl -s -X POST http://localhost:8000/schemas \
+curl -s -X POST http://localhost:8000/schemas/drafts/$DRAFT_ID/apply \
   -H 'Content-Type: application/json' \
-  -d @confirmed-schema.json
+  -d '{"project":"my-private-corpus","ingest_staged_files":true}'
 ```
 
 Ingest the staged files:
@@ -71,10 +76,34 @@ curl -s -X POST http://localhost:8000/search \
   }' | jq '.results[] | {rank, filename, page_start, excerpt}'
 ```
 
+Check corpus state:
+
+```bash
+curl -s http://localhost:8000/projects/my-private-corpus/status | jq
+```
+
+Measure search quality:
+
+```bash
+curl -s -X POST http://localhost:8000/search/eval \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "project": "my-private-corpus",
+    "domain": "research-papers",
+    "questions": [
+      {
+        "id": "q1",
+        "query": "What evidence discusses reranking?",
+        "expected_files": ["paper-1.pdf"]
+      }
+    ]
+  }' | jq '{mean_recall, mean_mrr, mean_precision}'
+```
+
 ## Current Limitations
 
-- Pending inferred schemas live in the Streamlit session until they are applied.
 - Inference quality depends on representative sample files.
 - Parsing scanned PDFs can be slow and depends on local OCR support.
 - The UI does not yet show live parse progress during schema inference.
-- Search snippets do not yet include highlights or facet explanations.
+- Search snippets include highlights and neighboring context, but not facet
+  explanations yet.
