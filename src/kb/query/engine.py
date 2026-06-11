@@ -10,7 +10,8 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal
 
 import structlog
 
@@ -39,6 +40,92 @@ from kb.vector.factory import get_store
 logger = structlog.get_logger("kb.query")
 
 _CITE_RE = re.compile(r"\[(\d+)\]")
+
+
+@dataclass(frozen=True)
+class _CitationSource:
+    via: Literal["graph_route", "retrieval"]
+    file_id: str
+    filename: str
+    page_start: int
+    page_end: int
+    excerpt: str
+    hit: dict[str, Any] | None = None
+
+
+def _build_graph_sources(
+    mentions: list[dict[str, Any]], filenames: dict[str, str], excerpt_chars: int
+) -> list[_CitationSource]:
+    """Normalize graph-route mentions into citation sources.
+
+    Dedupes by file/page/excerpt so one graph mention does not get duplicated
+    into the source list and shift downstream numbering.
+    """
+    out: list[_CitationSource] = []
+    seen: set[tuple[str, int, int, str]] = set()
+    for m in mentions:
+        fid = str(m.get("file_id") or "")
+        if not fid:
+            continue
+        ps = int(m.get("page_start") or 0)
+        pe = int(m.get("page_end") or ps)
+        excerpt = (m.get("excerpt") or "")[:excerpt_chars]
+        key = (fid, ps, pe, excerpt)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(
+            _CitationSource(
+                via="graph_route",
+                file_id=fid,
+                filename=filenames.get(fid, "unknown"),
+                page_start=ps,
+                page_end=pe,
+                excerpt=excerpt,
+            )
+        )
+    return out
+
+
+def _build_retrieval_sources(hits: list[dict[str, Any]]) -> list[_CitationSource]:
+    return [
+        _CitationSource(
+            via="retrieval",
+            file_id=str(h["metadata"].get("file_id", "")),
+            filename="",
+            page_start=int(h["metadata"].get("page_start") or 0),
+            page_end=int(h["metadata"].get("page_end") or h["metadata"].get("page_start") or 0),
+            excerpt="",
+            hit=h,
+        )
+        for h in hits
+    ]
+
+
+def _format_numbered_sources(
+    graph_sources: list[_CitationSource], retrieval_sources: list[_CitationSource]
+) -> str:
+    out: list[str] = []
+    if graph_sources:
+        out.append("Graph sources:")
+        for i, src in enumerate(graph_sources, start=1):
+            page = src.page_start
+            if src.page_end and src.page_end != page:
+                page = f"{src.page_start}-{src.page_end}"
+            out.append(f"[{i}] (file={src.file_id[:8]} page={page})\n{src.excerpt}")
+    if retrieval_sources:
+        if out:
+            out.append("")
+        out.append("Retrieval sources:")
+        offset = len(graph_sources)
+        for i, src in enumerate(retrieval_sources, start=1):
+            h = src.hit or {}
+            md = h.get("metadata", {})
+            page = md.get("page_start", "?")
+            if md.get("page_end") and md.get("page_end") != page:
+                page = f"{md['page_start']}-{md['page_end']}"
+            out.append(f"[{offset + i}] (file={md.get('file_id', '?')[:8]} page={page})\n{h.get('text', '')}")
+    return "\n\n".join(out)
 
 
 def _extract_cited_indices(answer: str) -> list[int]:
@@ -568,11 +655,22 @@ async def answer_query(body: QueryIn) -> QueryOut:
                     )
                 )
 
-    # Map chunk_id -> [primary file_id, ...also_in_files] for multi-source citations.
-    sources_by_chunk = consolidate_sources(hits)
-
     # ── Stage 4: synthesis ───────────────────────────────────────────────────
     sys_prompt = pipeline.get(cfg, "prompts.synthesize_system", "")
+    graph_sources: list[_CitationSource] = []
+    if graph_result and graph_result.get("mentions"):
+        graph_filenames = await _resolve_filenames(
+            list({m["file_id"] for m in graph_result["mentions"] if m.get("file_id")})
+        )
+        graph_sources = _build_graph_sources(
+            graph_result["mentions"],
+            graph_filenames,
+            int(pipeline.get(cfg, "synthesize.excerpt_chars", 400)),
+        )
+    retrieval_sources = _build_retrieval_sources(serializable_hits)
+    # Keep the existing chunk/source mapping for retrieval-only citations.
+    sources_by_chunk = consolidate_sources(hits)
+    combined_sources = graph_sources + retrieval_sources
     structured_block = ""
     if structured:
         structured_block += (
@@ -593,7 +691,7 @@ async def answer_query(body: QueryIn) -> QueryOut:
         )
     user_prompt = (
         f"Question: {body.question}{history_block}{structured_block}\n\n"
-        f"Sources:\n{_format_sources(serializable_hits)}\n\n"
+        f"Sources:\n{_format_numbered_sources(graph_sources, retrieval_sources)}\n\n"
         "Answer the question using ONLY the sources above. Cite using inline [n] markers "
         "tied to the source numbers. If the sources don't support an answer, say so "
         "explicitly and report low confidence. "
@@ -648,7 +746,7 @@ async def answer_query(body: QueryIn) -> QueryOut:
         confidence_reason = f"CRAG retrieval score {crag_score:.2f}: {crag_reason}"
 
     cited_indices = _extract_cited_indices(answer_text)
-    if not cited_indices and refuse_no_cite and serializable_hits:
+    if not cited_indices and refuse_no_cite and combined_sources:
         answer_text = (
             "I cannot answer with citations from the provided sources. "
             "The retrieved excerpts do not directly support a confident answer to this question."
@@ -730,39 +828,58 @@ async def answer_query(body: QueryIn) -> QueryOut:
             }
         )
 
-    # ── Stage 5: span-level citations (multi-source aware) ───────────────────
-    # Resolve filenames for the cited chunks + every file in their also_in_files.
-    file_ids_to_resolve: set[str] = set()
+    # ── Stage 5: span-level citations (global numbering across graph + retrieval) ───
+    started = time.time()
+    retrieval_file_ids_to_resolve: set[str] = set()
     for i in cited_indices:
-        if not (1 <= i <= len(serializable_hits)):
-            continue
-        h = serializable_hits[i - 1]
-        for fid in sources_by_chunk.get(h["id"], []):
-            if fid:
-                file_ids_to_resolve.add(fid)
-    filenames = await _resolve_filenames(list(file_ids_to_resolve))
+        if len(graph_sources) < i <= len(combined_sources):
+            src = combined_sources[i - 1]
+            if src.via == "retrieval":
+                h = src.hit or {}
+                md = h.get("metadata", {})
+                primary = md.get("file_id", "")
+                if primary:
+                    retrieval_file_ids_to_resolve.add(primary)
+                for fid in sources_by_chunk.get(h.get("id", ""), []):
+                    if fid:
+                        retrieval_file_ids_to_resolve.add(fid)
+    retrieval_filenames = await _resolve_filenames(list(retrieval_file_ids_to_resolve))
     excerpt_chars = int(pipeline.get(cfg, "synthesize.excerpt_chars", 400))
 
-    started = time.time()
     citations: list[Citation] = []
     for i in cited_indices:
-        if not (1 <= i <= len(serializable_hits)):
+        if not (1 <= i <= len(combined_sources)):
             continue
-        h = serializable_hits[i - 1]
-        md = h["metadata"]
+        src = combined_sources[i - 1]
+        if src.via == "graph_route":
+            citations.append(
+                Citation(
+                    file_id=src.file_id,
+                    filename=src.filename,
+                    page_start=src.page_start,
+                    page_end=src.page_end,
+                    excerpt=src.excerpt,
+                    also_in=[],
+                    bbox=None,
+                    via="graph_route",
+                )
+            )
+            continue
+        h = src.hit or {}
+        md = h.get("metadata", {})
         excerpt = await pick_best_span(
-            query=body.question, chunk_text=h["text"], max_chars=excerpt_chars
+            query=body.question, chunk_text=h.get("text", ""), max_chars=excerpt_chars
         )
         primary = md.get("file_id", "")
         also_files = [
-            CitationSource(file_id=f, filename=filenames.get(f, "unknown"))
-            for f in sources_by_chunk.get(h["id"], [])
+            CitationSource(file_id=f, filename=retrieval_filenames.get(f, "unknown"))
+            for f in sources_by_chunk.get(h.get("id", ""), [])
             if f and f != primary
         ]
         citations.append(
             Citation(
                 file_id=primary,
-                filename=filenames.get(primary, "unknown"),
+                filename=retrieval_filenames.get(primary, "unknown"),
                 page_start=int(md.get("page_start") or 0),
                 page_end=int(md.get("page_end") or md.get("page_start") or 0),
                 excerpt=excerpt,
@@ -771,41 +888,6 @@ async def answer_query(body: QueryIn) -> QueryOut:
                 via="retrieval",
             )
         )
-
-    # ── Graph-route citation backfill ──────────────────────────────────────
-    # When the GraphRAG-shaped theme route fired, its narrative summary
-    # influenced the answer's structure (themes, groupings) but its
-    # underlying entity_mentions weren't surfaced as citations above —
-    # because they came from the entity graph, not from retrieval. Backfill
-    # them here, deduped against retrieval-sourced citations by
-    # (file_id, page_start). Marked via="graph_route" so consumers can tell
-    # which evidence shaped the prose vs which directly grounds a [n] marker.
-    if graph_result and graph_result.get("mentions"):
-        seen_keys = {(c.file_id, c.page_start) for c in citations}
-        graph_filenames = await _resolve_filenames(
-            list({m["file_id"] for m in graph_result["mentions"] if m.get("file_id")})
-        )
-        for m in graph_result["mentions"]:
-            fid = m.get("file_id")
-            if not fid:
-                continue
-            ps = int(m.get("page_start") or 0)
-            key = (fid, ps)
-            if key in seen_keys:
-                continue
-            seen_keys.add(key)
-            citations.append(
-                Citation(
-                    file_id=fid,
-                    filename=graph_filenames.get(fid, "unknown"),
-                    page_start=ps,
-                    page_end=int(m.get("page_end") or ps),
-                    excerpt=(m.get("excerpt") or "")[:excerpt_chars],
-                    also_in=[],
-                    bbox=None,
-                    via="graph_route",
-                )
-            )
 
     stages.append(_stage("span_cite", started, citations=len(citations)))
 

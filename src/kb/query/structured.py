@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import operator
+import re
 from typing import Any
 
 import structlog
@@ -28,6 +29,14 @@ logger = structlog.get_logger("kb.query.structured")
 
 # Map of simple comparison operators we accept in NL-parsed numeric filters.
 _OPS = {">": operator.gt, ">=": operator.ge, "<": operator.lt, "<=": operator.le, "=": operator.eq}
+_FIELD_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _safe_field_key(key: str) -> str | None:
+    """Return a SQL-safe JSON field key or None if the key is not valid."""
+    if isinstance(key, str) and _FIELD_KEY_RE.fullmatch(key):
+        return key
+    return None
 
 
 async def list_entities_matching(
@@ -51,16 +60,20 @@ async def list_entities_matching(
         params["t"] = entity_type
 
     for i, (k, v) in enumerate(filters.items()):
+        safe_key = _safe_field_key(k)
+        if not safe_key:
+            logger.warning("dropping unsafe structured filter key: %r", k)
+            continue
         key = f"f{i}"
         if isinstance(v, tuple) and len(v) == 2 and v[0] in _OPS:
             op, val = v
-            conds.append(f"(fields->>'{k}')::numeric {op} :{key}")
+            conds.append(f"(fields->>'{safe_key}')::numeric {op} :{key}")
             params[key] = val
         else:
             # Fuzzy-string match by default: "Q2 2024" matches "Q2 FY2024", etc.
             # Intent extraction often produces normalized strings that don't
             # exactly equal the stored field; ILIKE with %v% catches both.
-            conds.append(f"(fields->>'{k}') ILIKE :{key}")
+            conds.append(f"(fields->>'{safe_key}') ILIKE :{key}")
             params[key] = f"%{v}%"
 
     sql = (
@@ -134,7 +147,7 @@ async def maybe_structured_answer(
     Otherwise returns a dict with `entities`, `mentions`, and a natural-language
     summary the synthesis step can cite from.
     """
-    if intent.kind != "aggregate":
+    if intent.kind not in ("aggregate", "compare"):
         return None
     threshold = parse_numeric_threshold(question)
     filters: dict[str, Any] = {}
