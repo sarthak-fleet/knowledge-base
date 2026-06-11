@@ -160,6 +160,33 @@ def _format_sources(hits: list[dict[str, Any]]) -> str:
     return "\n\n".join(out)
 
 
+def _combine_sources_for_verification(
+    graph_sources: list[dict[str, Any]], retrieval_sources: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Flatten graph and retrieval sources in the same order as prompt numbering."""
+    return [*graph_sources, *retrieval_sources]
+
+
+def _verification_sources(
+    graph_result: dict[str, Any] | None, serializable_hits: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Build verifier inputs in the same order as the prompt source list."""
+    graph_sources: list[dict[str, Any]] = []
+    if graph_result and graph_result.get("mentions"):
+        for m in graph_result["mentions"]:
+            graph_sources.append(
+                {
+                    "text": m.get("excerpt", ""),
+                    "metadata": {
+                        "file_id": m.get("file_id", ""),
+                        "page_start": m.get("page_start", 0),
+                        "page_end": m.get("page_end", m.get("page_start", 0)),
+                    },
+                }
+            )
+    return _combine_sources_for_verification(graph_sources, serializable_hits)
+
+
 def _bookend_reorder(hits: list[Any]) -> list[Any]:
     """Reorder so highest-relevance chunks sit at the START and END of the prompt.
 
@@ -788,7 +815,7 @@ async def answer_query(body: QueryIn) -> QueryOut:
         started = time.time()
         checks = await verify_citations(
             answer=answer_text,
-            sources=serializable_hits,
+            sources=_verification_sources(graph_result, serializable_hits),
             model=pipeline.get(cfg, "llm.synthesize.model"),
         )
         verify_summary = verification_summary(checks)

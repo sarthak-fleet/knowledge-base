@@ -11,6 +11,7 @@ from kb.query.engine import (
     _extract_cited_indices,
     _format_numbered_sources,
     _format_sources,
+    _verification_sources,
 )
 from kb.query.intent import QueryIntent
 from kb.query.structured import _safe_field_key, maybe_structured_answer
@@ -108,6 +109,29 @@ def test_compare_questions_can_use_structured_path(monkeypatch) -> None:
 
     assert out is not None
     assert out["entities"][0]["id"] == "e1"
+
+
+def test_verification_sources_include_graph_then_retrieval() -> None:
+    out = _verification_sources(
+        {
+            "mentions": [
+                {
+                    "file_id": "graph-1",
+                    "page_start": 1,
+                    "page_end": 2,
+                    "excerpt": "graph evidence",
+                }
+            ]
+        },
+        [
+            {
+                "text": "retrieval evidence",
+                "metadata": {"file_id": "retr-1", "page_start": 3, "page_end": 3},
+            }
+        ],
+    )
+
+    assert [s["metadata"]["file_id"] for s in out] == ["graph-1", "retr-1"]
 
 
 def test_trailing_confidence_json_pattern() -> None:
