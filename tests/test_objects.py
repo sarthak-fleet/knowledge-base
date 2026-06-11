@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 
+import pytest
+
 from kb.storage import objects
 
 
@@ -31,3 +33,8 @@ def test_put_raw_file_is_idempotent_by_content_hash(monkeypatch) -> None:
     expected_key = f"raw/sec/{hashlib.sha256(b'same').hexdigest()}"
     assert first == second
     assert backend.keys == [expected_key]
+
+
+def test_put_raw_file_rejects_unsafe_domain_segment() -> None:
+    with pytest.raises(ValueError):
+        asyncio.run(objects.put_raw_file(domain="../evil", filename="a.pdf", blob=b"same"))
