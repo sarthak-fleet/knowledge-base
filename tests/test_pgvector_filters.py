@@ -6,7 +6,14 @@ from kb.vector import pgvector_store as pvs
 
 
 def test_whitelist_includes_expected_columns() -> None:
-    assert {"project", "file_id", "entity_id", "parent_chunk", "domain"} == pvs._ALLOWED_FILTER_COLS
+    assert {
+        "project",
+        "file_id",
+        "entity_id",
+        "parent_id",
+        "parent_chunk",
+        "domain",
+    } == pvs._ALLOWED_FILTER_COLS
 
 
 def test_injection_shape_dropped() -> None:
