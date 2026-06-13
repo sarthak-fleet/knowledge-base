@@ -2,7 +2,7 @@
 
 Both raw files and cached parse artifacts (Unstructured element JSON) live here.
 Keying convention:
-    raw/<domain>/<content_hash>/<filename>
+    raw/<domain>/<content_hash>
     parse/<content_hash>/elements.json
 """
 
@@ -22,6 +22,13 @@ from kb.config import get_settings
 
 def _content_hash(blob: bytes) -> str:
     return hashlib.sha256(blob).hexdigest()
+
+
+def _safe_key_segment(segment: str) -> str:
+    """Reject path-traversal-shaped segments before building object keys."""
+    if not segment or segment in {".", ".."} or "/" in segment or "\\" in segment:
+        raise ValueError(f"unsafe object-store key segment: {segment!r}")
+    return segment
 
 
 # ─── Backend interface ────────────────────────────────────────────────────
@@ -125,7 +132,7 @@ def _get_backend() -> _Backend:
 async def put_raw_file(*, domain: str, filename: str, blob: bytes) -> tuple[str, str]:
     """Store a raw upload; returns (object_key, content_hash). Idempotent by content_hash."""
     h = _content_hash(blob)
-    key = f"raw/{domain}/{h}/{filename}"
+    key = f"raw/{_safe_key_segment(domain)}/{h}"
     backend = _get_backend()
     if not await backend.exists(key):
         await backend.put(key, blob)

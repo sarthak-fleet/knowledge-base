@@ -12,7 +12,11 @@ from kb.vector.base import Chunk, SearchHit, VectorStore
 from kb.vector.embed import embed_dense
 
 # Whitelist filter columns — anything not in here is silently dropped to keep SQL safe.
-_ALLOWED_FILTER_COLS = {"project", "file_id", "entity_id", "parent_chunk", "domain"}
+#
+# `parent_id` is the public query-scoping key used by callers; `parent_chunk`
+# is the backing column in `chunks`. Support both so scope filters behave the
+# same across vector backends.
+_ALLOWED_FILTER_COLS = {"project", "file_id", "entity_id", "parent_id", "parent_chunk", "domain"}
 
 
 def _vec_literal(v: list[float]) -> str:
@@ -140,7 +144,8 @@ class PgvectorStore(VectorStore):
             for k, v in filters.items():
                 if v is None or k not in _ALLOWED_FILTER_COLS:
                     continue
-                where.append(f"{k} = :flt_{k}")
+                col = "parent_chunk" if k == "parent_id" else k
+                where.append(f"{col} = :flt_{k}")
                 params[f"flt_{k}"] = v
         wsql = " AND ".join(where)
 
