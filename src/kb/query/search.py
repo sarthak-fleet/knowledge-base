@@ -24,7 +24,9 @@ from kb.vector.factory import get_store
 _TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{2,}")
 
 
-def _explicit_filters(scope: dict[str, Any] | None, filters: dict[str, Any] | None) -> dict[str, Any]:
+def _explicit_filters(
+    scope: dict[str, Any] | None, filters: dict[str, Any] | None
+) -> dict[str, Any]:
     out: dict[str, Any] = {}
     if scope:
         for key in ("entity_id", "file_id", "parent_id"):

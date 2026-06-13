@@ -223,7 +223,9 @@ async def ingest_record(body: RecordIn) -> RecordOut:
                     "is_parent": False,
                     "source": "record",
                 },
-                content_hash=chunk_content_hash(f"record:{body.project}:{body.kind}:{body.type}:{excerpt}"),
+                content_hash=chunk_content_hash(
+                    f"record:{body.project}:{body.kind}:{body.type}:{excerpt}"
+                ),
             )
         )
         upserted += 1
@@ -233,7 +235,9 @@ async def ingest_record(body: RecordIn) -> RecordOut:
         await store.delete_by_file(body.kind, file_id)
         await store.upsert(body.kind, chunks)
     except Exception as e:
-        await repo.set_file_status(file_id, "failed", error=f"record vector indexing failed: {e}"[:500])
+        await repo.set_file_status(
+            file_id, "failed", error=f"record vector indexing failed: {e}"[:500]
+        )
         raise HTTPException(503, f"record stored but vector indexing failed: {e}") from e
 
     return RecordOut(
