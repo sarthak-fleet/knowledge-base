@@ -124,7 +124,9 @@ def _format_numbered_sources(
             page = md.get("page_start", "?")
             if md.get("page_end") and md.get("page_end") != page:
                 page = f"{md['page_start']}-{md['page_end']}"
-            out.append(f"[{offset + i}] (file={md.get('file_id', '?')[:8]} page={page})\n{h.get('text', '')}")
+            out.append(
+                f"[{offset + i}] (file={md.get('file_id', '?')[:8]} page={page})\n{h.get('text', '')}"
+            )
     return "\n\n".join(out)
 
 

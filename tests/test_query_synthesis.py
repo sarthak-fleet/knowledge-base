@@ -69,14 +69,27 @@ def test_safe_field_key_rejects_injection_shape() -> None:
 
 
 def test_compare_questions_can_use_structured_path(monkeypatch) -> None:
-    async def fake_list_entities_matching(*, domain: str, entity_type: str | None, filters: dict, limit: int, project: str):
+    async def fake_list_entities_matching(
+        *, domain: str, entity_type: str | None, filters: dict, limit: int, project: str
+    ):
         assert domain == "sec"
         assert entity_type == "FinancialMetric"
-        return [{"id": "e1", "display_name": "Revenue", "identity_key": "rev", "fields": {"value": 1}}]
+        return [
+            {"id": "e1", "display_name": "Revenue", "identity_key": "rev", "fields": {"value": 1}}
+        ]
 
     async def fake_mentions_for(entity_ids: list[str], project: str = "default"):
         assert entity_ids == ["e1"]
-        return [{"entity_id": "e1", "file_id": "f1", "filename": "file.txt", "page_start": 1, "page_end": 1, "excerpt": "x"}]
+        return [
+            {
+                "entity_id": "e1",
+                "file_id": "f1",
+                "filename": "file.txt",
+                "page_start": 1,
+                "page_end": 1,
+                "excerpt": "x",
+            }
+        ]
 
     import kb.query.structured as structured_mod
 
@@ -84,7 +97,9 @@ def test_compare_questions_can_use_structured_path(monkeypatch) -> None:
     monkeypatch.setattr(structured_mod, "mentions_for", fake_mentions_for)
     out = asyncio.run(
         maybe_structured_answer(
-            intent=QueryIntent(kind="compare", entity_type="FinancialMetric", filters={"ticker": "AAPL"}),
+            intent=QueryIntent(
+                kind="compare", entity_type="FinancialMetric", filters={"ticker": "AAPL"}
+            ),
             domain="sec",
             question="Compare NVIDIA and Apple revenue",
             project="default",
