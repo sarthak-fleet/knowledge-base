@@ -51,7 +51,7 @@ def test_retrieval_only_uses_configured_rerank_top_k(monkeypatch, tmp_path) -> N
         "pipeline_config",
         lambda domain: {"retrieve": {"top_k_dense": 15, "top_k_sparse": 9, "rerank_top_k": 4}},
     )
-    
+
     async def fake_get_file(file_id: str):
         return {"id": file_id, "filename": f"{file_id}.pdf"}
 
