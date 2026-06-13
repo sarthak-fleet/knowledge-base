@@ -679,8 +679,7 @@ async def answer_query(body: QueryIn) -> QueryOut:
         and (
             hard_citation_gate
             or not (
-                crag_score >= verify_skip_threshold
-                and confidence_value >= verify_skip_threshold
+                crag_score >= verify_skip_threshold and confidence_value >= verify_skip_threshold
             )
         )
     )

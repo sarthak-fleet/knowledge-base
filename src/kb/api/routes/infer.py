@@ -139,9 +139,7 @@ async def infer_from_files(
             )
             remaining = max(sample_count - len(samples), 0)
             if remaining:
-                samples.extend(
-                    _sample_texts_from_elements(elements, sample_count=remaining)
-                )
+                samples.extend(_sample_texts_from_elements(elements, sample_count=remaining))
         except Exception as e:
             errors.append({"filename": filename, "error": str(e)})
 

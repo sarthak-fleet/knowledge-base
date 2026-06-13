@@ -118,9 +118,7 @@ async def apply_draft(draft_id: str, body: ApplyDraftIn | None = None) -> dict:
 @router.post("/drafts/{draft_id}/discard")
 async def discard_draft(draft_id: str, body: DraftProjectIn | None = None) -> dict:
     body = body or DraftProjectIn()
-    row = await repo.update_schema_draft_status(
-        draft_id, project=body.project, status="discarded"
-    )
+    row = await repo.update_schema_draft_status(draft_id, project=body.project, status="discarded")
     if not row:
         raise HTTPException(404, "schema draft not found")
     return row
@@ -147,7 +145,9 @@ async def reprocess_for_active_schema(domain: str, body: ReprocessIn | None = No
     body = body or ReprocessIn()
     sch = await get_active_schema(domain, project=body.project)
     if not sch:
-        raise HTTPException(404, f"No active schema for domain '{domain}' in project '{body.project}'")
+        raise HTTPException(
+            404, f"No active schema for domain '{domain}' in project '{body.project}'"
+        )
     enqueued = await reindex_domain_with_schema(
         project=body.project,
         domain=domain,
