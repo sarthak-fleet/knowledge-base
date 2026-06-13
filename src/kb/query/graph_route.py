@@ -143,7 +143,9 @@ async def maybe_graph_answer(
     # Apply ticker filter if intent supplied one (e.g., "themes in NVIDIA filings").
     ticker = (intent.filters or {}).get("ticker")
     if ticker:
-        rows = [r for r in rows if (r.get("fields") or {}).get("ticker") == ticker] or rows
+        rows = [r for r in rows if (r.get("fields") or {}).get("ticker") == ticker]
+        if not rows:
+            return None
 
     # Pick a grouping field: prefer `category` (RiskFactor has it on SEC),
     # fall back to `subject` / `type` / parent_id, otherwise no grouping.
