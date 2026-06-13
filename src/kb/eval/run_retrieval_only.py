@@ -153,7 +153,7 @@ async def _run(args: argparse.Namespace) -> int:
                 question,
                 top_k_dense=top_k_dense,
                 top_k_sparse=top_k_sparse,
-                rerank_top_k=top_k_dense,
+                rerank_top_k=rerank_top_k,
                 filters={"project": args.project},
             )
             if hits:
