@@ -176,12 +176,10 @@ class QdrantStore(VectorStore):
                 collection_name=_collection(domain),
                 scroll_filter=qm.Filter(
                     must=[
-                        qm.FieldCondition(
-                            key="project", match=qm.MatchValue(value=project)
-                        ),
+                        qm.FieldCondition(key="project", match=qm.MatchValue(value=project)),
                         qm.FieldCondition(
                             key="content_hash", match=qm.MatchAny(any=list(set(hashes)))
-                        )
+                        ),
                     ]
                 ),
                 limit=len(hashes) * 2,

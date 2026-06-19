@@ -26,13 +26,6 @@ jobs:
       qdrant:
         image: qdrant/qdrant:v1.12.4
         ports: ["6333:6333"]
-      minio:
-        image: minio/minio:RELEASE.2024-10-13T13-34-11Z
-        env:
-          MINIO_ROOT_USER: kbminio
-          MINIO_ROOT_PASSWORD: kbminio-secret
-        ports: ["9000:9000"]
-        options: --health-cmd "curl -fsS http://localhost:9000/minio/health/live" --health-interval 3s --health-retries 20
 
     steps:
       - uses: actions/checkout@v4
@@ -41,6 +34,21 @@ jobs:
           version: "0.11.17"
       - run: uv python install 3.11
       - run: uv sync --all-extras
+      - name: Start MinIO
+        # minio/minio image requires "server /data" as the CMD argument; GitHub Actions service
+        # containers have no way to pass CMD args, so we start minio as a background container step.
+        run: |
+          docker run -d --name minio \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER=kbminio \
+            -e MINIO_ROOT_PASSWORD=kbminio-secret \
+            minio/minio:RELEASE.2024-10-13T13-34-11Z server /data
+          for i in $(seq 1 20); do
+            if curl -fsS http://localhost:9000/minio/health/live; then
+              echo "MinIO is ready"; break
+            fi
+            sleep 3
+          done
       - name: Lint + unit tests
         run: |
           uv run ruff check src tests
