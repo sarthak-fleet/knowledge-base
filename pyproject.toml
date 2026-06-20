@@ -30,12 +30,16 @@ dependencies = [
   "prometheus-client>=0.21",  # Official Prometheus client; replaces hand-rolled metrics aggregator
   "asgi-correlation-id>=4.3",  # Request-ID middleware; injects ID into structlog contextvars
   "tiktoken>=0.7",
-  "unstructured[pdf,xlsx]>=0.15",
-  # torch/torchvision are transitive via unstructured-inference → timm; declared
-  # explicitly so [tool.uv.sources] can pin them to the CPU index (the default
-  # PyPI wheel bundles ~4.4GB of CUDA libs this project never uses).
-  "torch>=2.4,<2.8",
-  "torchvision>=0.19,<0.23",
+  # Text/digital-PDF + spreadsheet parsing only. The `[pdf]` extra is split out
+  # into the optional `ocr` group below because it transitively pulls
+  # unstructured-inference → timm → torch/torchvision (multi-GB). The light PDF
+  # deps needed by the default `fast`/`auto`(-on-text) strategy — pdfminer.six,
+  # pikepdf, pdf2image — are declared explicitly so partition_pdf still parses
+  # digital PDFs without the inference stack. Scanned-PDF OCR / `hi_res` /
+  # `ocr_only` strategies require `pip install kb[ocr]`.
+  "unstructured[xlsx]>=0.15",
+  "pdfminer.six>=20231228",  # text-layer extraction for the `fast` PDF path
+  "pikepdf>=8.0",            # PDF repair/normalisation used by partition_pdf
   "pypdf>=4.3",
   "openpyxl>=3.1",
   "pgvector>=0.3",
@@ -48,6 +52,21 @@ dependencies = [
   "duckdb>=1.0",
   "pillow>=10.4",
   "reportlab>=4.2",
+]
+
+[project.optional-dependencies]
+# Scanned-PDF OCR + layout/table inference. Pulls unstructured-inference →
+# timm → torch/torchvision, which is why it is NOT in the default install.
+# Install with `pip install kb[ocr]` (or `uv sync --extra ocr`) on deployments
+# that ingest scanned/image-only PDFs or set parse_strategy_default to
+# `hi_res` / `ocr_only`. torch/torchvision are pinned to the CPU index via
+# [tool.uv.sources] below (the default PyPI wheel bundles ~4.4GB of CUDA libs
+# this project never uses).
+ocr = [
+  "unstructured-inference>=0.7",
+  "unstructured-pytesseract>=0.3",
+  "torch>=2.4,<2.8",
+  "torchvision>=0.19,<0.23",
 ]
 
 [project.scripts]
