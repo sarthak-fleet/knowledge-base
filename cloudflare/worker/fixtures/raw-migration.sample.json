@@ -1,0 +1,14 @@
+{
+  "domain": "manuals",
+  "files": [
+    {
+      "path": "raw-export/guide.txt",
+      "mime": "text/plain"
+    },
+    {
+      "path": "raw-export/nested/data.json",
+      "domain": "manuals-json",
+      "filename": "data.json"
+    }
+  ]
+}

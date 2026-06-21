@@ -1,0 +1,100 @@
+[
+  {
+    "feature": "shared_rag_api",
+    "status": "done",
+    "current": "knowledgebase/cloudflare/worker owns the fleet RAG API; Linkchat and Starboard shared-RAG paths use it, SaaS Maker has no active in-API RAG/knowledge backend, and retired FastAPI route aliases forward to the Cloudflare Worker handlers with a Node-only audit gate",
+    "cloudflare_target": "Workers, Workers AI, Vectorize, D1, R2",
+    "gap": "Keep this inside knowledgebase; do not recreate a sibling rag-service."
+  },
+  {
+    "feature": "sibling_rag_service_retirement",
+    "status": "done",
+    "current": "The old sibling rag-service folder at ../rag-service has been deleted after readiness:sibling-retirement passed (deployed parity, fingerprint, auth+OCR, zero active external references, gap matrix consistent). A source-only safety archive was kept at ../rag-service-retired-2026-06-21.tgz. knowledgebase/cloudflare/worker is now the only fleet RAG service codebase.",
+    "cloudflare_target": "knowledgebase/cloudflare/worker as the only fleet RAG service codebase",
+    "gap": "Sibling retired. Do not recreate a separate rag-service Worker; keep all fleet RAG runtime inside knowledgebase/cloudflare/worker."
+  },
+  {
+    "feature": "deployed_worker_cutover",
+    "status": "done",
+    "current": "The current cloudflare/worker code is deployed to https://knowledgebase.sarthakagrawal927.workers.dev (version 418b60d7-5901-40e1-8948-a92d56cab351). Public health/ready/metrics aliases return 200, protected retired FastAPI aliases reject anonymous callers with 401, and smoke:legacy-routes --require-complete confirms the deploy_fingerprint knowledgebase-cloudflare-full-port-2026-06-21. readiness:full-port passed deployed-legacy-route-parity, deployed-worker-fingerprint, and authenticated checks on the same Worker version.",
+    "cloudflare_target": "A deployed knowledgebase Worker whose public health/ready/metrics aliases return 200 and whose protected retired FastAPI aliases reject anonymous callers with 401",
+    "gap": "Cutover complete. Redeploy cloudflare/worker and re-run smoke:legacy-routes --require-complete plus readiness:full-port whenever routes, aliases, or the deploy fingerprint change."
+  },
+  {
+    "feature": "python_runtime_retirement",
+    "status": "done",
+    "current": "The deployed Worker path, Worker full-port/preflight gates, testing UI, migration tooling, and local checks are TypeScript/Node-only; the old Python FastAPI server, Python UI, Docker Compose runtime, Python package metadata, parser/query/eval code, and root pytest suite have been retired and are covered by audit:python-runtime-retirement plus preflight",
+    "cloudflare_target": "TypeScript/Rust/WASM Cloudflare Worker, Worker-hosted UI, and Node/TypeScript migration tooling with no Python runtime required for the product",
+    "gap": "Keep future product/runtime checks in the Cloudflare Worker toolchain."
+  },
+  {
+    "feature": "raw_files_and_parse_artifacts",
+    "status": "done",
+    "current": "Worker upload writes raw files to R2 and ingest writes normalized parse artifacts to R2 with D1 metadata; migration tooling covers local, manifest, and mirrored MinIO/S3 exports",
+    "cloudflare_target": "R2",
+    "gap": "Keep authenticated Worker upload/ingest smoke coverage in sync with route-level product-state verification."
+  },
+  {
+    "feature": "project_schema_entity_metadata",
+    "status": "done",
+    "current": "Worker D1 schema and repository cover projects, schemas, files, entities, mentions, relationships, provenance, sessions, jobs, traces, and eval reports",
+    "cloudflare_target": "D1",
+    "gap": "Keep D1 metadata route/repository tests in sync as schema fields evolve."
+  },
+  {
+    "feature": "job_queue",
+    "status": "done",
+    "current": "Worker defaults ingest runs to Cloudflare Workflow orchestration plus Queue when bindings are present, with D1 job state and inline debug fallback",
+    "cloudflare_target": "Queues, Workflows, and D1 job state",
+    "gap": "Keep queue/workflow status in sync as parser and extractor parity expands."
+  },
+  {
+    "feature": "hybrid_retrieval",
+    "status": "done",
+    "current": "Worker query combines D1 structured routes, graph evidence, Vectorize dense search, D1 fuzzy sparse lexical prefilter/scoring, RRF, MMR, and optional Workers AI rerank",
+    "cloudflare_target": "Vectorize dense search plus D1 lexical index and app-side fusion",
+    "gap": "Cloudflare Vectorize is not Qdrant BM42; the port uses the Cloudflare-native hybrid replacement."
+  },
+  {
+    "feature": "schema_driven_ingestion",
+    "status": "done",
+    "current": "Worker has TypeScript schema inference, schema drafts/apply/discard/active/reprocess, direct JSON/text ingestion, uploaded structured-file ingestion, entity/relationship extraction, relationship backfill, structured D1 query routes, parse evals, direct local MinIO inline xl.meta eval cases, and --min-pass-rate parity gates",
+    "cloudflare_target": "TypeScript Workers plus Rust/WASM parsers writing R2, D1, Vectorize, Queues",
+    "gap": "Keep schema-driven ingestion tests and UI controls in sync as parser coverage expands."
+  },
+  {
+    "feature": "ocr_and_office_parsing",
+    "status": "done",
+    "current": "Worker parses common text/JSON/CSV/HTML/PDF/XLSX/DOCX/PPTX inputs, uses Markdown Conversion fallback, and has opt-in Workers AI image OCR for standalone image uploads, scanned fixtures, and weak-text PDFs; PDF vision OCR prioritizes page-like images over tiny embedded assets; Llama 3.2 Vision tries prompt+image bytes first with image_url fallback, while Llama 4 Scout uses image_url messages. The deployed scanned-PDF OCR gate (readiness:full-port nvda-scanned-ocr-live) passed live against the Cloudflare vision model chain with pass_rate 1 on the NVDA scanned PDF fixture.",
+    "cloudflare_target": "Rust/WASM parsers, Workers AI vision/OCR where useful, and R2-backed artifacts",
+    "gap": "Live scanned-PDF OCR parity proven on the deployed Worker. Re-run readiness:full-port with RAG_ALLOW_LIVE_OCR=1 whenever the vision model chain or parser fallback changes."
+  },
+  {
+    "feature": "source_connectors",
+    "status": "done",
+    "current": "Worker supports upload, direct inputs, URL import, and EDGAR SEC import without Python edgartools",
+    "cloudflare_target": "Workers fetch, R2, D1, and Queues",
+    "gap": "Keep SEC source import bounded and identified."
+  },
+  {
+    "feature": "testing_and_custom_input_ui",
+    "status": "done",
+    "current": "Worker serves a Cloudflare-hosted testing UI with upload, source import, schema, parser-option, session, answer, streaming answer, source-set, queued-run, trace, eval, and retrieval controls",
+    "cloudflare_target": "Workers/Pages UI",
+    "gap": "Keep the hosted Cloudflare UI in sync as remaining backend pipeline features land."
+  },
+  {
+    "feature": "query_pipeline_parity",
+    "status": "done",
+    "current": "Worker has D1 structured fast path, graph expansion, Vectorize/D1/hybrid search, rewrite/decompose fanout, rerank/MMR, corrective retry, cited extractive answers, SSE query lifecycle streaming, root /search and /query compatibility aliases, opt-in Workers AI synthesis, verification, traces, and sessions",
+    "cloudflare_target": "TypeScript/Rust pipeline over Cloudflare state, with Worker-native hot paths",
+    "gap": "Keep synthesis prompts, fallback policy, and eval coverage in sync as retrieval features evolve."
+  },
+  {
+    "feature": "evals_traces_metrics",
+    "status": "done",
+    "current": "Worker persists query traces, trace comparisons, answer-quality drilldowns, retrieval evals, answer/citation/faithfulness reports, AIS-style scoring, Analytics Engine points, and public readiness/Prometheus-compatible metrics compatibility endpoints",
+    "cloudflare_target": "D1/Analytics Engine plus Worker/Container observability",
+    "gap": "Keep Analytics Engine dimensions in sync as eval schemas evolve."
+  }
+]

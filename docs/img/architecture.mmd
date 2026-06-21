@@ -1,28 +1,13 @@
 flowchart LR
-    User[User] -->|HTTP /query| API[FastAPI api]
-    API --> Pipeline
+    User[User or agent] -->|HTTP /v1/kb/query| Worker[Cloudflare Worker]
+    Files[upload / URL / EDGAR / text / JSON] -->|/v1/kb/*| Worker
 
-    subgraph Pipeline[Query pipeline, 9+ stages]
-        direction TB
-        S1[intent + filters] --> S2[duckdb structured route]
-        S2 --> S3[graph_route themes]
-        S3 --> S4[decompose + rewrite + HyDE]
-        S4 --> S5[hybrid retrieve dense+sparse RRF]
-        S5 --> S6[rerank jina-v2]
-        S6 --> S7[MMR diversity]
-        S7 --> S8[CRAG + Self-RAG retry]
-        S8 --> S9[synthesize cited]
-        S9 --> S10[AIS verify]
-        S10 --> S11[span_cite]
-    end
-
-    Worker[asyncio worker<br/>SKIP LOCKED] -->|ingest jobs| Pipeline
-    Files[upload / edgar] -->|POST /files| API
-    API -.->|enqueue| Worker
-
-    Pipeline --> PG[(Postgres<br/>entities, jobs,<br/>traces, mentions)]
-    Pipeline --> Qdrant[(Qdrant<br/>kb_sec, kb_legal<br/>hybrid: dense + sparse)]
-    Worker --> MinIO[(MinIO<br/>raw + parse cache)]
+    Worker --> D1[(D1 metadata<br/>schemas/files/entities/jobs/traces/evals)]
+    Worker --> R2[(R2 raw files<br/>parse artifacts)]
+    Worker --> Vectorize[(Vectorize)]
+    Worker --> AI[(Workers AI)]
+    Worker --> Queue[Queues + Workflows]
+    Worker --> Analytics[Analytics Engine]
 
     classDef store fill:#e8f4f8,stroke:#0288d1,color:#01579b
-    class PG,Qdrant,MinIO store
+    class D1,R2,Vectorize,AI,Queue,Analytics store

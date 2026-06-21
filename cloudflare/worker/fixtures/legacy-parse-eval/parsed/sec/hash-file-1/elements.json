@@ -1,0 +1,20 @@
+[
+  {
+    "id": "el-1",
+    "type": "Title",
+    "text": "Apple Inc. annual filing",
+    "page": 1,
+    "bbox": null,
+    "parent_id": null,
+    "metadata": {}
+  },
+  {
+    "id": "el-2",
+    "type": "NarrativeText",
+    "text": "Revenue risk factors and services growth are discussed in this filing.",
+    "page": 1,
+    "bbox": null,
+    "parent_id": null,
+    "metadata": {}
+  }
+]

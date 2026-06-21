@@ -1,5 +1,8 @@
 # Session log — what shipped this round
 
+> Historical session log from the Python reference era. Current runtime and UI
+> live in the Cloudflare Worker under `cloudflare/worker`.
+
 A working log of the work done after the original submission landed. Reading order: top to bottom.
 For commit-level detail, `git log --oneline dd141e1..HEAD`.
 
@@ -8,7 +11,7 @@ For commit-level detail, `git log --oneline dd141e1..HEAD`.
 1. **Project namespace** — promoted `domain` → `(project, kind)`. Existing data auto-lands in `project='default'`; new projects can be created via API or UI.
 2. **Cross-kind retrieval** — one `/query` can fan out across multiple kinds within a project and return a single cited answer.
 3. **Unified ingestion API** — three input shapes (file, record, text), all carrying `type` (the entity-type label from the schema). Same type ⇒ same structure, enforced.
-4. **Project-aware Streamlit UI** — landing page lists projects; clicking one opens a chat + files + schemas workspace.
+4. **Project-aware UI** — landing page lists projects; clicking one opens a chat + files + schemas workspace. This now lives in the Worker `/ui`.
 5. **Memory-leak fix** — `AsyncOpenAI` was being instantiated per LLM call and never closed; singleton fix dropped per-query growth from ~500 MB to flat.
 6. **Schema-driven pipeline shapes** — entity types declare their pipeline role (`graph_route: true`, `tabular: true`, field-level `tabular_identifier`/`tabular_value`). Query/extract stages read these instead of per-domain config sidecars.
 7. **SEC parser title-promotion heuristic** — recovers `Title` elements Unstructured drops on HTML; section-boost and boundary-aware chunking now have something to fire on.
@@ -123,9 +126,10 @@ kb schema list  --project biotech-ipo
 kb ingest run   --project biotech-ipo --domain sec_filings
 ```
 
-## Streamlit UI
+## Historical Local UI
 
-Open `http://localhost:8501` once the stack is up.
+The old Python UI has been retired. Use the Worker `/ui` for the active testing
+surface.
 
 - **Landing**: cards for every project (showing kind/file counts) + a "Create new project" form below.
 - **Workspace** (after clicking a project): three tabs.
@@ -243,7 +247,7 @@ src/kb/parse/parser.py                           # title-promotion heuristic
 src/kb/schema/model.py                           # graph_route/tabular/tabular_identifier flags
 src/kb/extract/xlsx_bridge.py                    # reads schema for entity type + ident field
 src/kb/query/graph_route.py                      # reads schema for default entity type
-streamlit_app/app.py                             # project-aware UI
+cloudflare/worker/src/index.ts                   # Worker-hosted testing UI
 docker/Dockerfile                                # multi-stage build
 docker-compose.override.yml                      # local-only model overrides (gitignored)
 WRITEUP.md                                       # 4-page submission write-up

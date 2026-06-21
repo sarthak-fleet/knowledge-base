@@ -1,5 +1,8 @@
 # Live verification — final
 
+> Historical verification log from the Python reference phase. Current release
+> verification is the Worker-local gate under `cloudflare/worker`.
+
 > **Update 2026-05-27 — Step 7 (cross-model + bug-sweep round)**
 >
 > The data below was captured 2026-05-26 during the v5 phase. **Read this top
@@ -14,7 +17,7 @@
 > kb-minio      Up (healthy)
 > kb-postgres   Up (healthy)
 > kb-qdrant     Up
-> kb-streamlit  Up — verified HTTP 200 on http://localhost:8501
+> old local UI container was verified during the Python reference phase; active UI is now Worker `/ui`.
 > kb-worker     Up
 > ```
 >
@@ -60,7 +63,7 @@ kb-api        Up
 kb-minio      Up (healthy)
 kb-postgres   Up (healthy)
 kb-qdrant     Up
-kb-streamlit  Up
+old local UI container was up during this historical run
 kb-worker     Up
 ```
 
@@ -122,7 +125,7 @@ span_cite   per-citation span chosen via dense cosine; multi-source aware
 ```
 
 Each stage is timed and goes on `/query/trace/{id}` with token counts for the
-synthesize stage. Streamlit's Query page renders the decomposition as a row of
+synthesize stage. The active Worker UI renders the decomposition as a row of
 latency cards.
 
 ### Example trace
@@ -263,8 +266,8 @@ Failures decompose to:
 /query/traces          /query/trace/{id}    ← per-stage decomposition + token cost
 ```
 
-Streamlit (http://localhost:8501) — schema view, upload widget, query with cited
-answer + stage-decomposition expander, entity browser with lineage, eval report.
+Worker `/ui` — schema view, upload widget, query with cited answer plus
+stage-decomposition expander, entity browser with lineage, eval report.
 
 ## Pluggability (every dimension actually swappable)
 
@@ -285,7 +288,7 @@ answer + stage-decomposition expander, entity browser with lineage, eval report.
 3. **Cross-encoder reranker** — ms-marco-MiniLM-L-6-v2 rescores top-30 candidates to top-10. The biggest single quality jump.
 4. **Span-level citations** — per-citation excerpt narrowed to the most-relevant sentences inside the chunk via dense cosine, not the whole chunk text.
 5. **Per-stage trace** — every `/query/trace/{id}` carries `_stages` with timing + per-stage details; `_token_usage` aggregates LLM cost.
-6. **Streamlit trace visualization** — UI renders the stages as latency cards with intent + tokens metadata.
+6. **Trace visualization** — UI renders the stages as latency cards with intent + tokens metadata.
 7. **pgvector filter whitelist** — defense in depth.
 8. **Pre-warmed fastembed cache** in the Docker image (best-effort).
 9. **Expanded eval** — 25 questions, including 4 negative-refusal and 3 adversarial paraphrase / 1 contradiction trap.

@@ -1,0 +1,48 @@
+{
+  "name": "@fleet/knowledgebase-rag-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --local",
+    "deploy": "wrangler deploy",
+    "deploy:dry-run": "wrangler deploy --dry-run",
+    "predeploy:local": "node scripts/predeploy-local.mjs",
+    "backfill:dry-run": "node scripts/backfill-saas-maker.mjs --input fixtures/saas-maker-export.sample.json --dry-run",
+    "benchmark:dry-run": "node scripts/benchmark-rag.mjs --input fixtures/benchmark.sample.json --dry-run",
+    "migrate:raw:dry-run": "node scripts/migrate-raw-files.mjs --manifest fixtures/raw-migration.sample.json --infer-schema --apply-schema --queue-ingest --dry-run",
+    "migrate:raw:objects:dry-run": "node scripts/migrate-raw-files.mjs --object-root fixtures/minio-raw --dry-run",
+    "migrate:d1:export-sql": "node scripts/migrate-d1-metadata.mjs --print-postgres-export-sql",
+    "migrate:d1:dry-run": "node scripts/migrate-d1-metadata.mjs --input fixtures/d1-metadata-export.sample.json --dry-run",
+    "eval:parse:legacy:dry-run": "node scripts/legacy-parse-eval.mjs --export fixtures/d1-metadata-export.sample.json --raw-root fixtures/legacy-parse-eval --parse-root fixtures/legacy-parse-eval --dry-run",
+    "eval:parse:nvda-scanned:dry-run": "node scripts/legacy-parse-eval.mjs --raw-root ../../data/minio/kb-bucket --parse-root ../../data/minio/kb-bucket --direct-domain sec --direct-content-hash a56062aa2ee3c2eb6e1128e440e4ab683641e2ef4ccfa7e955538676a02c4c39 --direct-filename NVDA_riskfactors_sample_scanned.pdf --direct-mime application/pdf --expected-per-case 3 --filename-contains NVDA_riskfactors_sample_scanned.pdf --vision-ocr-model @cf/meta/llama-3.2-11b-vision-instruct,@cf/meta/llama-4-scout-17b-16e-instruct --require-cases --min-pass-rate 1 --dry-run",
+    "eval:parse:nvda-scanned:live": "node scripts/legacy-parse-eval.mjs --raw-root ../../data/minio/kb-bucket --parse-root ../../data/minio/kb-bucket --direct-domain sec --direct-content-hash a56062aa2ee3c2eb6e1128e440e4ab683641e2ef4ccfa7e955538676a02c4c39 --direct-filename NVDA_riskfactors_sample_scanned.pdf --direct-mime application/pdf --expected-per-case 3 --filename-contains NVDA_riskfactors_sample_scanned.pdf --base-url https://knowledgebase.sarthakagrawal927.workers.dev --vision-ocr-model @cf/meta/llama-3.2-11b-vision-instruct,@cf/meta/llama-4-scout-17b-16e-instruct --require-cases --min-pass-rate 1 --include-text-preview",
+    "audit:legacy-route-parity": "node scripts/audit-legacy-route-parity.mjs",
+    "audit:python-runtime-retirement": "node scripts/audit-python-runtime-retirement.mjs",
+    "audit:no-external-rag-service-references": "node scripts/audit-sibling-rag-service.mjs --require-no-external-references",
+    "audit:sibling-rag-service": "node scripts/audit-sibling-rag-service.mjs",
+    "gaps:full-port": "node scripts/full-port-gaps.mjs",
+    "preflight": "node scripts/preflight.mjs",
+  "readiness": "node scripts/deploy-readiness.mjs",
+  "readiness:auth": "node scripts/deploy-readiness.mjs --require-auth",
+  "readiness:full-port": "node scripts/deploy-readiness.mjs --require-auth --require-nvda-ocr --require-full-port",
+  "readiness:sibling-retirement": "node scripts/sibling-retirement-readiness.mjs",
+  "workers-ai:accept-llama32-vision-license": "node scripts/accept-llama32-vision-license.mjs",
+    "smoke:export:dry-run": "node scripts/smoke-saas-maker-export.mjs --input fixtures/saas-maker-export.sample.json --dry-run",
+    "smoke:local-cutover": "node scripts/smoke-local-cutover.mjs",
+    "smoke:legacy-routes": "node scripts/smoke-legacy-routes.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check": "pnpm run typecheck && pnpm test"
+  },
+  "dependencies": {
+    "fflate": "^0.8.3",
+    "hono": "4.12.18"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.0",
+    "typescript": "6.0.3",
+    "vitest": "4.1.5",
+    "wrangler": "4.103.0"
+  }
+}

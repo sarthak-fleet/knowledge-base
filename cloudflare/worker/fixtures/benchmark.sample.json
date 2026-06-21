@@ -1,0 +1,32 @@
+{
+  "index": {
+    "name": "Sample Benchmark Knowledge",
+    "external_id": "sample-benchmark-index"
+  },
+  "documents": [
+    {
+      "external_id": "alpha-doc",
+      "content": "Alpha release notes describe the dashboard cache and explain that repeated knowledge queries should return quickly.",
+      "metadata": {
+        "source": "alpha"
+      }
+    },
+    {
+      "external_id": "beta-doc",
+      "content": "Beta operations notes cover billing guardrails, Workers AI usage, and Cloudflare Vectorize migration checks.",
+      "metadata": {
+        "source": "beta"
+      }
+    }
+  ],
+  "queries": [
+    {
+      "query": "What mentions dashboard cache?",
+      "expected_contains": ["dashboard cache"]
+    },
+    {
+      "query": "Where are billing guardrails discussed?",
+      "expected_contains": ["billing guardrails"]
+    }
+  ]
+}

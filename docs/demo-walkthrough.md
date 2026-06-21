@@ -5,19 +5,16 @@ These are the demos that survive scrutiny. Each one takes ≤2 minutes and showc
 ## Pre-demo setup (1 min)
 
 ```bash
-docker compose up -d
-# wait ~10s
-curl -s http://localhost:8000/healthz   # {"status":"ok"}
-open http://localhost:8501              # Streamlit UI
-open http://localhost:8000/docs         # FastAPI Swagger
-open http://localhost:6333/dashboard    # Qdrant
+export RAG_BASE_URL="${RAG_BASE_URL:-https://knowledgebase.sarthakagrawal927.workers.dev}"
+curl -s "$RAG_BASE_URL/v1/healthz" | jq
+open https://knowledgebase.sarthakagrawal927.workers.dev/ui
 ```
 
-State to have ready: SEC + Legal already ingested (`make seed-all`).
+State to have ready: SEC + Legal already ingested on the Worker.
 
 ## Demo 1 — Cite an answer end-to-end on a real question
 
-Streamlit Query page:
+Worker testing UI query page:
 
 > "What does NVIDIA disclose about U.S. export controls affecting semiconductor sales?"
 
@@ -30,7 +27,7 @@ This is the "cited or it didn't happen" core feature.
 
 ## Demo 2 — Hot-swap domains
 
-Same Streamlit, switch domain dropdown SEC → Legal:
+Same Worker UI, switch domain dropdown SEC → Legal:
 
 > "What does GPL-3.0 require when distributing modified versions?"
 
@@ -40,7 +37,7 @@ Point out:
 
 ## Demo 3 — The structured-query route
 
-Streamlit, SEC domain:
+Worker UI, SEC domain:
 
 > "Which companies had quarterly revenue exceeding $60 billion?"
 
@@ -54,16 +51,16 @@ Point out:
 ## Demo 4 — The eval harness
 
 ```bash
-make eval
-# 25-question SEC eval with citation P/R + LLM judge + RAGAS metrics
+cd cloudflare/worker
+pnpm run eval:parse:nvda-scanned:dry-run
+# one-case scanned-PDF parser eval payload, no network or AI usage
 ```
 
 While it runs, narrate:
-- Each question has expected files + key facts
-- Citation F1 is *deterministic* — exact file-id match
-- The LLM judge reads the key_facts and grades the answer
-- RAGAS adds 4 more metrics (faithfulness, ctx_precision, ctx_recall, ans_relevance) to triangulate
-- Cross-model: I ran this across 5 models. Mid-tier llama-3.1-8b on Groq beats frontier Pro on pass rate. See `LEARNING.md`.
+- The eval is fail-closed with `--require-cases --min-pass-rate 1`.
+- The live version requires `RAG_SERVICE_KEY` and runs against the deployed Worker.
+- Full release readiness combines this live OCR proof with health/auth, binding
+  preflight, and the full-port blocker gate.
 
 ## Demo 5 — What I'd own honestly
 

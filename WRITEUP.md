@@ -1,5 +1,9 @@
 # Knowledge Base: Submission Brief
 
+> Historical submission brief. The active product runtime is now the
+> Cloudflare Worker in `cloudflare/worker`; the old Python `src/kb` runtime has
+> been retired.
+
 **Repository:** [github.com/sarthak-fleet/knowledge-base](https://github.com/sarthak-fleet/knowledge-base)
 
 Short brief. The depth lives in the repo:

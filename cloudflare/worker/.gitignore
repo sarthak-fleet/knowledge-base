@@ -1,0 +1,7 @@
+node_modules/
+.wrangler/
+dist/
+coverage/
+.dev.vars
+*.log
+worker-startup.cpuprofile

@@ -1,11 +1,14 @@
 # Private Agent Search
 
 [![CI](https://github.com/sarthak-fleet/knowledge-base/actions/workflows/ci.yml/badge.svg)](https://github.com/sarthak-fleet/knowledge-base/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-111%20passing-brightgreen)](#)
-[![ruff](https://img.shields.io/badge/ruff-clean-brightgreen)](#)
+[![worker-tests](https://img.shields.io/badge/worker_tests-passing-brightgreen)](#)
 
 Exa-style search for private, specialized document collections, with schemas,
 citations, and provenance for agents.
+
+This repo also owns the Cloudflare-native shared RAG Worker in
+`cloudflare/worker`. That Worker is the fleet `RAG_SERVICE`: service-key
+authenticated ingestion/query APIs backed by Workers AI, Vectorize, D1, and R2.
 
 Bring your own project and documents, or start from the included SEC/legal
 templates. Drop in research papers, company private information, spreadsheets,
@@ -29,9 +32,9 @@ The wedge is intentionally narrower than "generic RAG":
 
 This inversion is **contingent on retrieval quality**: the cheap-decisive synth is a retrieval-quality multiplier (NOTES.md §4.7, line 316). With reranker+RRF off, the 8b model would happily commit to wrong sources and the result flips. The right framing isn't "8b wins" — it's "no fixed model wins; the right synth depends on whether your context is solid enough that decisiveness pays off."
 
-Three other moments documented honestly in `LEARNING.md`:
+Three historical moments documented honestly in `LEARNING.md`:
 1. The DuckDB structured-query route was silently broken for 5 eval rounds (missing dep + import outside try) — every aggregate question 500'd, eval logged as `query_error`, all v0-v5 numbers achieved despite this. Caught by loud-error-logging, fixed.
-2. A methodology bug — `docker compose exec -e AI_MODEL=...` doesn't propagate to the API server, so 3 supposedly-different cross-model eval runs were the same model under different labels. Caught when two report files had identical MD5.
+2. A methodology bug in the retired Python reference stack — process-level env overrides did not propagate to the running API server, so 3 supposedly-different cross-model eval runs were the same model under different labels. Caught when two report files had identical MD5.
 3. A citation-hygiene gap I introduced in my own GraphRAG sketch (entity-graph themes shaped the answer but their `entity_mentions` weren't in the citation list) — caught it in self-review, closed it before shipping.
 
 The project mantra **"cited or it didn't happen"** holds through every retrieval path: hybrid + structured DuckDB + GraphRAG-sketch + Self-RAG retry + vision-LLM tables, all wired to terminate at a retrievable `(file_id, page, excerpt)` triple.
@@ -44,7 +47,7 @@ Sorted by how much time you have:
 - [`WRITEUP.md`](WRITEUP.md) — 4-page submission write-up: architecture diagram, three trickiest decisions, what I'd do differently, where it breaks. This is what to read if you're scoring against the assignment.
 
 **Post-submission additions** (after the original deliverable shipped):
-- [`SESSION_LOG.md`](SESSION_LOG.md) — what changed since: project namespace, cross-kind retrieval, unified `/ingest/*` endpoints, project-aware Streamlit UI, the OpenAI-client memory-leak fix, configurable reranker.
+- [`SESSION_LOG.md`](SESSION_LOG.md) — historical notes from the Python reference era.
 
 **15 min — decision depth + the empirical headline**
 1. [`LEARNING.md`](LEARNING.md) Part 4 (decision log) — every architectural choice, why, what surfaced it. Includes the 4 production bugs called out above.
@@ -74,119 +77,115 @@ Sorted by how much time you have:
 
 ```mermaid
 flowchart LR
-    User[User or agent] -->|HTTP /search or /query| API[FastAPI api]
-    API --> Pipeline
+    User[User or agent] -->|HTTP /v1/kb/search or /v1/kb/query| Worker[Cloudflare Worker]
+    Worker --> Pipeline
 
-    subgraph Pipeline[Query pipeline, 9+ stages]
+    subgraph Pipeline[Cloudflare-native query pipeline]
         direction TB
-        S1[intent + filters] --> S2[duckdb structured route]
-        S2 --> S3[graph_route themes]
-        S3 --> S4[decompose + rewrite + HyDE]
-        S4 --> S5[hybrid retrieve dense+sparse RRF]
-        S5 --> S6[rerank jina-v2]
+        S1[D1 structured route + filters] --> S2[D1 graph expansion]
+        S2 --> S3[rewrite + decompose fanout]
+        S3 --> S4[Vectorize + D1 fuzzy lexical RRF]
+        S4 --> S5[MMR + local rerank]
+        S5 --> S6[optional Workers AI rerank]
         S6 --> S7[MMR diversity]
-        S7 --> S8[CRAG + Self-RAG retry]
+        S7 --> S8[corrective lexical retry]
         S8 --> SearchOut[ranked cited evidence]
-        S8 --> S9[synthesize cited]
-        S9 --> S10[AIS verify]
+        S8 --> S9[extractive or Workers AI cited answer]
+        S9 --> S10[answer support checks]
         S10 --> S11[span_cite]
     end
 
-    Worker[asyncio worker<br/>SKIP LOCKED] -->|ingest jobs| Pipeline
-    Files[upload / edgar] -->|POST /files| API
-    API -.->|enqueue| Worker
+    Files[upload / URL / EDGAR / direct text / JSON] -->|POST /v1/kb/*| Worker
+    Worker -.-> Queue[Queues + Workflows]
 
-    Pipeline --> PG[(Postgres<br/>entities, jobs,<br/>traces, mentions)]
-    Pipeline --> Qdrant[(Qdrant<br/>kb_sec, kb_legal<br/>hybrid: dense + sparse)]
-    Worker --> MinIO[(MinIO<br/>raw + parse cache)]
+    Pipeline --> D1[(D1<br/>entities, jobs,<br/>traces, evals)]
+    Pipeline --> Vectorize[(Vectorize<br/>dense indexes)]
+    Worker --> R2[(R2<br/>raw + parse artifacts)]
+    Worker --> AI[(Workers AI)]
 
     classDef store fill:#e8f4f8,stroke:#0288d1,color:#01579b
-    class PG,Qdrant,MinIO store
+    class D1,Vectorize,R2,AI store
 ```
 
 Two demo domains (SEC + Legal) run on the **same code** with completely different schemas, sources, and eval sets — proves domain-agnosticism empirically, not aspirationally. See [`docs/onboard-new-domain.md`](docs/onboard-new-domain.md) for a 30-minute walkthrough of adding a third.
 
-## One-command bootstrap
+## Worker Commands
 
 ```bash
-cp .env.example .env   # fill in AI_API_KEY (DeepSeek default, free-AI gateway also configured)
-make up                # docker compose up -d --build  (postgres, qdrant, minio, api, worker, streamlit)
-make seed              # SEC: schema + 10 EDGAR filings + digital PDF + scanned (OCR) PDF + XLSX
-make seed-legal        # LEGAL: schema + 6 SPDX license texts (MIT, Apache-2.0, GPL-3.0, BSD-3, MPL-2.0, ISC)
-make seed-all          # both
-make eval              # 25-question SEC eval (citation P/R + LLM judge + RAGAS metrics)
-make eval-legal        # 12-question legal eval
+make worker-check        # typecheck + Worker tests
+make worker-preflight    # local wrangler binding check
+make worker-gaps         # full-port blocker inventory
+make worker-ocr-dry-run  # local scanned-PDF OCR eval payload proof, no network/AI
+make worker-local-cutover-smoke # boot wrangler dev and prove aliases + fingerprint locally
+make worker-predeploy-local # check + preflight + OCR dry-run + local smoke + deploy dry-run
+make worker-sibling-retirement-readiness # read-only proof before deleting ../rag-service
+cd cloudflare/worker && pnpm run audit:legacy-route-parity
+cd cloudflare/worker && pnpm run audit:python-runtime-retirement -- --require-complete
+cd cloudflare/worker && pnpm run deploy:dry-run
+cd cloudflare/worker && pnpm run smoke:legacy-routes -- --base-url "$RAG_BASE_URL" --require-complete
+cd cloudflare/worker && RAG_ALLOW_LIVE_OCR=1 RAG_SERVICE_KEY=<service-key> pnpm run readiness:full-port
 ```
 
-The `api` container runs `python -m kb.cli db init` on startup to apply migrations idempotently — no manual setup.
+After deploying this port, the `/healthz` row in `smoke:legacy-routes` should
+show `deploy_fingerprint=knowledgebase-cloudflare-full-port-2026-06-21`;
+`smoke:legacy-routes --require-complete` and `readiness:full-port` fail if the
+deployed Worker reports a different fingerprint.
+`readiness:full-port` cost-guards the live OCR eval: it skips Workers AI OCR
+until the deployed root aliases and fingerprint prove the current Worker build,
+and still requires `RAG_ALLOW_LIVE_OCR=1` or `--allow-live-ocr` before spending
+Workers AI OCR.
+Before deploying, `pnpm run smoke:local-cutover` starts `wrangler dev --local`
+on an ephemeral port and runs the same legacy alias + fingerprint smoke against
+the local Worker bundle.
+`pnpm run predeploy:local` wraps the local deploy-readiness sequence: Worker
+tests/typecheck, binding preflight, Python runtime retirement audit, no external
+fleet references to the old `rag-service`, the no-network NVDA scanned-PDF OCR
+eval payload dry-run, local cutover smoke, and Wrangler deploy dry-run.
+After the current Worker is deployed and live OCR passes, run
+`RAG_ALLOW_LIVE_OCR=1 RAG_SERVICE_KEY=<service-key> pnpm run readiness:sibling-retirement` before
+deleting `../rag-service`; it is read-only and fails unless deployed auth, OCR,
+legacy aliases, deploy fingerprint, local preflight, external references, and
+the gap matrix are ready for final sibling retirement.
 
-**Image footprint** — the built image is ~8 GB. The non-obvious chunk is ~2 GB of pre-warmed fastembed model weights (dense embedder, sparse, cross-encoder reranker) baked in during `docker build`. This is deliberate: the first `/query` would otherwise pay a ~25 s reranker-load + ~2 GB download on a fresh container, and sparse/reranker silently degrade if the network is slow. If you'd rather mount a persistent volume for the model cache, set `FASTEMBED_CACHE_DIR` to a mounted path and skip the pre-warm step in `docker/Dockerfile`.
-
-Then open:
-
-- API + Swagger → http://localhost:8000/docs
-- Streamlit agent-search UI → http://localhost:8501
-- Prometheus metrics → http://localhost:8000/metrics
-- MinIO console → http://localhost:9001
-- Qdrant dashboard → http://localhost:6333/dashboard
+Open the Cloudflare Worker testing UI at `/ui` on the deployed Worker.
 
 ## Try it from the command line
 
 The six most interesting endpoints, copy-paste-ready:
 
 ```bash
-# 1. Health check (DB + vector store + object store probes)
-curl -s http://localhost:8000/readyz | jq
+export RAG_BASE_URL="${RAG_BASE_URL:-https://knowledgebase.sarthakagrawal927.workers.dev}"
+export RAG_SERVICE_KEY="<service-key>"
 
-# 2. Infer a schema from representative files before ingestion
-curl -s -X POST http://localhost:8000/schemas/infer/files \
-  -F project=default \
-  -F domain=research-papers \
-  -F stage_files=true \
-  -F "files=@paper.pdf" \
-  | jq '{domain, sample_count, staged_files: (.staged_files | length)}'
+curl -s "$RAG_BASE_URL/v1/healthz" | jq
 
-# 3. Agent-native cited search on the SEC corpus, no answer synthesis
-curl -s -X POST http://localhost:8000/search \
+curl -s -X POST "$RAG_BASE_URL/v1/kb/query" \
+  -H "Authorization: Bearer $RAG_SERVICE_KEY" \
   -H 'Content-Type: application/json' \
-  -d '{"domain":"sec","query":"NVIDIA U.S. export controls","top_k":3}' \
-  | jq '.results[] | {rank, filename, page_start, excerpt}'
-
-# 4. Cited answer on the SEC corpus
-curl -s -X POST http://localhost:8000/query \
-  -H 'Content-Type: application/json' \
-  -d '{"domain":"sec","question":"What does NVIDIA disclose about U.S. export controls?"}' \
-  | jq '{answer, citations: [.citations[] | {filename, page_start, excerpt}], confidence}'
-
-# 5. The full trace for that answer (every stage, every latency, every token count)
-curl -s "http://localhost:8000/query/traces?domain=sec&limit=1" | jq '.[0].id' \
-  | xargs -I {} curl -s "http://localhost:8000/query/trace/{}" | jq '.filters._stages'
-
-# 6. The same question on the Legal domain — same code, different schema
-curl -s -X POST http://localhost:8000/query \
-  -H 'Content-Type: application/json' \
-  -d '{"domain":"legal","question":"What permission does the MIT License grant?"}' \
-  | jq '.answer'
+  -d '{"domain":"sec","question":"What does NVIDIA disclose about U.S. export controls?","top_k":5}' \
+  | jq '{answer, citations, confidence}'
 ```
 
 | Endpoint | What it does |
 | --- | --- |
-| `POST /search` | Agent-native cited search; returns ranked evidence with file, page, excerpt |
-| `POST /agent/search` | Alias for `/search` when wiring agent tools |
-| `POST /search/eval` | Search-quality eval: precision, recall, MRR, p95 latency |
-| `POST /query` | Run the full 9-stage pipeline; returns cited answer + confidence + trace_id |
-| `POST /query/stream` | Same, but as Server-Sent Events with per-stage progress |
-| `GET /query/traces?domain=X` | List recent query traces with timings + token usage |
-| `GET /query/trace/{id}` | Full per-stage record for one query (auditable) |
-| `POST /files` | Upload a doc; enqueues an ingest job |
-| `GET /ingest/jobs?domain=X` | Job queue state |
-| `POST /schemas/infer` | Propose a schema from sample chunks (Phase-2, opt-in) |
-| `POST /schemas/infer/files` | Upload representative files, parse samples, infer schema, optionally stage files |
-| `GET /schemas/drafts?project=X` | List durable inferred schema drafts awaiting confirmation |
-| `POST /schemas/drafts/{id}/apply` | Apply a confirmed draft and optionally ingest staged files |
-| `GET /projects/{project}/status` | Per-kind corpus state: draft, staged, ingesting, ready, failed |
-| `GET /metrics` | Prometheus-format counters + summaries |
-| `GET /readyz` | DB + vector + object store readiness probe |
+| `GET /v1/healthz` | Public Worker health check for D1 and Vectorize binding reachability |
+| `GET /readyz` | Public compatibility readiness probe for D1, Vectorize, and R2 |
+| `GET /metrics` | Public Prometheus-compatible compatibility scrape endpoint |
+| `GET /ui` | Worker-hosted testing UI |
+| `POST /v1/kb/query` | Cited answer path over D1, Vectorize, R2 artifacts, and optional Workers AI |
+| `POST /v1/kb/query/stream` | SSE query lifecycle stream with `started`, `stage`, and final `answer`/`error` events |
+| `POST /v1/kb/files/upload` | Upload a file into R2/D1 and queue ingest |
+| `POST /v1/kb/ingest/record` | Direct structured JSON ingestion with schema inference for new domains |
+| `POST /v1/kb/ingest/text` | Direct text ingestion |
+| `POST /v1/kb/evals/parse` | Parser-quality eval reports for migrated/fixture cases |
+| `GET /v1/kb/projects` | Project inventory |
+| `GET /v1/kb/sessions` | Query/session history |
+
+Retired FastAPI paths are preserved as authenticated compatibility aliases on
+the Worker: `/search`, `/agent/search`, `/search/eval`, `/query`,
+`/query/stream`, `/query/traces`, `/query/trace/:id`, plus the old product
+prefixes `/projects`, `/domains`, `/schemas`, `/files`, `/sources`,
+`/entities`, and `/ingest/*`.
 
 ## How this was built — AI-assistance disclosure
 
@@ -194,57 +193,32 @@ Built with heavy assist from Claude Opus 4.7 (visible as the co-author on commit
 
 | What I owned | What was collaborated |
 | --- | --- |
-| Architecture decisions (Postgres + Qdrant + MinIO split, schema-driven extraction, 9-stage pipeline shape) | Implementation mechanics for each stage |
-| Scope boundaries (which features to ship, which to cancel — e.g., the explicit cancel + reasoning on task #82 retrieval iteration) | Library swap mechanics (instructor, structlog, prometheus_client migration) |
+| Architecture decisions for the historical Python reference and current Cloudflare Worker migration | Implementation mechanics for each stage |
+| Scope boundaries (which features to ship, which to cancel — e.g., the explicit cancel + reasoning on task #82 retrieval iteration) | Library swap mechanics (instructor, structlog, parser/runtime migration) |
 | When to debug vs when to defer (the cross-model methodology bug → re-run with proper env propagation; the DuckDB ticker→canonical→noise-floor chain) | Code-level refactors |
 | Citation hygiene as a non-negotiable across new routes (caught my own GraphRAG-citation gap in self-review) | Test scaffolding, doc rewrites |
 | The empirical methodology (5×2 matrix, judge held constant, deterministic LLM cache for reproducibility) | Doc generation from my notes |
 
 The decision log in `LEARNING.md` was written from my own session notes; it's what I'd talk through in an interview.
 
-## Libraries used (intentionally, not "look mum a library")
-
-11 well-known libraries adopted in this codebase, each replacing hand-rolled scaffolding with a known-good standard:
-
-| Library | What it replaced |
-| --- | --- |
-| `instructor` | hand-rolled `chat_json` + JSON-schema dicts + defensive parsing at 5 LLM call sites |
-| `prometheus_client` | ~85-line hand-rolled metrics aggregator |
-| `structlog` | stdlib `logging.getLogger` across 32 modules; JSON in prod, console in TTY |
-| `asgi-correlation-id` | request_id threaded through every log line via context-var |
-| `cachetools` | manual FIFO dict eviction in `vector/embed.py` (Grok #9) |
-| `aiolimiter` | gateway 429 retry-cascade prevention |
-| `orjson` | stdlib JSON in FastAPI response path |
-| `uvloop` | stdlib asyncio loop |
-| `pre-commit` | trailing-whitespace, EOF, YAML/TOML/JSON validity, debug-statement detector, private-key detector |
-| `pytest-cov` + `mypy` | coverage + type-check signal in CI |
-| `ruff format` | format gate in CI |
-
-## What's in the source tree
+## Current Worker Source Tree
 
 | Path | What |
 | --- | --- |
-| `src/kb/schema/` | User-defined schema (entities, fields, NL descriptions, relationships, versioning) |
-| `src/kb/parse/` | Unstructured-based parsing + content-hash element cache + opt-in vision-LLM table extraction |
-| `src/kb/extract/` | Schema-driven extraction via OpenAI-compatible LLM (instructor); per-field provenance |
-| `src/kb/resolve/` | Entity resolution: deterministic identity keys + rapidfuzz + embedding tiebreak |
-| `src/kb/vector/` | Qdrant (default, hybrid dense+sparse via RRF) or pgvector |
-| `src/kb/query/` | 9-stage pipeline + GraphRAG-sketch route + DuckDB structured route + Self-RAG retry |
-| `src/kb/sources/` | Source-adapter Protocol; `edgar`, `upload` built-in; pluggable |
-| `src/kb/jobs/` | Asyncio worker pool against Postgres job table (`SKIP LOCKED`) |
-| `src/kb/api/` | FastAPI surface — Swagger at `/docs`, readiness at `/readyz`, metrics at `/metrics` |
-| `src/kb/config/` | Layered config — `defaults.yaml` < `domains/<d>/config.yaml` < env |
-| `src/kb/observability.py` | structlog + uvloop bootstrap, called once at process start |
-| `src/kb/eval/` | Eval runner: deterministic citation P/R + LLM-judge + RAGAS-shaped metrics + disk cache |
+| `cloudflare/worker/src/` | Hono Worker API, testing UI, D1 repository, parsers, retrieval/query pipeline |
+| `cloudflare/worker/scripts/` | Migration, smoke, benchmark, eval, preflight, and full-port gate tooling |
+| `cloudflare/worker/migrations/` | D1 schema for RAG and knowledgebase product state |
+| `cloudflare/worker/tests/` | Worker unit/integration coverage |
+| `cloudflare/full-port-gaps.json` | Executable full-port blocker inventory |
 | `domains/sec/` | Demo schema + config + 25-question eval set for SEC EDGAR filings |
 | `domains/legal/` | Demo schema + config + 12-question eval set for SPDX licenses |
-| `migrations/` | Postgres schema (extensions, tables, indexes), idempotent SQL |
-| `streamlit_app/` | Single-page demo UI |
-| `tests/` | 111 unit + integration tests, ruff + ruff-format + mypy in CI |
+| `data/minio/` | Local legacy raw/parse fixture mirror used by Worker migration/eval scripts |
 
-## Performance
+## Historical Python Performance
 
-Per-stage latency on SEC across a real eval run (25 questions, `gemini-2.5-flash` synth, `gemini-2.5-pro` judge, ~3-hop pipeline including DuckDB + GraphRAG-sketch routes):
+These numbers describe the retired Python reference path, not the Cloudflare
+Worker runtime. Worker performance evidence lives in `cloudflare/worker`
+benchmarks and project status.
 
 | Stage          | Typical p50 (ms) | Notes |
 | -------------- | ---------------: | ----- |
@@ -261,38 +235,31 @@ Per-stage latency on SEC across a real eval run (25 questions, `gemini-2.5-flash
 | `verify`       |             ~16 000 | AIS entailment per claim |
 | `span_cite`    |                 ~400 | Per-citation best-span via dense cosine over chunk text |
 
-End-to-end p50 ≈ **30 s warm**, **80 s cold** (first request loads embedder + reranker). Reproduce with:
+End-to-end p50 was about **30 s warm**, **80 s cold** in the retired Python
+path. Current Worker benchmark scripts live under `cloudflare/worker/scripts`.
+
+For sub-second response on Cloudflare, use the Worker defaults: extractive
+answers, D1 lexical/entity fast paths, cached popular queries, and optional
+Workers AI synthesis only when the caller needs generated prose.
+
+## Worker Domain Onboarding
+
+The active product path is configured through D1 state and Worker bindings, not
+the historical Python YAML pipeline. Keep the checked-in `domains/<name>/`
+fixtures for evals and migration reference, then use the Worker API for live
+corpora:
 
 ```bash
-python scripts/bench.py --domain sec --n 25
+cd cloudflare/worker
+pnpm run preflight
+
+# Apply or infer a schema through /v1/kb/schemas/* for file inputs, then ingest:
+# POST /v1/kb/files/upload
+# POST /v1/kb/ingest/run
+# POST /v1/kb/ingest/record # infers a schema for a new structured domain
+# POST /v1/kb/ingest/text  # indexes inline by default and does not require a schema
 ```
 
-For sub-second response, the right architecture is per-token streaming (the SSE endpoint exists; it doesn't yet stream per-token — see `LEARNING.md` Part 7). Costs trade against latency: enable `KB_LLM_CACHE_DIR` for deterministic replay and zero LLM cost on repeated queries; this is what makes eval iteration practical.
-
-## Configurability (no domain values in source)
-
-Everything pipeline-related is configurable in `domains/<name>/config.yaml`:
-
-```yaml
-llm:
-  extract: { model: deepseek-chat, temperature: 0.0 }
-  synthesize: { model: deepseek-chat, temperature: 0.2 }
-embedding:
-  dense: BAAI/bge-small-en-v1.5
-  sparse: Qdrant/bm42-all-minilm-l6-v2-attentions
-retrieve:
-  top_k_dense: 20
-  top_k_sparse: 20
-  rerank_top_k: 8
-  selfrag_threshold: 0.4
-  graph_route_enabled: true
-```
-
-## Swapping domains
-
-```bash
-make schema-apply   # for any domains/<name>/schema.yaml
-# then POST /files with your domain= and the pipeline takes over.
-```
-
-No code change required to onboard a new domain — see `DESIGN.md` for the boundary tests.
+No code change is required to onboard a new domain; create or infer the schema
+through the Worker, post direct records, ingest files, and query through
+`/v1/kb/search` or `/v1/kb/query`.

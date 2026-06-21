@@ -2,7 +2,7 @@
 # uploaded filenames. `key_facts` feeds the LLM-judge: every fact must be supported
 # (paraphrase OK) and the answer must not contradict any fact.
 #
-# This dataset is aligned with the seed corpus produced by `make seed`:
+# This dataset is historical Python-reference eval data aligned with:
 #   - NVDA + AAPL 10-K, 10-Q, 8-K from EDGAR (HTML)
 #   - One digital PDF + one scanned (image-only) PDF derived from NVDA risk factors
 #   - One synthetic financial summary XLSX

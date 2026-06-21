@@ -1,8 +1,6 @@
 # Bring Your Own Corpus
 
-This is the first-class product flow: bring specialized private material, infer
-the shape of the corpus, confirm it, ingest it, then expose cited search to
-agents.
+The active product flow runs through the Cloudflare Worker.
 
 Good starting corpora:
 
@@ -12,98 +10,40 @@ Good starting corpora:
 - contracts and policies;
 - private notes;
 - spreadsheets or JSON records;
-- small docs-site snapshots.
-- future company-memory exports such as Slack threads, Linear issues, meeting
-  transcripts, support tickets, and internal docs.
-
-SaaS connectors are not required for the core workflow, but they should fit the
-same ingestion shape later: collect source objects, normalize them into files or
-records, preserve source metadata, infer or confirm schema, ingest, and return
-cited search results.
+- docs-site snapshots.
 
 ## Flow
 
-1. Create a project.
-2. Choose a kind key such as `research-papers`, `company-info`, or `contracts`.
-3. Upload a few representative files or paste representative text.
-4. Call schema inference.
-5. Review and edit the schema.
-6. Apply the confirmed schema.
-7. Ingest the staged files.
-8. Use `/search` for ranked cited evidence or `/query` for cited answers.
-9. Run `/search/eval` against your expected source files.
+1. Pick a project and domain key.
+2. Upload files through Worker `/ui` or `/v1/kb/files/upload`.
+3. Confirm or apply a schema draft.
+4. Run queued ingestion.
+5. Query through `/v1/kb/query`.
+6. Use eval reports to track retrieval, answer, and parser quality.
 
-## API Flow
-
-Infer from representative files:
+## API Skeleton
 
 ```bash
-curl -s -X POST http://localhost:8000/schemas/infer/files \
-  -F project=my-private-corpus \
-  -F domain=research-papers \
-  -F stage_files=true \
-  -F "files=@paper-1.pdf" \
-  -F "files=@paper-2.pdf" \
-  | jq '{domain, sample_count, staged_files: (.staged_files | length), spec}'
-```
+export RAG_BASE_URL="${RAG_BASE_URL:-https://knowledgebase.sarthakagrawal927.workers.dev}"
+export RAG_SERVICE_KEY="<service-key>"
 
-Apply the reviewed draft:
-
-```bash
-curl -s -X POST http://localhost:8000/schemas/drafts/$DRAFT_ID/apply \
-  -H 'Content-Type: application/json' \
-  -d '{"project":"my-private-corpus","ingest_staged_files":true}'
-```
-
-Ingest the staged files:
-
-```bash
-curl -s -X POST http://localhost:8000/ingest/run \
-  -H 'Content-Type: application/json' \
-  -d '{"project":"my-private-corpus","domain":"research-papers","force":false}'
-```
-
-Search the ingested corpus:
-
-```bash
-curl -s -X POST http://localhost:8000/search \
+curl -s -X POST "$RAG_BASE_URL/v1/kb/query" \
+  -H "Authorization: Bearer $RAG_SERVICE_KEY" \
   -H 'Content-Type: application/json' \
   -d '{
     "project": "my-private-corpus",
     "domain": "research-papers",
-    "query": "What evidence discusses reranking?",
-    "top_k": 5
-  }' | jq '.results[] | {rank, filename, page_start, excerpt}'
+    "question": "What evidence discusses reranking?",
+    "top_k": 5,
+    "mode": "hybrid"
+  }' | jq '{answer, citations, confidence}'
 ```
 
-Check corpus state:
-
-```bash
-curl -s http://localhost:8000/projects/my-private-corpus/status | jq
-```
-
-Measure search quality:
-
-```bash
-curl -s -X POST http://localhost:8000/search/eval \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "project": "my-private-corpus",
-    "domain": "research-papers",
-    "questions": [
-      {
-        "id": "q1",
-        "query": "What evidence discusses reranking?",
-        "expected_files": ["paper-1.pdf"]
-      }
-    ]
-  }' | jq '{mean_recall, mean_mrr, mean_precision}'
-```
+Use the Worker `/ui` for upload, schema review, ingest progress, traces, and eval
+reports when working interactively.
 
 ## Current Limitations
 
+- Live scanned-PDF exact OCR parity is still a full-port blocker.
 - Inference quality depends on representative sample files.
-- Parsing scanned PDFs can be slow and depends on local OCR support.
-- The UI does not yet show live parse progress during schema inference.
-- Search snippets include highlights and neighboring context, but not facet
-  explanations yet.
+- Authenticated Worker checks require `RAG_SERVICE_KEY`.

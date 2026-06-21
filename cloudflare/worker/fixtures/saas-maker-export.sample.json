@@ -1,0 +1,32 @@
+{
+  "index": {
+    "name": "Sample SaaS Maker Knowledge",
+    "external_id": "sample-index"
+  },
+  "chunks": [
+    {
+      "id": "sample-chunk-1",
+      "document_id": "sample-doc-1",
+      "document_content": "Alpha launch notes for a sample project.",
+      "document_external_id": "sample-doc-1",
+      "content": "Alpha launch notes",
+      "embedding": [1, 0, 0],
+      "chunk_index": 0,
+      "metadata": {
+        "source": "fixture"
+      }
+    },
+    {
+      "id": "sample-chunk-2",
+      "document_id": "sample-doc-1",
+      "document_content": "Alpha launch notes for a sample project.",
+      "document_external_id": "sample-doc-1",
+      "content": "sample project",
+      "embedding": [0, 1, 0],
+      "chunk_index": 1,
+      "metadata": {
+        "source": "fixture"
+      }
+    }
+  ]
+}

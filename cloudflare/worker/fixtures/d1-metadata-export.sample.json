@@ -1,0 +1,177 @@
+{
+  "projects": [
+    {
+      "name": "default",
+      "description": "Default project",
+      "created_at": "2026-01-01T00:00:00.000Z",
+      "updated_at": "2026-01-01T00:00:00.000Z"
+    }
+  ],
+  "domains": [
+    {
+      "project": "default",
+      "name": "sec",
+      "description": "SEC filings",
+      "created_at": "2026-01-01T00:00:00.000Z",
+      "updated_at": "2026-01-01T00:00:00.000Z"
+    }
+  ],
+  "schemas": [
+    {
+      "id": "schema-1",
+      "project": "default",
+      "domain": "sec",
+      "name": "sec_filing",
+      "version": 1,
+      "spec": {
+        "name": "sec_filing",
+        "entities": [
+          {
+            "name": "Company",
+            "fields": [
+              { "name": "ticker", "type": "string", "identity": true }
+            ]
+          }
+        ],
+        "relationships": []
+      },
+      "is_active": true,
+      "created_at": "2026-01-01T00:01:00.000Z"
+    }
+  ],
+  "files": [
+    {
+      "id": "file-1",
+      "project": "default",
+      "domain": "sec",
+      "filename": "aapl-10k.txt",
+      "mime": "text/plain",
+      "bytes": 42,
+      "content_hash": "hash-file-1",
+      "canonical_hash": "hash-canonical-1",
+      "object_key": "raw/sec/hash-file-1/aapl-10k.txt",
+      "status": "ready",
+      "last_error": null,
+      "uploaded_at": "2026-01-01T00:02:00.000Z",
+      "updated_at": "2026-01-01T00:03:00.000Z"
+    }
+  ],
+  "parse_artifacts": [
+    {
+      "content_hash": "hash-file-1",
+      "parser": "unstructured:fast",
+      "parser_version": "0.15",
+      "object_key": "parsed/sec/hash-file-1/elements.json",
+      "page_count": 1,
+      "created_at": "2026-01-01T00:04:00.000Z"
+    }
+  ],
+  "entities": [
+    {
+      "id": "entity-1",
+      "project": "default",
+      "domain": "sec",
+      "type": "Company",
+      "identity_key": "ticker=AAPL",
+      "display_name": "Apple Inc.",
+      "fields": { "ticker": "AAPL", "name": "Apple Inc." },
+      "parent_id": null,
+      "created_at": "2026-01-01T00:05:00.000Z",
+      "updated_at": "2026-01-01T00:06:00.000Z"
+    }
+  ],
+  "entity_mentions": [
+    {
+      "id": "mention-1",
+      "project": "default",
+      "domain": "sec",
+      "entity_id": "entity-1",
+      "file_id": "file-1",
+      "schema_id": "schema-1",
+      "field_values": { "ticker": "AAPL" },
+      "confidence": 0.9,
+      "created_at": "2026-01-01T00:07:00.000Z"
+    }
+  ],
+  "entity_relationships": [],
+  "provenance_spans": [
+    {
+      "id": "span-1",
+      "project": "default",
+      "domain": "sec",
+      "file_id": "file-1",
+      "entity_id": "entity-1",
+      "field": "ticker",
+      "page_start": 1,
+      "page_end": 1,
+      "element_id": "el-1",
+      "excerpt": "Ticker AAPL",
+      "bbox": [0, 0, 10, 10],
+      "created_at": "2026-01-01T00:08:00.000Z"
+    }
+  ],
+  "ingest_jobs": [
+    {
+      "id": "job-1",
+      "project": "default",
+      "domain": "sec",
+      "file_id": "file-1",
+      "schema_id": "schema-1",
+      "stage": "done",
+      "status": "done",
+      "attempts": 1,
+      "last_error": null,
+      "queue_message_id": null,
+      "workflow_id": "workflow-1",
+      "locked_by": null,
+      "locked_at": null,
+      "created_at": "2026-01-01T00:09:00.000Z",
+      "updated_at": "2026-01-01T00:10:00.000Z"
+    }
+  ],
+  "chunks": [
+    {
+      "id": "chunk-1",
+      "project": "default",
+      "domain": "sec",
+      "file_id": "file-1",
+      "entity_id": "entity-1",
+      "parent_chunk": null,
+      "vector_id": "chunk-1",
+      "page_start": 1,
+      "page_end": 1,
+      "text": "Apple Inc. filed an annual report.",
+      "content_hash": "hash-chunk-1",
+      "also_in_files": [],
+      "bbox": null,
+      "metadata": { "source": "legacy" },
+      "created_at": "2026-01-01T00:11:00.000Z"
+    }
+  ],
+  "sessions": [
+    {
+      "id": "session-1",
+      "project": "default",
+      "domain": "sec",
+      "history": [{ "role": "user", "content": "Who filed?" }],
+      "created_at": "2026-01-01T00:12:00.000Z",
+      "updated_at": "2026-01-01T00:13:00.000Z"
+    }
+  ],
+  "query_traces": [
+    {
+      "id": "trace-1",
+      "project": "default",
+      "domain": "sec",
+      "question": "Who filed?",
+      "scope": { "domain": "sec" },
+      "filters": {},
+      "retrieved": [{ "id": "chunk-1", "score": 1 }],
+      "answer": "Apple Inc.",
+      "citations": [{ "file_id": "file-1", "page_start": 1, "page_end": 1 }],
+      "confidence": { "supported": true },
+      "latency_ms": 25,
+      "created_at": "2026-01-01T00:14:00.000Z"
+    }
+  ]
+}

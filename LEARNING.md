@@ -1,5 +1,8 @@
 # Learning doc — catch up on the full session
 
+> Historical learning log spanning the original Python service and migration.
+> Current runtime and checks live under `cloudflare/worker`.
+
 This is the **one document** to read end-to-end and understand everything we did, every decision made, every bug found, every number recorded.
 
 - `README.md` — how to run + headline finding
@@ -193,9 +196,10 @@ So `WHERE ticker='AAPL' AND name='Revenue'` still matches 0 rows for Apple.
 
 **Commit**: `0f21cf0 fix(metrics): actually call record_query from the engine`
 
-### D-10 — Surfaced bug: streamlit container existed in compose but wasn't running
+### D-10 — Surfaced bug: old local UI container existed in compose but wasn't running
 
-**Fix**: `docker compose up -d streamlit`. Verified HTTP 200 on `localhost:8501`.
+**Fix at the time**: brought up the old local UI container and verified HTTP 200.
+That UI has since been retired in favor of the Worker `/ui`.
 
 ### D-11 — Surfaced bug: RAGAS crashed on flash-lite
 
@@ -261,7 +265,7 @@ a7f92be  chore: gitignore eval_results/ — local-only output dir
 3955e5e  fix(duckdb): file-level ticker fallback so aggregate SQL stops returning NULL
 f98c07d  docs: add llama-3.1-8b sweep + DuckDB attribution deep-dive to NOTES
 88113a4  fix: CI lint failures from recent commits
-+ (this commit) fix(duckdb): metric-name canonical column + Streamlit verified
++ (this commit) fix(duckdb): metric-name canonical column + UI verified
 + (this commit) docs: learning doc
 ```
 

@@ -26,22 +26,27 @@ and other sources that are too small or private for web-scale search.
 - Schema-driven ingestion: files and records produce structured entities,
   provenance spans, relationships, and searchable chunks.
 - Source input: manual upload, schema-inference sample files, structured
-  records/text, EDGAR demos, and URL fetches. The source adapter boundary should
-  also support future company-memory imports such as Slack, Linear, meeting
-  recordings/transcripts, docs, tickets, and support logs.
-- Agent search API: `POST /search` and `POST /agent/search` return ranked cited
-  evidence without answer synthesis.
-- Answer API: `POST /query` synthesizes cited answers and records traces.
+  records/text, EDGAR imports, and URL fetches through the Cloudflare Worker.
+  Future company-memory imports such as Slack, Linear, meeting
+  recordings/transcripts, docs, tickets, and support logs should enter through
+  the same Worker source/import boundary.
+- Agent search API: `POST /v1/kb/search` returns ranked cited evidence without
+  answer synthesis; retired `POST /search` and `POST /agent/search` paths are
+  authenticated compatibility aliases.
+- Answer API: `POST /v1/kb/query` returns cited answers and records traces;
+  `POST /v1/kb/query/stream` provides SSE lifecycle events, with retired
+  `/query` and `/query/stream` paths kept as compatibility aliases.
 - Citation hard gate: configured citation verification can refuse unsupported
   generated claims.
 - Lifecycle controls: file delete, file reprocess, and schema-version reprocess.
-- Eval hooks: project-aware eval runner plus quick UI eval.
-- Search eval: `POST /search/eval` reports precision, recall, MRR, and p95
-  latency for ranked evidence.
-- Corpus status: `GET /projects/{project}/status` reports per-kind readiness
-  state.
-- Agent docs: `docs/agent-tool-contract.md` describes when to call `/search`
-  versus `/query`.
+- Eval hooks: Worker routes persist search/query/parse eval reports and expose
+  summary/history.
+- Search eval: `POST /v1/kb/evals/search` reports hit rate, MRR, and latency
+  for ranked evidence; retired `/search/eval` is a compatibility alias.
+- Corpus status: `GET /v1/kb/projects/{project}/status` reports per-domain
+  readiness state.
+- Agent docs: `docs/agent-tool-contract.md` describes the current Worker
+  contract and compatibility aliases.
 - Bring-your-own-corpus docs: `docs/bring-your-own-corpus.md` covers upload,
   infer, confirm, ingest, and search.
 
@@ -69,9 +74,8 @@ Do not pitch this as:
 
 1. **Search ranking evals**
 
-   A v1 `/search/eval` endpoint exists with precision, recall, MRR, and p95
-   latency. The next step is saved eval reports per project/kind, trend history,
-   and per-filter/per-kind breakdowns.
+   Worker eval endpoints now persist reports and expose summary/history. The
+   next step is stronger trend views per project/kind and per-filter breakdowns.
 
 2. **Agent tool contract**
 
@@ -81,10 +85,10 @@ Do not pitch this as:
 
 3. **Bring-your-own corpus onboarding**
 
-   The self-serve path now exists: upload representative files, infer a durable
-   schema draft, confirm it, and ingest staged files. It still needs hardening:
-   live progress visibility while sample files are parsed and clearer handling
-   when schema inference fails.
+   The self-serve Worker path now exists: upload representative files, infer a
+   durable schema draft, confirm it, queue or inline ingest staged files, and
+   inspect run progress. It still needs clearer live progress while schema
+   inference itself is parsing samples and better failure repair UX.
 
 4. **Company-memory ingestion**
 
@@ -95,9 +99,9 @@ Do not pitch this as:
    records, infer/confirm schema when needed, preserve source metadata, ingest,
    and expose cited search.
 
-   The missing pieces are source-set management and sync state: bulk replace,
-   file grouping, collection metadata, cursors, deletion handling, stale/failed
-   counts, and transcript/media normalization.
+   Source-set summaries and several bulk actions now exist. Remaining work is
+   deeper sync state: cursors, deletion handling, stale counts, and
+   transcript/media normalization.
 
 5. **Search snippets and metadata**
 
@@ -113,22 +117,23 @@ Do not pitch this as:
 
 7. **Parser strategy maturity**
 
-   Strategy selection is configurable and Docling is optionally supported, but
-   parser choice is not yet auto-evaluated per file. The next step is parser
-   benchmarking by source type and explicit parse-quality diagnostics.
+   Parser choice is Cloudflare-native now: TypeScript parsers plus Workers AI
+   Markdown Conversion and opt-in vision OCR. The next step is closing exact
+   scanned-PDF OCR parity and adding clearer parse-quality diagnostics by
+   source type.
 
 8. **Latency**
 
-   `/search` avoids synthesis and is the right fast path, but first-call model
-   loading and cross-encoder reranking can still be slow. Production agent use
-   needs warm model caches, smaller rerank modes, and latency budgets per tool.
+   `/v1/kb/search` and lexical/entity query paths avoid synthesis and are the
+   fast path. Unique semantic misses still pay Workers AI embedding plus
+   Vectorize latency; production agent use needs cached popular queries,
+   precomputed query vectors where appropriate, and per-tool latency budgets.
 
 9. **Hosted personal product**
 
-   The local stack works and `docs/hosting-personal.md` defines the safe hosting
-   checklist. A real hosted version still needs durable storage policy, backups,
-   observability, usage limits, background ingest jobs, and a deployment target.
-   ACLs are intentionally out of scope while this stays personal.
+   The deployed target is the `knowledgebase` Cloudflare Worker. Remaining
+   hosted-product work is durable backup/restore drills, usage limits, live OCR
+   parity proof, and final sibling `rag-service` retirement.
 
 10. **Templates**
 
@@ -138,7 +143,7 @@ Do not pitch this as:
 
 ## Near-Term Roadmap
 
-1. Persist `/search/eval` reports and trend them per project/kind.
+1. Improve eval trend views per project/kind.
 2. Add framework-specific agent examples around the stable HTTP contract.
 3. Add live progress for sample-file parsing and schema inference.
 4. Add source-set management for uploaded and imported company-memory sources.

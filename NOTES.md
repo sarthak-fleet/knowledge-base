@@ -1,5 +1,9 @@
 # Engineering notes — Knowledge Base service
 
+> Historical engineering notes for the original Python implementation and its
+> migration path. The active product runtime is now the Cloudflare Worker in
+> `cloudflare/worker`.
+
 This file is a single-source reference for talking through this codebase.
 It covers (a) every decision and why, (b) the research and primary sources
 behind each choice, (c) the empirical numbers we observed at each step,

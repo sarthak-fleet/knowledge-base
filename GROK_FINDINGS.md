@@ -1,5 +1,9 @@
 # GROK Code Review Findings — Knowledge Base Service
 
+> Historical review of the initial Python service. The active product runtime is
+> now the Cloudflare Worker in `cloudflare/worker`; the reviewed Python
+> `src/kb` runtime has been retired.
+
 **Generated:** 2026-05-26  
 **Source:** Full initial codebase review (fresh repository)  
 **Reviewer:** Grok 4.3 (via dedicated review skill + reviewer persona)  

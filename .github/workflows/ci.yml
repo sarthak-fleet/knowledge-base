@@ -5,18 +5,21 @@ on:
   pull_request:
 
 jobs:
-  lint-test:
+  worker-check:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cloudflare/worker
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
+      - uses: pnpm/action-setup@v4
         with:
-          version: "0.11.17"
-      - run: uv python install 3.11
-      - run: uv sync --all-extras
-      - run: uv run ruff check src tests
-      - run: uv run ruff format --check src tests
-      - run: uv run pytest -q --cov=kb --cov-report=term-missing
-      # mypy is informational for now — annotations aren't all strict yet
-      - run: uv run mypy src/kb --ignore-missing-imports --no-strict-optional
-        continue-on-error: true
+          version: 10.33.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: cloudflare/worker/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run predeploy:local -- --json
+      - run: pnpm run gaps:full-port -- --json
