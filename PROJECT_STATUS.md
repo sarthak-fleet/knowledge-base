@@ -12,6 +12,8 @@ Last updated: 2026-06-21
 
 **Migration complete (2026-06-21):** Full Cloudflare port is done — `gaps:full-port` reports 0 remaining. The current `cloudflare/worker` is deployed (version `418b60d7-5901-40e1-8948-a92d56cab351`) with the `knowledgebase-cloudflare-full-port-2026-06-21` fingerprint live, deployed legacy-route parity and live NVDA scanned-PDF OCR (pass_rate 1) proven via `readiness:full-port`, and the sibling `rag-service` repo deleted after `readiness:sibling-retirement` passed (source-only archive kept at `../rag-service-retired-2026-06-21.tgz`).
 
+**Deployed corpus is empty by design.** The cutover ships code + infra parity, not ingested data: the deployed D1 has `documents=0` / `chunks=0` and no per-domain entries in the `indexes` table across all tenants, so live RAG queries (`/v1/kb/query`) over demo domains return `domain index not found` until ingestion runs. This matches the documented empty-at-rollout design (knowledge tables empty, no backfill required before rollout; Starboard falls back to lexical-only). The `legal`/`sec` `kb_domains`/`kb_entities`/`kb_files` rows present in deployed D1 are a small partial metadata import, not a queryable corpus. To make demo queries answer, run domain ingestion (e.g. `migrate-raw-files.mjs --queue-ingest` or the `/v1/kb/files/:id/reprocess` route) from the R2 raw files — this spends Workers AI embedding calls and is an opt-in post-cutover step.
+
 ## Dependencies
 
 ### External
