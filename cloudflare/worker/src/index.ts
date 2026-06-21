@@ -6,6 +6,7 @@ import { chunkText } from './chunk';
 import { D1Repository } from './d1-repository';
 import { parseUploadBytesWithCloudflare } from './document-parser';
 import { embedTexts } from './embeddings';
+import { freeAiChatRaw, freeAiEmbed, freeAiSynthEnabled, freeAiSynthModel } from './free-ai';
 import {
   D1MetadataRepository,
   parseFileRegistrationBody,
@@ -1092,6 +1093,33 @@ function aiTextResponse(response: unknown): string {
   return JSON.stringify(response);
 }
 
+// Embedding provider seam: route through the free-ai gateway when configured,
+// otherwise use Cloudflare Workers AI. Matches the embedTexts signature so it
+// drops into the createApp `embed` dependency.
+function defaultEmbed(env: Env, texts: string[], options: { model?: string } = {}): Promise<number[][]> {
+  return env.RAG_EMBED_PROVIDER === 'free_ai'
+    ? freeAiEmbed(env, texts, options)
+    : embedTexts(env, texts, options);
+}
+
+// Chat/synthesis provider seam: free-ai gateway or Workers AI. Both return a
+// response shape aiTextResponse() understands.
+async function runAiChat(
+  env: Env,
+  model: string,
+  body: {
+    messages: Array<{ role: string; content: string }>;
+    max_tokens?: number;
+    temperature?: number;
+    response_format?: unknown;
+  },
+): Promise<unknown> {
+  if (freeAiSynthEnabled(env)) {
+    return freeAiChatRaw(env, model, body);
+  }
+  return env.AI.run(model, body as unknown as JsonRecord);
+}
+
 function parseJudgeJson(text: string): JsonRecord | null {
   try {
     const parsed = JSON.parse(text) as unknown;
@@ -1135,9 +1163,11 @@ async function synthesizeAnswerWithAi(input: {
   retrieved: SearchResult[];
   model?: string | undefined;
 }): Promise<{ answer: string; model: string }> {
-  const model = input.model?.trim() || input.env.RAG_ANSWER_MODEL?.trim() || DEFAULT_ANSWER_MODEL;
+  const model = freeAiSynthEnabled(input.env)
+    ? freeAiSynthModel(input.env)
+    : input.model?.trim() || input.env.RAG_ANSWER_MODEL?.trim() || DEFAULT_ANSWER_MODEL;
   const evidence = boundedEvidenceText(input.citations, input.retrieved);
-  const response = await input.env.AI.run(model, {
+  const response = await runAiChat(input.env, model, {
     messages: [
       {
         role: 'system',
@@ -1162,7 +1192,7 @@ async function synthesizeAnswerWithAi(input: {
     ],
     max_tokens: 512,
     temperature: 0.1,
-  } as unknown as JsonRecord) as unknown;
+  });
   return { answer: parseAnswerText(aiTextResponse(response)).slice(0, 4000), model };
 }
 
@@ -1239,9 +1269,11 @@ async function judgeAnswerWithAi(input: {
   retrieved: SearchResult[];
   model?: string;
 }): Promise<JsonRecord> {
-  const model = input.model?.trim() || DEFAULT_EVAL_JUDGE_MODEL;
+  const model = freeAiSynthEnabled(input.env)
+    ? freeAiSynthModel(input.env)
+    : input.model?.trim() || DEFAULT_EVAL_JUDGE_MODEL;
   const evidence = boundedEvidenceText(input.citations, input.retrieved);
-  const response = await input.env.AI.run(model, {
+  const response = await runAiChat(input.env, model, {
     messages: [
       {
         role: 'system',
@@ -1279,7 +1311,7 @@ async function judgeAnswerWithAi(input: {
         required: ['status', 'score', 'rationale'],
       },
     },
-  } as unknown as JsonRecord) as unknown;
+  });
   const parsed = parseJudgeJson(aiTextResponse(response));
   const status = typeof parsed?.status === 'string' && ['supported', 'partial', 'unsupported'].includes(parsed.status)
     ? parsed.status
@@ -2128,7 +2160,7 @@ export function createApp(options: AppOptions = {}) {
   const app = new Hono<{ Bindings: Env; Variables: Variables }>();
   const makeRepository = options.makeRepository ?? ((env: Env) => new D1Repository(env.DB));
   const makeMetadataRepository = options.makeMetadataRepository ?? ((env: Env) => new D1MetadataRepository(env.DB));
-  const embed = options.embed ?? embedTexts;
+  const embed = options.embed ?? defaultEmbed;
   const queryCache = options.queryCache ?? new TtlCache<QueryPayload>(parseCacheOptions({}));
   const embeddingCache = options.embeddingCache ?? new TtlCache<number[]>(parseCacheOptions({}));
   const indexCache = options.indexCache ?? new TtlCache<boolean>(parseCacheOptions({}));

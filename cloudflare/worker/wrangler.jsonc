@@ -11,14 +11,16 @@
   "ai": {
     "binding": "AI"
   },
+  "services": [
+    {
+      "binding": "FREE_AI",
+      "service": "free-ai-gateway"
+    }
+  ],
   "vectorize": [
     {
       "binding": "VECTORIZE",
-      "index_name": "rag-bge-768"
-    },
-    {
-      "binding": "VECTORIZE_SMALL",
-      "index_name": "rag-bge-small-384"
+      "index_name": "rag-gemini-1536"
     }
   ],
   "d1_databases": [
@@ -69,6 +71,14 @@
     "RAG_AI_GATEWAY_CACHE_TTL_SECONDS": "3600",
     "RAG_CACHE_ENABLED": "true",
     "RAG_CACHE_TTL_SECONDS": "300",
-    "RAG_CACHE_MAX_ENTRIES": "1000"
+    "RAG_CACHE_MAX_ENTRIES": "1000",
+    "RAG_EMBED_PROVIDER": "free_ai",
+    "RAG_SYNTH_PROVIDER": "free_ai",
+    "FREE_AI_BASE_URL": "https://free-ai-gateway.sarthakagrawal927.workers.dev/v1",
+    "FREE_AI_PROJECT_ID": "knowledgebase",
+    "FREE_AI_EMBED_MODEL": "gemini-embedding-001",
+    "FREE_AI_EMBED_PROVIDER": "gemini",
+    "FREE_AI_EMBED_DIMENSIONS": "1536",
+    "FREE_AI_SYNTH_MODEL": "gemini-2.5-flash"
   }
 }
