@@ -7,6 +7,7 @@ import { buildAPlusScorecard, loadScorecardEvidence, parseArgs } from '../script
 const aPlusOperatorReport = {
   ok: true,
   authenticated: true,
+  domain: 'demo.example',
   checks: [
     { name: 'public_health', ok: true, status: 200, deploy_fingerprint: 'current-fp' },
     { name: 'auth_boundary', ok: true, status: 401 },
@@ -44,6 +45,8 @@ describe('a-plus-scorecard', () => {
       '/tmp/report.json',
       '--require-grade',
       'A+',
+      '--require-domain',
+      'Demo.Example',
       '--require-benchmark-mode',
       'lexical',
       '--require-benchmark-surface',
@@ -56,6 +59,7 @@ describe('a-plus-scorecard', () => {
       benchmarks: [],
       requireGrade: 'A+',
       expectedDeployFingerprint: '',
+      requiredDomain: 'demo.example',
       requiredBenchmarkModes: ['lexical'],
       requiredBenchmarkSurfaces: ['kb-query'],
       requiredEvalKinds: ['query'],
@@ -130,6 +134,7 @@ describe('a-plus-scorecard', () => {
       benchmarks: [
         {
           surface: 'kb-search',
+          domain: 'demo.example',
           mode: 'lexical',
           hit_rate: 0.98,
           latency: { p95_ms: 180 },
@@ -137,6 +142,7 @@ describe('a-plus-scorecard', () => {
         },
         {
           surface: 'kb-query',
+          domain: 'demo.example',
           mode: 'semantic',
           hit_rate: 0.93,
           latency: { p95_ms: 1300 },
@@ -168,6 +174,7 @@ describe('a-plus-scorecard', () => {
       benchmarks: [
         {
           surface: 'kb-search',
+          domain: 'demo.example',
           mode: 'lexical',
           hit_rate: 0.98,
           latency: { p95_ms: 180 },
@@ -194,6 +201,7 @@ describe('a-plus-scorecard', () => {
       benchmarks: [
         {
           surface: 'kb-search',
+          domain: 'demo.example',
           mode: 'lexical',
           hit_rate: 0.98,
           latency: { p95_ms: 180 },
@@ -201,6 +209,7 @@ describe('a-plus-scorecard', () => {
         },
         {
           surface: 'kb-query',
+          domain: 'demo.example',
           mode: 'semantic',
           hit_rate: 0.93,
           latency: { p95_ms: 1300 },
@@ -210,6 +219,7 @@ describe('a-plus-scorecard', () => {
     }, {
       requireGrade: 'A+',
       expectedDeployFingerprint: 'current-fp',
+      requiredDomain: 'demo.example',
       requiredBenchmarkModes: ['lexical', 'semantic'],
       requiredBenchmarkSurfaces: ['kb-search', 'kb-query'],
       requiredEvalKinds: ['query', 'search'],
@@ -217,6 +227,37 @@ describe('a-plus-scorecard', () => {
 
     expect(scorecard.ok).toBe(true);
     expect(scorecard.overall_grade).toBe('A+');
+  });
+
+  it('fails evidence scope when domain benchmark evidence is for the wrong account', () => {
+    const scorecard = buildAPlusScorecard({
+      operator_report: aPlusOperatorReport,
+      benchmarks: [
+        {
+          surface: 'kb-query',
+          domain: 'other.example',
+          mode: 'semantic',
+          hit_rate: 0.93,
+          latency: { p95_ms: 1300 },
+          server_latency: { p95_ms: 980 },
+        },
+      ],
+    }, {
+      requireGrade: 'A',
+      requiredDomain: 'demo.example',
+    });
+
+    expect(scorecard.ok).toBe(false);
+    expect(scorecard.blockers).toContain('benchmark_domain_scope_mismatch');
+    expect(scorecard.categories.find((category) => category.name === 'evidence_scope'))
+      .toMatchObject({
+        grade: 'C',
+        evidence: {
+          required_domain: 'demo.example',
+          operator_domain: 'demo.example',
+          mismatched_benchmark_domains: ['kb-query:other.example'],
+        },
+      });
   });
 
   it('fails retrieval quality when required eval kinds are missing', () => {

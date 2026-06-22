@@ -44,6 +44,7 @@ Input can be:
 
 Options:
   --expected-deploy-fingerprint <value> Require operator report health to match this deploy fingerprint.
+  --require-domain <domain>             Require operator report and domain benchmarks to match this domain.
   --require-benchmark-mode <mode>       Require lexical, semantic, or hybrid evidence. Repeatable.
   --require-benchmark-surface <surface> Require index, kb-search, or kb-query evidence. Repeatable.
   --require-eval-kind <kind>            Require query, search, parse, or other eval report kind. Repeatable.
@@ -59,6 +60,7 @@ function parseArgs(argv) {
     benchmarks: [],
     requireGrade: 'A',
     expectedDeployFingerprint: process.env.RAG_EXPECTED_DEPLOY_FINGERPRINT || '',
+    requiredDomain: process.env.RAG_SCORECARD_DOMAIN || '',
     requiredBenchmarkModes: [],
     requiredBenchmarkSurfaces: [],
     requiredEvalKinds: [],
@@ -74,6 +76,7 @@ function parseArgs(argv) {
     else if (arg === '--benchmark') out.benchmarks.push(value);
     else if (arg === '--require-grade') out.requireGrade = normalizeGrade(value);
     else if (arg === '--expected-deploy-fingerprint') out.expectedDeployFingerprint = value.trim();
+    else if (arg === '--require-domain') out.requiredDomain = normalizeDomain(value);
     else if (arg === '--require-benchmark-mode') out.requiredBenchmarkModes.push(normalizeBenchmarkMode(value));
     else if (arg === '--require-benchmark-surface') out.requiredBenchmarkSurfaces.push(normalizeBenchmarkSurface(value));
     else if (arg === '--require-eval-kind') out.requiredEvalKinds.push(normalizeEvalKind(value));
@@ -83,6 +86,10 @@ function parseArgs(argv) {
     throw new Error('--input or --operator-report/--benchmark is required');
   }
   return out;
+}
+
+function normalizeDomain(value) {
+  return String(value || '').trim().toLowerCase();
 }
 
 function normalizeEvalKind(value) {
@@ -240,6 +247,57 @@ function scoreReliability(operatorReport, requirements = {}) {
     },
   });
   return { name: 'reliability', ...result, blockers };
+}
+
+function scoreScope(operatorReport, benchmarks, requirements = {}) {
+  const requiredDomain = normalizeDomain(requirements.domain);
+  const operatorDomain = normalizeDomain(operatorReport?.domain);
+  const domainBenchmarks = benchmarks
+    .map((benchmark) => ({
+      surface: detectBenchmarkSurface(benchmark),
+      domain: normalizeDomain(benchmark?.domain),
+    }))
+    .filter((benchmark) => benchmark.surface !== 'index');
+  if (!requiredDomain) {
+    return {
+      name: 'evidence_scope',
+      grade: 'A+',
+      ok: true,
+      blockers: [],
+      evidence: {
+        required_domain: null,
+        operator_domain: operatorDomain || null,
+        benchmark_domains: domainBenchmarks,
+      },
+    };
+  }
+
+  const blockers = [];
+  if (!operatorDomain) blockers.push('missing_operator_domain_scope');
+  else if (operatorDomain !== requiredDomain) blockers.push('operator_domain_scope_mismatch');
+
+  const missingBenchmarkDomains = domainBenchmarks
+    .filter((benchmark) => !benchmark.domain)
+    .map((benchmark) => benchmark.surface);
+  const mismatchedBenchmarkDomains = domainBenchmarks
+    .filter((benchmark) => benchmark.domain && benchmark.domain !== requiredDomain)
+    .map((benchmark) => `${benchmark.surface}:${benchmark.domain}`);
+  if (missingBenchmarkDomains.length > 0) blockers.push('missing_benchmark_domain_scope');
+  if (mismatchedBenchmarkDomains.length > 0) blockers.push('benchmark_domain_scope_mismatch');
+
+  return {
+    name: 'evidence_scope',
+    grade: blockers.length === 0 ? 'A+' : 'C',
+    ok: blockers.length === 0,
+    blockers,
+    evidence: {
+      required_domain: requiredDomain,
+      operator_domain: operatorDomain || null,
+      benchmark_domains: domainBenchmarks,
+      missing_benchmark_domain_surfaces: missingBenchmarkDomains,
+      mismatched_benchmark_domains: mismatchedBenchmarkDomains,
+    },
+  };
 }
 
 function scorePerformance(benchmarks, requirements = {}) {
@@ -486,6 +544,9 @@ export function buildAPlusScorecard(rawEvidence, options = {}) {
     scoreReliability(evidence.operatorReport, {
       expectedDeployFingerprint: options.expectedDeployFingerprint,
     }),
+    scoreScope(evidence.operatorReport, evidence.benchmarks, {
+      domain: options.requiredDomain,
+    }),
     scorePerformance(evidence.benchmarks, {
       modes: options.requiredBenchmarkModes,
       surfaces: options.requiredBenchmarkSurfaces,
@@ -525,6 +586,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     const scorecard = buildAPlusScorecard(input, {
       requireGrade: args.requireGrade,
       expectedDeployFingerprint: args.expectedDeployFingerprint,
+      requiredDomain: args.requiredDomain,
       requiredBenchmarkModes: args.requiredBenchmarkModes,
       requiredBenchmarkSurfaces: args.requiredBenchmarkSurfaces,
       requiredEvalKinds: args.requiredEvalKinds,
