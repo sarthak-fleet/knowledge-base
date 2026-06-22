@@ -51,6 +51,10 @@ describe('a-plus-scorecard', () => {
       'lexical',
       '--require-benchmark-surface',
       'kb-query',
+      '--min-benchmark-repeat',
+      '5',
+      '--min-benchmark-samples',
+      '10',
       '--require-eval-kind',
       'query',
     ])).toEqual({
@@ -62,6 +66,8 @@ describe('a-plus-scorecard', () => {
       requiredDomain: 'demo.example',
       requiredBenchmarkModes: ['lexical'],
       requiredBenchmarkSurfaces: ['kb-query'],
+      minBenchmarkRepeat: 5,
+      minBenchmarkSamples: 10,
       requiredEvalKinds: ['query'],
     });
   });
@@ -136,17 +142,21 @@ describe('a-plus-scorecard', () => {
           surface: 'kb-search',
           domain: 'demo.example',
           mode: 'lexical',
+          repeat: 5,
           hit_rate: 0.98,
           latency: { p95_ms: 180 },
           server_latency: { p95_ms: 140 },
+          queries: Array.from({ length: 10 }, (_, i) => ({ query: `lexical ${i}` })),
         },
         {
           surface: 'kb-query',
           domain: 'demo.example',
           mode: 'semantic',
+          repeat: 5,
           hit_rate: 0.93,
           latency: { p95_ms: 1300 },
           server_latency: { p95_ms: 980 },
+          queries: Array.from({ length: 10 }, (_, i) => ({ query: `semantic ${i}` })),
         },
       ],
     }, {
@@ -203,17 +213,21 @@ describe('a-plus-scorecard', () => {
           surface: 'kb-search',
           domain: 'demo.example',
           mode: 'lexical',
+          repeat: 5,
           hit_rate: 0.98,
           latency: { p95_ms: 180 },
           server_latency: { p95_ms: 140 },
+          queries: Array.from({ length: 10 }, (_, i) => ({ query: `lexical ${i}` })),
         },
         {
           surface: 'kb-query',
           domain: 'demo.example',
           mode: 'semantic',
+          repeat: 5,
           hit_rate: 0.93,
           latency: { p95_ms: 1300 },
           server_latency: { p95_ms: 980 },
+          queries: Array.from({ length: 10 }, (_, i) => ({ query: `semantic ${i}` })),
         },
       ],
     }, {
@@ -222,11 +236,57 @@ describe('a-plus-scorecard', () => {
       requiredDomain: 'demo.example',
       requiredBenchmarkModes: ['lexical', 'semantic'],
       requiredBenchmarkSurfaces: ['kb-search', 'kb-query'],
+      minBenchmarkRepeat: 5,
+      minBenchmarkSamples: 10,
       requiredEvalKinds: ['query', 'search'],
     });
 
     expect(scorecard.ok).toBe(true);
     expect(scorecard.overall_grade).toBe('A+');
+  });
+
+  it('fails retrieval performance when benchmark evidence is too small', () => {
+    const scorecard = buildAPlusScorecard({
+      operator_report: aPlusOperatorReport,
+      benchmarks: [
+        {
+          surface: 'kb-query',
+          domain: 'demo.example',
+          mode: 'semantic',
+          repeat: 1,
+          hit_rate: 1,
+          latency: { p95_ms: 100 },
+          server_latency: { p95_ms: 80 },
+          queries: [{ query: 'one lucky query' }],
+        },
+      ],
+    }, {
+      requireGrade: 'A',
+      minBenchmarkRepeat: 5,
+      minBenchmarkSamples: 10,
+    });
+
+    expect(scorecard.ok).toBe(false);
+    expect(scorecard.blockers).toEqual(expect.arrayContaining([
+      'kb-query_semantic_benchmark_repeat_below_min',
+      'kb-query_semantic_benchmark_samples_below_min',
+    ]));
+    expect(scorecard.categories.find((category) => category.name === 'retrieval_performance'))
+      .toMatchObject({
+        grade: 'B',
+        evidence: {
+          min_benchmark_repeat: 5,
+          min_benchmark_samples: 10,
+          benchmarks: [
+            {
+              repeat: 1,
+              sample_count: 1,
+              too_few_repeats: true,
+              too_few_samples: true,
+            },
+          ],
+        },
+      });
   });
 
   it('fails evidence scope when domain benchmark evidence is for the wrong account', () => {

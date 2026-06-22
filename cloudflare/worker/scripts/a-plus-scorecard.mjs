@@ -47,6 +47,8 @@ Options:
   --require-domain <domain>             Require operator report and domain benchmarks to match this domain.
   --require-benchmark-mode <mode>       Require lexical, semantic, or hybrid evidence. Repeatable.
   --require-benchmark-surface <surface> Require index, kb-search, or kb-query evidence. Repeatable.
+  --min-benchmark-repeat <n>            Require each benchmark report to have repeat >= n.
+  --min-benchmark-samples <n>           Require each benchmark report to include at least n measured requests.
   --require-eval-kind <kind>            Require query, search, parse, or other eval report kind. Repeatable.
 
 The scorecard is read-only and deterministic. It grades evidence only; it does
@@ -63,6 +65,8 @@ function parseArgs(argv) {
     requiredDomain: process.env.RAG_SCORECARD_DOMAIN || '',
     requiredBenchmarkModes: [],
     requiredBenchmarkSurfaces: [],
+    minBenchmarkRepeat: 0,
+    minBenchmarkSamples: 0,
     requiredEvalKinds: [],
   };
   for (let i = 0; i < argv.length; i += 1) {
@@ -79,6 +83,8 @@ function parseArgs(argv) {
     else if (arg === '--require-domain') out.requiredDomain = normalizeDomain(value);
     else if (arg === '--require-benchmark-mode') out.requiredBenchmarkModes.push(normalizeBenchmarkMode(value));
     else if (arg === '--require-benchmark-surface') out.requiredBenchmarkSurfaces.push(normalizeBenchmarkSurface(value));
+    else if (arg === '--min-benchmark-repeat') out.minBenchmarkRepeat = parseNonNegativeInteger(value, arg);
+    else if (arg === '--min-benchmark-samples') out.minBenchmarkSamples = parseNonNegativeInteger(value, arg);
     else if (arg === '--require-eval-kind') out.requiredEvalKinds.push(normalizeEvalKind(value));
     else throw new Error(`unknown argument: ${arg}`);
   }
@@ -96,6 +102,14 @@ function normalizeEvalKind(value) {
   const kind = String(value || '').trim().toLowerCase();
   if (!kind) throw new Error(`unsupported eval kind: ${value}`);
   return kind;
+}
+
+function parseNonNegativeInteger(value, label) {
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isFinite(parsed) || parsed < 0 || String(parsed) !== String(value).trim()) {
+    throw new Error(`${label} must be a non-negative integer`);
+  }
+  return parsed;
 }
 
 function normalizeBenchmarkMode(value) {
@@ -159,6 +173,16 @@ function detectBenchmarkSurface(benchmark) {
   const surface = benchmark?.surface ?? benchmark?.query_surface;
   if (surface && ['index', 'kb-search', 'kb-query'].includes(String(surface))) return String(surface);
   return 'index';
+}
+
+function benchmarkSampleCount(benchmark) {
+  const queries = asArray(benchmark?.queries);
+  if (queries.length > 0) return queries.length;
+  const measurements = asArray(benchmark?.measurements);
+  if (measurements.length > 0) return measurements.length;
+  const samples = asArray(benchmark?.samples);
+  if (samples.length > 0) return samples.length;
+  return null;
 }
 
 function normalizeEvidence(raw) {
@@ -303,6 +327,8 @@ function scoreScope(operatorReport, benchmarks, requirements = {}) {
 function scorePerformance(benchmarks, requirements = {}) {
   const requiredModes = asArray(requirements.modes).map(normalizeBenchmarkMode);
   const requiredSurfaces = asArray(requirements.surfaces).map(normalizeBenchmarkSurface);
+  const minBenchmarkRepeat = asNumber(requirements.minRepeat) ?? 0;
+  const minBenchmarkSamples = asNumber(requirements.minSamples) ?? 0;
   if (benchmarks.length === 0) {
     return {
       name: 'retrieval_performance',
@@ -316,6 +342,8 @@ function scorePerformance(benchmarks, requirements = {}) {
       evidence: {
         required_modes: requiredModes,
         required_surfaces: requiredSurfaces,
+        min_benchmark_repeat: minBenchmarkRepeat,
+        min_benchmark_samples: minBenchmarkSamples,
         missing_modes: requiredModes,
         missing_surfaces: requiredSurfaces,
       },
@@ -327,11 +355,19 @@ function scorePerformance(benchmarks, requirements = {}) {
     const thresholds = PERFORMANCE_THRESHOLDS[mode];
     const p95 = asNumber(benchmark?.latency?.p95_ms);
     const serverP95 = asNumber(benchmark?.server_latency?.p95_ms);
+    const repeat = asNumber(benchmark?.repeat);
+    const sampleCount = benchmarkSampleCount(benchmark);
     const missing = p95 === null && serverP95 === null;
+    const tooFewRepeats = minBenchmarkRepeat > 0 && (repeat === null || repeat < minBenchmarkRepeat);
+    const tooFewSamples = minBenchmarkSamples > 0 && (sampleCount === null || sampleCount < minBenchmarkSamples);
     const aPlus = !missing
+      && !tooFewRepeats
+      && !tooFewSamples
       && (p95 === null || p95 <= thresholds.aPlusP95Ms)
       && (serverP95 === null || serverP95 <= thresholds.aPlusServerP95Ms);
     const a = !missing
+      && !tooFewRepeats
+      && !tooFewSamples
       && (p95 === null || p95 <= thresholds.aP95Ms)
       && (serverP95 === null || serverP95 <= thresholds.aServerP95Ms);
     return {
@@ -340,6 +376,12 @@ function scorePerformance(benchmarks, requirements = {}) {
       grade: gradeCheck({ aPlus, a, missing }).grade,
       p95_ms: p95,
       server_p95_ms: serverP95,
+      repeat,
+      sample_count: sampleCount,
+      min_repeat: minBenchmarkRepeat,
+      min_samples: minBenchmarkSamples,
+      too_few_repeats: tooFewRepeats,
+      too_few_samples: tooFewSamples,
       thresholds,
     };
   });
@@ -351,6 +393,10 @@ function scorePerformance(benchmarks, requirements = {}) {
   const belowABlockers = rows
     .filter((row) => !gradeAtLeast(row.grade, 'A'))
     .map((row) => `${row.surface}_${row.mode}_benchmark_below_a`);
+  const sampleBlockers = rows.flatMap((row) => [
+    ...(row.too_few_repeats ? [`${row.surface}_${row.mode}_benchmark_repeat_below_min`] : []),
+    ...(row.too_few_samples ? [`${row.surface}_${row.mode}_benchmark_samples_below_min`] : []),
+  ]);
   return {
     name: 'retrieval_performance',
     grade,
@@ -358,12 +404,15 @@ function scorePerformance(benchmarks, requirements = {}) {
     blockers: [
       ...missingModes.map((mode) => `missing_${mode}_benchmark`),
       ...missingSurfaces.map((surface) => `missing_${surface}_benchmark`),
+      ...sampleBlockers,
       ...belowABlockers,
     ],
     evidence: {
       benchmarks: rows,
       required_modes: requiredModes,
       required_surfaces: requiredSurfaces,
+      min_benchmark_repeat: minBenchmarkRepeat,
+      min_benchmark_samples: minBenchmarkSamples,
       missing_modes: missingModes,
       missing_surfaces: missingSurfaces,
     },
@@ -550,6 +599,8 @@ export function buildAPlusScorecard(rawEvidence, options = {}) {
     scorePerformance(evidence.benchmarks, {
       modes: options.requiredBenchmarkModes,
       surfaces: options.requiredBenchmarkSurfaces,
+      minRepeat: options.minBenchmarkRepeat,
+      minSamples: options.minBenchmarkSamples,
     }),
     scoreQuality(evidence.operatorReport, evidence.benchmarks, {
       evalKinds: options.requiredEvalKinds,
@@ -589,6 +640,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       requiredDomain: args.requiredDomain,
       requiredBenchmarkModes: args.requiredBenchmarkModes,
       requiredBenchmarkSurfaces: args.requiredBenchmarkSurfaces,
+      minBenchmarkRepeat: args.minBenchmarkRepeat,
+      minBenchmarkSamples: args.minBenchmarkSamples,
       requiredEvalKinds: args.requiredEvalKinds,
     });
     console.log(JSON.stringify(scorecard, null, 2));
