@@ -13,20 +13,26 @@ const GRADE_RANK = {
 
 const PERFORMANCE_THRESHOLDS = {
   lexical: {
+    sP95Ms: 150,
     aPlusP95Ms: 300,
     aP95Ms: 500,
+    sServerP95Ms: 100,
     aPlusServerP95Ms: 250,
     aServerP95Ms: 400,
   },
   hybrid: {
+    sP95Ms: 750,
     aPlusP95Ms: 1000,
     aP95Ms: 1500,
+    sServerP95Ms: 600,
     aPlusServerP95Ms: 800,
     aServerP95Ms: 1200,
   },
   semantic: {
+    sP95Ms: 900,
     aPlusP95Ms: 2000,
     aP95Ms: 3000,
+    sServerP95Ms: 700,
     aPlusServerP95Ms: 1500,
     aServerP95Ms: 2500,
   },
@@ -155,8 +161,9 @@ function gradeAtLeast(grade, required) {
   return GRADE_RANK[grade] >= GRADE_RANK[required];
 }
 
-function gradeCheck({ aPlus, a, evidence, missing = false }) {
+function gradeCheck({ s = false, aPlus, a, evidence, missing = false }) {
   if (missing) return { grade: 'C', ok: false, evidence };
+  if (s) return { grade: 'S', ok: true, evidence };
   if (aPlus) return { grade: 'A+', ok: true, evidence };
   if (a) return { grade: 'A', ok: true, evidence };
   return { grade: 'B', ok: false, evidence };
@@ -168,6 +175,15 @@ function asArray(value) {
 
 function asNumber(value) {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function hasAllCapabilities(capabilities, names) {
+  return names.every((name) => capabilities?.[name] === true);
+}
+
+function hasAllItems(items, required) {
+  const set = new Set(asArray(items).map((item) => String(item || '').trim()).filter(Boolean));
+  return required.every((item) => set.has(item));
 }
 
 function detectBenchmarkMode(benchmark) {
@@ -268,7 +284,7 @@ async function loadScorecardEvidence(args) {
   };
 }
 
-function scoreReliability(operatorReport, requirements = {}) {
+function scoreReliability(operatorReport, requirements = {}, capabilities = {}) {
   if (!operatorReport) {
     return {
       name: 'reliability',
@@ -296,9 +312,14 @@ function scoreReliability(operatorReport, requirements = {}) {
     : [];
   const blockers = [...asArray(operatorReport.blockers), ...failedChecks, ...fingerprintBlockers];
   const authenticated = operatorReport.authenticated === true;
+  const consumerSmokes = asArray(capabilities.consumer_authenticated_smokes);
+  const consumerSmokeOk = consumerSmokes.length >= 2
+    && consumerSmokes.every((smoke) => smoke?.ok === true && smoke?.authenticated === true);
   const a = operatorReport.ok === true && blockers.length === 0;
   const aPlus = a && authenticated && checks.length >= 2;
+  const s = aPlus && consumerSmokeOk;
   const result = gradeCheck({
+    s,
     aPlus,
     a,
     evidence: {
@@ -308,6 +329,8 @@ function scoreReliability(operatorReport, requirements = {}) {
       blocker_count: blockers.length,
       deploy_fingerprint: deployFingerprint,
       expected_deploy_fingerprint: expectedDeployFingerprint || null,
+      consumer_authenticated_smoke_count: consumerSmokes.length,
+      consumer_authenticated_smokes_ok: consumerSmokeOk,
     },
   });
   return { name: 'reliability', ...result, blockers };
@@ -347,15 +370,21 @@ function scoreDeployReadiness(readinessReports, requirements = {}) {
       ? report.failed_checks.map((name) => `readiness_${name}`)
       : ['deploy_readiness_failed']
   ));
+  const allReportsOk = failedReports.length === 0;
+  const sReady = allReportsOk
+    && reports.length >= 1
+    && reports.every((report) => report.check_count >= 3)
+    && reports.some((report) => report.failed_checks.length === 0 && report.deploy_fingerprint);
   return {
     name: 'deploy_readiness',
-    grade: failedReports.length === 0 ? 'A+' : 'C',
-    ok: failedReports.length === 0,
+    grade: sReady ? 'S' : failedReports.length === 0 ? 'A+' : 'C',
+    ok: allReportsOk,
     blockers,
     evidence: {
       required: requireReport,
       report_count: readinessReports.length,
       reports,
+      s_ready: sReady,
     },
   };
 }
@@ -402,9 +431,15 @@ function scoreScope(operatorReport, benchmarks, queryEvals, requirements = {}) {
   if (missingQueryEvalDomains.length > 0) blockers.push('missing_query_eval_domain_scope');
   if (mismatchedQueryEvalDomains.length > 0) blockers.push('query_eval_domain_scope_mismatch');
 
+  const sReady = blockers.length === 0
+    && Boolean(requiredDomain)
+    && domainBenchmarks.length >= 2
+    && domainBenchmarks.every((benchmark) => benchmark.domain === requiredDomain)
+    && queryEvalDomains.length >= 1
+    && queryEvalDomains.every((domain) => domain === requiredDomain);
   return {
     name: 'evidence_scope',
-    grade: blockers.length === 0 ? 'A+' : 'C',
+    grade: sReady ? 'S' : blockers.length === 0 ? 'A+' : 'C',
     ok: blockers.length === 0,
     blockers,
     evidence: {
@@ -416,6 +451,7 @@ function scoreScope(operatorReport, benchmarks, queryEvals, requirements = {}) {
       mismatched_benchmark_domains: mismatchedBenchmarkDomains,
       missing_query_eval_domain_count: missingQueryEvalDomains.length,
       mismatched_query_eval_domains: mismatchedQueryEvalDomains,
+      s_ready: sReady,
     },
   };
 }
@@ -451,6 +487,8 @@ function scorePerformance(benchmarks, requirements = {}) {
     const thresholds = PERFORMANCE_THRESHOLDS[mode];
     const p95 = asNumber(benchmark?.latency?.p95_ms);
     const serverP95 = asNumber(benchmark?.server_latency?.p95_ms);
+    const nonCacheP95 = asNumber(benchmark?.cache_latency?.non_cache?.p95_ms);
+    const nonCacheCount = asNumber(benchmark?.cache_latency?.non_cache?.count) ?? 0;
     const repeat = asNumber(benchmark?.repeat);
     const sampleCount = benchmarkSampleCount(benchmark);
     const missing = p95 === null && serverP95 === null;
@@ -466,12 +504,20 @@ function scorePerformance(benchmarks, requirements = {}) {
       && !tooFewSamples
       && (p95 === null || p95 <= thresholds.aP95Ms)
       && (serverP95 === null || serverP95 <= thresholds.aServerP95Ms);
+    const s = aPlus
+      && (p95 === null || p95 <= thresholds.sP95Ms)
+      && (serverP95 === null || serverP95 <= thresholds.sServerP95Ms)
+      && nonCacheP95 !== null
+      && nonCacheCount > 0
+      && nonCacheP95 <= thresholds.sP95Ms;
     return {
       mode,
       surface,
-      grade: gradeCheck({ aPlus, a, missing }).grade,
+      grade: gradeCheck({ s, aPlus, a, missing }).grade,
       p95_ms: p95,
       server_p95_ms: serverP95,
+      non_cache_p95_ms: nonCacheP95,
+      non_cache_sample_count: nonCacheCount,
       repeat,
       sample_count: sampleCount,
       min_repeat: minBenchmarkRepeat,
@@ -515,7 +561,7 @@ function scorePerformance(benchmarks, requirements = {}) {
   };
 }
 
-function scoreQuality(operatorReport, benchmarks, queryEvals, requirements = {}) {
+function scoreQuality(operatorReport, benchmarks, queryEvals, requirements = {}, capabilities = {}) {
   const requiredEvalKinds = asArray(requirements.evalKinds).map(normalizeEvalKind);
   const minQueryEvalRows = asNumber(requirements.minQueryEvalRows) ?? 0;
   const queryEvalRows = queryEvals.map((report) => ({
@@ -591,7 +637,15 @@ function scoreQuality(operatorReport, benchmarks, queryEvals, requirements = {})
     && (queryEvalHitRate === null || queryEvalHitRate >= 0.85)
     && (citationRate === null || citationRate >= 0.9)
     && (evalReportCount === null || evalReportCount >= 1);
+  const hasConsumerEvalPacks = hasAllItems(capabilities.consumer_eval_packs, ['karte-memory', 'starboard-readme']);
+  const s = aPlus
+    && hasConsumerEvalPacks
+    && (hitRate === null || hitRate >= 0.98)
+    && (queryEvalHitRate === null || queryEvalHitRate >= 1)
+    && (citationRate === null || citationRate >= 1)
+    && evalReportCount >= 2;
   const result = gradeCheck({
+    s,
     aPlus,
     a,
     evidence: {
@@ -606,6 +660,8 @@ function scoreQuality(operatorReport, benchmarks, queryEvals, requirements = {})
       eval_kinds: evalKinds,
       required_eval_kinds: requiredEvalKinds,
       missing_eval_kinds: missingEvalKinds,
+      consumer_eval_packs: asArray(capabilities.consumer_eval_packs),
+      has_consumer_eval_packs: hasConsumerEvalPacks,
     },
   });
   return {
@@ -621,7 +677,7 @@ function scoreQuality(operatorReport, benchmarks, queryEvals, requirements = {})
   };
 }
 
-function scoreIngestion(operatorReport) {
+function scoreIngestion(operatorReport, capabilities = {}) {
   const inventory = operatorReport?.inventory;
   if (!inventory) {
     return {
@@ -642,7 +698,11 @@ function scoreIngestion(operatorReport) {
   const hasEvidence = fileCount > 0 || jobCount > 0;
   const aPlus = hasEvidence && failedFiles === 0 && failedJobs === 0 && readyFiles === fileCount && (inventory.source_set_count ?? 0) > 0;
   const a = hasEvidence && failedFiles === 0 && failedJobs === 0;
+  const s = aPlus
+    && hasAllItems(capabilities.ingest_contracts, ['text', 'record', 'url', 'file', 'readme'])
+    && hasAllCapabilities(capabilities, ['idempotent_ingest', 'chunk_preview', 'replayable_jobs', 'failure_classification']);
   const result = gradeCheck({
+    s,
     aPlus,
     a,
     missing: !hasEvidence,
@@ -653,6 +713,11 @@ function scoreIngestion(operatorReport) {
       failed_files: failedFiles,
       failed_jobs: failedJobs,
       ready_files: readyFiles,
+      ingest_contracts: asArray(capabilities.ingest_contracts),
+      idempotent_ingest: capabilities.idempotent_ingest === true,
+      chunk_preview: capabilities.chunk_preview === true,
+      replayable_jobs: capabilities.replayable_jobs === true,
+      failure_classification: capabilities.failure_classification === true,
     },
   });
   return {
@@ -662,14 +727,19 @@ function scoreIngestion(operatorReport) {
   };
 }
 
-function scoreObservability(operatorReport, queryEvals = []) {
+function scoreObservability(operatorReport, queryEvals = [], capabilities = {}) {
   const inventory = operatorReport?.inventory;
   const recentTraceCount = asNumber(inventory?.recent_trace_count) ?? 0;
   const evalReportCount = (asNumber(inventory?.eval_report_count) ?? 0) + queryEvals.length;
   const avgTraceLatencyMs = asNumber(inventory?.avg_trace_latency_ms);
   const aPlus = recentTraceCount >= 10 && evalReportCount >= 1 && (avgTraceLatencyMs === null || avgTraceLatencyMs <= 1000);
   const a = recentTraceCount >= 1 && evalReportCount >= 1;
+  const s = aPlus
+    && recentTraceCount >= 10
+    && evalReportCount >= 2
+    && hasAllCapabilities(capabilities, ['trace_drilldown', 'trace_export', 'stage_timings', 'empty_result_diagnostics']);
   const result = gradeCheck({
+    s,
     aPlus,
     a,
     missing: !inventory,
@@ -678,6 +748,10 @@ function scoreObservability(operatorReport, queryEvals = []) {
       eval_report_count: evalReportCount,
       query_eval_count: queryEvals.length,
       avg_trace_latency_ms: avgTraceLatencyMs,
+      trace_drilldown: capabilities.trace_drilldown === true,
+      trace_export: capabilities.trace_export === true,
+      stage_timings: capabilities.stage_timings === true,
+      empty_result_diagnostics: capabilities.empty_result_diagnostics === true,
     },
   });
   return {
@@ -697,9 +771,16 @@ function scoreEaseOfUse(operatorReport, capabilities = {}) {
     || reported.async_status === true
     || (operatorReport?.inventory?.job_count ?? 0) > 0;
   const hidesRagInternals = capabilities.hides_rag_internals === true || reported.hides_rag_internals === true;
+  const nonUiS = hasAllCapabilities({ ...reported, ...capabilities }, [
+    'typed_client_contract',
+    'one_command_smoke',
+    'consumer_integration_audit',
+    'project_data_api',
+  ]);
   const aPlus = hostedUi && customInput && asyncStatus && hidesRagInternals;
   const a = hostedUi && customInput && asyncStatus;
   const result = gradeCheck({
+    s: aPlus && nonUiS,
     aPlus,
     a,
     evidence: {
@@ -707,6 +788,10 @@ function scoreEaseOfUse(operatorReport, capabilities = {}) {
       custom_input: Boolean(customInput),
       async_status: Boolean(asyncStatus),
       hides_rag_internals: Boolean(hidesRagInternals),
+      typed_client_contract: Boolean((reported.typed_client_contract ?? capabilities.typed_client_contract) === true),
+      one_command_smoke: Boolean((reported.one_command_smoke ?? capabilities.one_command_smoke) === true),
+      consumer_integration_audit: Boolean((reported.consumer_integration_audit ?? capabilities.consumer_integration_audit) === true),
+      project_data_api: Boolean((reported.project_data_api ?? capabilities.project_data_api) === true),
     },
   });
   return {
@@ -719,10 +804,14 @@ function scoreEaseOfUse(operatorReport, capabilities = {}) {
 export function buildAPlusScorecard(rawEvidence, options = {}) {
   const requiredGrade = normalizeGrade(options.requireGrade ?? 'A');
   const evidence = normalizeEvidence(rawEvidence);
+  const capabilities = {
+    ...(evidence.operatorReport?.capabilities ?? {}),
+    ...(evidence.capabilities ?? {}),
+  };
   const categories = [
     scoreReliability(evidence.operatorReport, {
       expectedDeployFingerprint: options.expectedDeployFingerprint,
-    }),
+    }, capabilities),
     scoreDeployReadiness(evidence.readinessReports, {
       requireReport: options.requireReadinessReport,
     }),
@@ -738,20 +827,22 @@ export function buildAPlusScorecard(rawEvidence, options = {}) {
     scoreQuality(evidence.operatorReport, evidence.benchmarks, evidence.queryEvals, {
       evalKinds: options.requiredEvalKinds,
       minQueryEvalRows: options.minQueryEvalRows,
-    }),
-    scoreIngestion(evidence.operatorReport),
-    scoreObservability(evidence.operatorReport, evidence.queryEvals),
-    scoreEaseOfUse(evidence.operatorReport, evidence.capabilities),
+    }, capabilities),
+    scoreIngestion(evidence.operatorReport, capabilities),
+    scoreObservability(evidence.operatorReport, evidence.queryEvals, capabilities),
+    scoreEaseOfUse(evidence.operatorReport, capabilities),
   ];
   const overallGrade = minGrade(categories.map((category) => category.grade));
-  const blockers = categories.flatMap((category) => category.blockers ?? []);
+  const categoryBlockers = categories.flatMap((category) => category.blockers ?? []);
+  const gradeBlockers = gradeAtLeast(overallGrade, requiredGrade) ? [] : ['overall_grade_below_required'];
+  const blockers = [...gradeBlockers, ...categoryBlockers];
   return {
-    ok: gradeAtLeast(overallGrade, requiredGrade) && blockers.length === 0,
+    ok: blockers.length === 0,
     required_grade: requiredGrade,
     overall_grade: overallGrade,
     categories,
     blockers,
-    note: 'A/A+ is evidence-gated: missing benchmarks, evals, traces, or ingestion status lower the grade instead of assuming success.',
+    note: 'A/A+/S is evidence-gated: missing benchmarks, evals, traces, consumer smokes, or ingestion status lower the grade instead of assuming success.',
   };
 }
 

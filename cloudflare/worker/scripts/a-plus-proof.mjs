@@ -4,12 +4,14 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { buildAPlusScorecard } from './a-plus-scorecard.mjs';
 import { runBenchmark } from './benchmark-rag.mjs';
+import { runConsumerAuthSmokes } from './consumer-auth-smokes.mjs';
 import { EXPECTED_DEPLOY_FINGERPRINT, runDeployReadiness } from './deploy-readiness.mjs';
 import { runOperatorReport } from './operator-report.mjs';
 
 const DEFAULT_BASE_URL = 'https://knowledgebase.sarthakagrawal927.workers.dev';
 const DEFAULT_QUERY = 'what should this account remember?';
 const MIN_PROOF_QUERIES = 2;
+const MIN_S_PROOF_QUERIES = 4;
 
 function usage() {
   console.error(`Usage:
@@ -97,6 +99,8 @@ function parseArgs(argv) {
 }
 
 function buildPlan(options) {
+  const requiresS = options.requireGrade === 'S';
+  const minProofQueries = requiresS ? MIN_S_PROOF_QUERIES : MIN_PROOF_QUERIES;
   return {
     base_url: options.baseUrl,
     domain: options.domain || null,
@@ -109,11 +113,12 @@ function buildPlan(options) {
     continue_after_readiness_failure: options.continueAfterReadinessFailure === true,
     steps: [
       'deploy-readiness',
+      ...(requiresS ? ['consumer-auth-smokes'] : []),
       'query-eval',
       'benchmark:kb-search:lexical',
       'benchmark:kb-query:semantic',
       'operator-report',
-      'scorecard:a-plus',
+      requiresS ? 'scorecard:s' : 'scorecard:a-plus',
     ],
     scorecard_requirements: {
       require_readiness_report: true,
@@ -121,11 +126,22 @@ function buildPlan(options) {
       required_benchmark_modes: ['lexical', 'semantic'],
       required_benchmark_surfaces: ['kb-search', 'kb-query'],
       min_benchmark_repeat: options.repeat,
-      min_benchmark_samples: options.repeat * MIN_PROOF_QUERIES,
-      min_query_eval_rows: MIN_PROOF_QUERIES,
+      min_benchmark_samples: options.repeat * minProofQueries,
+      min_query_eval_rows: minProofQueries,
       required_eval_kinds: ['query'],
     },
   };
+}
+
+function detectConsumerEvalPacks(input) {
+  const parsed = typeof input === 'string' ? JSON.parse(input) : input;
+  const docs = Array.isArray(parsed?.documents) ? parsed.documents : [];
+  const queries = Array.isArray(parsed?.queries) ? parsed.queries : [];
+  const text = JSON.stringify({ docs, queries }).toLowerCase();
+  return [
+    text.includes('karte') ? 'karte-memory' : null,
+    text.includes('starboard') || text.includes('readme') ? 'starboard-readme' : null,
+  ].filter(Boolean);
 }
 
 async function writeJson(outputDir, name, payload) {
@@ -235,7 +251,8 @@ export async function runAPlusProof(options) {
   if (!options.key) throw new Error('--key or RAG_SERVICE_KEY is required');
 
   const input = await readFile(options.input, 'utf8');
-  const inputValidation = validateProofInput(input);
+  const minQueries = options.requireGrade === 'S' ? MIN_S_PROOF_QUERIES : MIN_PROOF_QUERIES;
+  const inputValidation = validateProofInput(input, { minQueries });
   if (!inputValidation.ok) {
     throw new Error(`invalid A/A+ proof input: ${inputValidation.errors.join('; ')}`);
   }
@@ -244,6 +261,9 @@ export async function runAPlusProof(options) {
     key: options.key,
     expectedDeployFingerprint: options.expectedDeployFingerprint,
   });
+  const consumerSmokes = options.requireGrade === 'S'
+    ? await (options.consumerSmokeRunner ?? runConsumerAuthSmokes)()
+    : null;
   if (!readinessReport.ok && options.continueAfterReadinessFailure !== true) {
     const scorecard = buildAPlusScorecard({
       readiness_reports: [readinessReport],
@@ -323,6 +343,10 @@ export async function runAPlusProof(options) {
     readiness_reports: [readinessReport],
     query_evals: [queryEval],
     benchmarks: [lexicalBenchmark, semanticBenchmark],
+    capabilities: {
+      ...(consumerSmokes ? { consumer_authenticated_smokes: consumerSmokes.consumers } : {}),
+      consumer_eval_packs: detectConsumerEvalPacks(input),
+    },
   }, {
     requireGrade: options.requireGrade,
     requireReadinessReport: true,
@@ -331,14 +355,15 @@ export async function runAPlusProof(options) {
     requiredBenchmarkModes: ['lexical', 'semantic'],
     requiredBenchmarkSurfaces: ['kb-search', 'kb-query'],
     minBenchmarkRepeat: options.repeat,
-    minBenchmarkSamples: options.repeat * MIN_PROOF_QUERIES,
-    minQueryEvalRows: MIN_PROOF_QUERIES,
+    minBenchmarkSamples: options.repeat * minQueries,
+    minQueryEvalRows: minQueries,
     requiredEvalKinds: ['query'],
   });
 
   const artifacts = {
     readiness: await writeJson(options.outputDir, 'readiness.json', readinessReport),
     query_eval: await writeJson(options.outputDir, 'query-eval.json', queryEval),
+    consumer_smokes: consumerSmokes ? await writeJson(options.outputDir, 'consumer-smokes.json', consumerSmokes) : null,
     operator_report: await writeJson(options.outputDir, 'operator-report.json', operatorReport),
     benchmark_lexical: await writeJson(options.outputDir, 'benchmark-lexical.json', lexicalBenchmark),
     benchmark_semantic: await writeJson(options.outputDir, 'benchmark-semantic.json', semanticBenchmark),
@@ -352,6 +377,7 @@ export async function runAPlusProof(options) {
     artifacts,
     readiness: readinessReport,
     query_eval: queryEval,
+    consumer_smokes: consumerSmokes,
     operator_report: operatorReport,
     benchmarks: [lexicalBenchmark, semanticBenchmark],
     scorecard,

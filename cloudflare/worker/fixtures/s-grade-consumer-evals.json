@@ -1,0 +1,64 @@
+{
+  "index": {
+    "name": "S Grade Consumer Eval Knowledge",
+    "external_id": "s-grade-consumer-eval-index"
+  },
+  "documents": [
+    {
+      "external_id": "karte-memory-red-shirt",
+      "content": "Karte profile memory fact: the user is wearing a red color t-shirt. This short-lived personal fact should be retrievable without resending the whole conversation.",
+      "metadata": {
+        "consumer": "karte",
+        "eval_pack": "karte-memory"
+      }
+    },
+    {
+      "external_id": "karte-memory-project-pref",
+      "content": "Karte profile memory fact: the user prefers Cloudflare-first deployment and wants cheaper retrieval instead of sending the entire conversation every turn.",
+      "metadata": {
+        "consumer": "karte",
+        "eval_pack": "karte-memory"
+      }
+    },
+    {
+      "external_id": "starboard-readme-webhooks",
+      "content": "Repository: acme/widgets\n\nSummary: Widget framework.\n\nREADME:\nThe README documents adapters, recipes, plugin APIs, and holographic scheduler webhooks. The holographic scheduler webhooks phrase appears only in the README body.",
+      "metadata": {
+        "consumer": "starboard",
+        "eval_pack": "starboard-readme",
+        "has_readme": true
+      }
+    },
+    {
+      "external_id": "starboard-readme-disambiguation",
+      "content": "Repository: acme/runner\n\nSummary: Automation runner.\n\nREADME:\nThis project uses deterministic queue leases for incremental repository sync and retryable README ingestion.",
+      "metadata": {
+        "consumer": "starboard",
+        "eval_pack": "starboard-readme",
+        "has_readme": true
+      }
+    }
+  ],
+  "queries": [
+    {
+      "id": "karte-red-shirt",
+      "query": "what color tshirt is the user wearing?",
+      "expected_contains": ["red color t-shirt"]
+    },
+    {
+      "id": "karte-cheap-memory",
+      "query": "what does the user prefer instead of sending the whole conversation?",
+      "expected_contains": ["cheaper retrieval"]
+    },
+    {
+      "id": "starboard-readme-only",
+      "query": "which repository mentions holographic scheduler webhooks?",
+      "expected_contains": ["holographic scheduler webhooks"]
+    },
+    {
+      "id": "starboard-readme-sync",
+      "query": "what uses deterministic queue leases for incremental repository sync?",
+      "expected_contains": ["deterministic queue leases"]
+    }
+  ]
+}

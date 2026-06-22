@@ -63,6 +63,13 @@ function makeFetch() {
       expect(search).toContain('domain=docs');
       return jsonResponse({ traces: [{ id: 'trace-1', latency_ms: 17, citations: [{}] }] });
     }
+    if (path === '/v1/kb/query/traces/export') {
+      expect(search).toContain('domain=docs');
+      return jsonResponse({ summary: { trace_count: 1 }, traces: [{ id: 'trace-1' }] });
+    }
+    if (path === '/v1/kb/query/trace/trace-1/drilldown') {
+      return jsonResponse({ trace_id: 'trace-1', quality: { citations: [] } });
+    }
     if (path === '/v1/kb/evals/summary') {
       expect(search).toContain('domain=docs');
       return jsonResponse({ report_count: 1, summaries: [{ kind: 'query', avg_ai_use_rate: 0 }] });
@@ -137,6 +144,9 @@ describe('operator-report', () => {
       hosted_ui: true,
       custom_input: true,
       async_status: true,
+      project_data_api: true,
+      trace_export: true,
+      trace_drilldown: true,
     });
     expect(report.benchmark).toMatchObject({ cache_hit_rate: 0.5 });
   });

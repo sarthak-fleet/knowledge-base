@@ -78,6 +78,37 @@ describe('a-plus-proof', () => {
     });
   });
 
+  it('builds an S proof plan with consumer smokes and larger eval samples', () => {
+    expect(buildPlan({
+      baseUrl: 'https://kb.example',
+      domain: 'manuals',
+      input: 'fixtures/s-grade-consumer-evals.json',
+      outputDir: '/tmp/kb-proof',
+      repeat: 8,
+      topK: 5,
+      expectedDeployFingerprint: 'fp',
+      requireGrade: 'S',
+      continueAfterReadinessFailure: false,
+    })).toMatchObject({
+      base_url: 'https://kb.example',
+      domain: 'manuals',
+      steps: [
+        'deploy-readiness',
+        'consumer-auth-smokes',
+        'query-eval',
+        'benchmark:kb-search:lexical',
+        'benchmark:kb-query:semantic',
+        'operator-report',
+        'scorecard:s',
+      ],
+      scorecard_requirements: {
+        min_benchmark_repeat: 8,
+        min_benchmark_samples: 32,
+        min_query_eval_rows: 4,
+      },
+    });
+  });
+
   it('builds query eval cases from benchmark input expectations', () => {
     expect(queryEvalCases({
       queries: [
@@ -128,6 +159,18 @@ describe('a-plus-proof', () => {
       query_count: 2,
       scored_query_count: 0,
       errors: ['proof input must include at least 2 scored queries with expected_contains, expected_document_ids, or expected_chunk_ids'],
+    });
+
+    expect(validateProofInput({
+      queries: [
+        { query: 'q1', expected_contains: ['a'] },
+        { query: 'q2', expected_contains: ['b'] },
+      ],
+    }, { minQueries: 4 })).toMatchObject({
+      ok: false,
+      query_count: 2,
+      scored_query_count: 2,
+      errors: ['proof input must include at least 4 queries', 'proof input must include at least 4 scored queries with expected_contains, expected_document_ids, or expected_chunk_ids'],
     });
   });
 

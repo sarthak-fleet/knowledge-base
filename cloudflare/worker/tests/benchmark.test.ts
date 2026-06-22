@@ -118,6 +118,10 @@ describe('benchmark-rag', () => {
       mode: 'lexical',
       hit_rate: 1,
       server_latency: { count: 1, p95_ms: 12 },
+      cache_latency: {
+        hit: { count: 0 },
+        non_cache: { count: 1 },
+      },
     });
   });
 
@@ -163,6 +167,10 @@ describe('benchmark-rag', () => {
       surface: 'kb-query',
       domain: 'manuals',
       cache_hit_rate: 1,
+      cache_latency: {
+        hit: { count: 1 },
+        non_cache: { count: 0 },
+      },
       hit_rate: 1,
     });
   });

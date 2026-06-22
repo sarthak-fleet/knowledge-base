@@ -296,6 +296,8 @@ export async function runBenchmark(options) {
 
   const samples = [];
   const serverSamples = [];
+  const cacheSamples = [];
+  const nonCacheSamples = [];
   const serverTimings = [];
   const querySummaries = [];
   let hits = 0;
@@ -323,6 +325,8 @@ export async function runBenchmark(options) {
         const data = Array.isArray(payload.data) ? payload.data : [];
         const hit = scoreResults(query, data);
         if (cache === 'hit') cacheHits += 1;
+        if (cache === 'hit') cacheSamples.push(elapsed);
+        else nonCacheSamples.push(elapsed);
         if (hit !== null) {
           scored += 1;
           if (hit) hits += 1;
@@ -360,6 +364,10 @@ export async function runBenchmark(options) {
     mode,
     latency: summarizeLatencies(samples),
     server_latency: summarizeLatencies(serverSamples),
+    cache_latency: {
+      hit: summarizeLatencies(cacheSamples),
+      non_cache: summarizeLatencies(nonCacheSamples),
+    },
     server_timing: summarizeTimingBreakdown(serverTimings),
     cache_hits: cacheHits,
     cache_hit_rate: samples.length ? cacheHits / samples.length : 0,

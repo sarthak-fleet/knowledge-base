@@ -283,6 +283,22 @@ export async function runOperatorReport(options = {}) {
     if (!result.ok) report.blockers.push(name);
   }
 
+  const traceRows = Array.isArray(traces.payload?.traces) ? traces.payload.traces : [];
+  let traceExport = null;
+  let traceDrilldown = null;
+  if (traceRows.length > 0) {
+    traceExport = await requestJson(fetchImpl, `${baseUrl}${endpoint('/v1/kb/query/traces/export', domain)}`, { key });
+    report.checks.push({ name: 'trace_export', ok: traceExport.ok, status: traceExport.status });
+    if (!traceExport.ok) report.blockers.push('trace_export');
+
+    const traceId = String(traceRows[0]?.id ?? '').trim();
+    if (traceId) {
+      traceDrilldown = await requestJson(fetchImpl, `${baseUrl}/v1/kb/query/trace/${encodeURIComponent(traceId)}/drilldown`, { key });
+      report.checks.push({ name: 'trace_drilldown', ok: traceDrilldown.ok, status: traceDrilldown.status });
+      if (!traceDrilldown.ok) report.blockers.push('trace_drilldown');
+    }
+  }
+
   if (options.indexId) {
     const benchmark = await requestJson(fetchImpl, `${baseUrl}/v1/indexes/${options.indexId}/benchmark-query`, {
       key,
@@ -316,6 +332,12 @@ export async function runOperatorReport(options = {}) {
     evalSummary: evalSummary.payload,
     benchmark: report.benchmark,
   });
+  report.capabilities = {
+    ...report.capabilities,
+    project_data_api: projects.ok && domains.ok && files.ok && jobs.ok,
+    trace_export: traceExport?.ok === true,
+    trace_drilldown: traceDrilldown?.ok === true,
+  };
   report.ok = report.checks.every((check) => check.ok);
   return report;
 }

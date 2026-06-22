@@ -120,6 +120,18 @@ Workers AI embedding calls and is an opt-in post-cutover step.
   Final benchmark p95s: lexical `99.46 ms` (`server_p95_ms=0`) and semantic
   `550.73 ms` (`server_p95_ms=439`), with query eval hit/citation rates at
   `1.0`.
+- **S-grade gate in progress:** non-UI S-grade evidence is now explicit in the
+  Worker tooling. `scorecard:s` requires authenticated consumer smokes for Karte
+  and Starboard, consumer eval packs for Karte memory and Starboard README
+  retrieval, non-cache latency buckets, trace drilldown/export evidence,
+  stricter retrieval quality/performance thresholds, and ingestion
+  idempotency/replay/preview/failure-classification evidence before any category
+  can be called S. `proof:s` plans the live S run against
+  `fixtures/s-grade-consumer-evals.json` and includes the `consumer-auth-smokes`
+  step. Current blocker for live S proof is not a Cloudflare runtime gap: it is
+  missing `KARTE_SESSION_COOKIE` and `STARBOARD_SESSION_COOKIE` for authenticated
+  product-session smokes plus first-class ingest idempotency/failure
+  classification proof.
 - **Python runtime:** retired. The Worker full-port/preflight gates, UI,
   migration tooling, and local checks are TypeScript/Node-only; the old Python
   FastAPI server, Python UI, Docker Compose runtime, parser/query/eval package,
@@ -315,7 +327,8 @@ Worker: Fleet consumer → Hono → free-ai/Workers AI embed → Vectorize query
 - Inline deterministic answer/evidence verification in `/v1/kb/query` confidence, persisted into D1 query traces without extra AI calls.
 - D1 eval report history and rollups via `/v1/kb/evals/reports` and `/v1/kb/evals/summary`, including deterministic answer faithfulness/support coverage metrics and opt-in Workers AI model-judged support scores.
 - Analytics Engine data points for successful query traces and eval reports via the `RAG_ANALYTICS` dataset binding.
-- A/A+ scorecard gate (`pnpm run scorecard:a-plus`) grades reliability,
+- A/A+/S scorecard gate (`pnpm run scorecard:a-plus`, `pnpm run scorecard:s`)
+  grades reliability,
   deploy readiness, retrieval performance, retrieval quality, ingestion
   reliability, observability, and ease-of-use evidence from readiness reports,
   operator reports, and benchmarks so missing proof cannot be mistaken for
@@ -329,15 +342,17 @@ Worker: Fleet consumer → Hono → free-ai/Workers AI embed → Vectorize query
   and row-count checks. Query evals honor expected text, document IDs, and
   chunk IDs so non-empty retrieval cannot inflate labeled hit rates. Operator
   reports automatically prove hosted UI, custom text input, async progress, and
-  user-visible UI copy that hides retrieval/storage internals. `benchmark:rag`
+  user-visible UI copy that hides retrieval/storage internals, and now verify
+  trace drilldown/export APIs when traces exist. `benchmark:rag`
   emits mode-labeled lexical/semantic/hybrid evidence for index, domain search,
-  and domain answer surfaces, and the scorecard CLI can merge an operator report
-  plus repeated benchmark files without hand-built JSON. The scorecard can also
-  require a target domain plus specific benchmark modes, benchmark surfaces, and
-  eval report kinds, with minimum repeat/sample counts for benchmark reports, so
-  narrow, under-sampled, or wrong-account proof cannot masquerade as
-  across-the-board A/A+ evidence. It can also require the expected deploy
-  fingerprint so stale production reports fail inside the A/A+ gate.
+  and domain answer surfaces with cache-hit and non-cache latency buckets, and
+  the scorecard CLI can merge an operator report plus repeated benchmark files
+  without hand-built JSON. The scorecard can also require a target domain plus
+  specific benchmark modes, benchmark surfaces, and eval report kinds, with
+  minimum repeat/sample counts for benchmark reports, so narrow,
+  under-sampled, cached-only, or wrong-account proof cannot masquerade as
+  across-the-board evidence. It can also require the expected deploy fingerprint
+  so stale production reports fail inside the gate.
 - Public `/readyz` and Prometheus-compatible `/metrics` compatibility endpoints
   for the retired FastAPI meta surface, backed by Cloudflare D1/Vectorize/R2
   binding checks.
@@ -385,9 +400,12 @@ Worker: Fleet consumer → Hono → free-ai/Workers AI embed → Vectorize query
    -- --json`, and deployed `smoke:legacy-routes --require-complete`.
 8. Finish hosting checklist: durable storage, backups, observability, usage limits, smoke tests.
 9. Enable AI Gateway cache when Wrangler OAuth unblocks gateway creation.
-10. Complete consumer-side karte.cc/linkchat verification against the deployed
-   `knowledgebase` Worker once the current `/Users/sarthak/Desktop/fleet/karte`
-   RAG integration worktree is reviewed and approved for deploy.
+10. Complete live S-grade consumer proof with
+   `KARTE_SESSION_COOKIE=<cookie> STARBOARD_SESSION_COOKIE=<cookie> pnpm run
+   smoke:consumer-auth -- --require-authenticated`, then re-run `proof:s`
+   against the deployed Worker.
+11. Add first-class ingest idempotency and failure-classification proof so the
+   ingestion category can move from A+ to S without relying on route presence.
 
 ### Deferred
 

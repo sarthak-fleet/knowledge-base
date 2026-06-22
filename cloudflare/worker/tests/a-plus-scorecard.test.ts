@@ -74,6 +74,27 @@ const aPlusQueryEvalReport = {
   ],
 };
 
+const sCapabilities = {
+  consumer_authenticated_smokes: [
+    { consumer: 'karte', ok: true, authenticated: true },
+    { consumer: 'starboard', ok: true, authenticated: true },
+  ],
+  consumer_eval_packs: ['karte-memory', 'starboard-readme'],
+  ingest_contracts: ['text', 'record', 'url', 'file', 'readme'],
+  idempotent_ingest: true,
+  chunk_preview: true,
+  replayable_jobs: true,
+  failure_classification: true,
+  trace_drilldown: true,
+  trace_export: true,
+  stage_timings: true,
+  empty_result_diagnostics: true,
+  typed_client_contract: true,
+  one_command_smoke: true,
+  consumer_integration_audit: true,
+  project_data_api: true,
+};
+
 describe('a-plus-scorecard', () => {
   it('accepts the pnpm run argument separator', () => {
     expect(parseArgs([
@@ -185,6 +206,140 @@ describe('a-plus-scorecard', () => {
     expect(scorecard.ok).toBe(true);
     expect(scorecard.overall_grade).toBe('A+');
     expect(scorecard.blockers).toEqual([]);
+  });
+
+  it('grades strict non-UI consumer, eval, ingest, observability, and performance evidence as S', () => {
+    const scorecard = buildAPlusScorecard({
+      operator_report: {
+        ...aPlusOperatorReport,
+        inventory: {
+          ...aPlusOperatorReport.inventory,
+          eval_report_count: 2,
+          recent_trace_count: 20,
+          avg_trace_latency_ms: 120,
+        },
+      },
+      readiness_reports: [aPlusReadinessReport],
+      query_evals: [{
+        ...aPlusQueryEvalReport,
+        n: 4,
+        hit_rate: 1,
+        citation_rate: 1,
+        rows: [
+          { id: 'memory-fact', hit: true, cited: true },
+          { id: 'memory-followup', hit: true, cited: true },
+          { id: 'readme-only', hit: true, cited: true },
+          { id: 'readme-disambiguation', hit: true, cited: true },
+        ],
+      }],
+      benchmarks: [
+        {
+          surface: 'kb-search',
+          domain: 'demo.example',
+          mode: 'lexical',
+          repeat: 8,
+          hit_rate: 1,
+          latency: { p95_ms: 90 },
+          server_latency: { p95_ms: 40 },
+          cache_latency: { non_cache: { count: 8, p95_ms: 90 } },
+          queries: Array.from({ length: 16 }, (_, i) => ({ query: `lexical ${i}` })),
+        },
+        {
+          surface: 'kb-query',
+          domain: 'demo.example',
+          mode: 'semantic',
+          repeat: 8,
+          hit_rate: 1,
+          latency: { p95_ms: 620 },
+          server_latency: { p95_ms: 480 },
+          cache_latency: { non_cache: { count: 8, p95_ms: 620 } },
+          queries: Array.from({ length: 16 }, (_, i) => ({ query: `semantic ${i}` })),
+        },
+      ],
+      capabilities: sCapabilities,
+    }, {
+      requireGrade: 'S',
+      requireReadinessReport: true,
+      expectedDeployFingerprint: 'current-fp',
+      requiredDomain: 'demo.example',
+      requiredBenchmarkModes: ['lexical', 'semantic'],
+      requiredBenchmarkSurfaces: ['kb-search', 'kb-query'],
+      minBenchmarkRepeat: 8,
+      minBenchmarkSamples: 16,
+      minQueryEvalRows: 4,
+      requiredEvalKinds: ['query', 'search'],
+    });
+
+    expect(scorecard.ok).toBe(true);
+    expect(scorecard.overall_grade).toBe('S');
+    expect(scorecard.blockers).toEqual([]);
+    expect(scorecard.categories.map((category) => [category.name, category.grade])).toEqual([
+      ['reliability', 'S'],
+      ['deploy_readiness', 'S'],
+      ['evidence_scope', 'S'],
+      ['retrieval_performance', 'S'],
+      ['retrieval_quality', 'S'],
+      ['ingestion_reliability', 'S'],
+      ['observability', 'S'],
+      ['ease_of_use', 'S'],
+    ]);
+  });
+
+  it('does not award S performance without measured non-cache latency', () => {
+    const scorecard = buildAPlusScorecard({
+      operator_report: aPlusOperatorReport,
+      readiness_reports: [aPlusReadinessReport],
+      query_evals: [aPlusQueryEvalReport],
+      benchmarks: [
+        {
+          surface: 'kb-search',
+          domain: 'demo.example',
+          mode: 'lexical',
+          repeat: 8,
+          hit_rate: 1,
+          latency: { p95_ms: 90 },
+          server_latency: { p95_ms: 40 },
+          cache_latency: { non_cache: { count: 0, p95_ms: 0 } },
+          queries: Array.from({ length: 16 }, (_, i) => ({ query: `lexical ${i}` })),
+        },
+        {
+          surface: 'kb-query',
+          domain: 'demo.example',
+          mode: 'semantic',
+          repeat: 8,
+          hit_rate: 1,
+          latency: { p95_ms: 620 },
+          server_latency: { p95_ms: 480 },
+          cache_latency: { non_cache: { count: 0, p95_ms: 0 } },
+          queries: Array.from({ length: 16 }, (_, i) => ({ query: `semantic ${i}` })),
+        },
+      ],
+      capabilities: sCapabilities,
+    }, {
+      requireGrade: 'S',
+      requireReadinessReport: true,
+      expectedDeployFingerprint: 'current-fp',
+      requiredDomain: 'demo.example',
+      requiredBenchmarkModes: ['lexical', 'semantic'],
+      requiredBenchmarkSurfaces: ['kb-search', 'kb-query'],
+      minBenchmarkRepeat: 8,
+      minBenchmarkSamples: 16,
+      minQueryEvalRows: 2,
+      requiredEvalKinds: ['query', 'search'],
+    });
+
+    expect(scorecard.ok).toBe(false);
+    expect(scorecard.overall_grade).toBe('A+');
+    expect(scorecard.categories.find((category) => category.name === 'retrieval_performance'))
+      .toMatchObject({
+        grade: 'A+',
+        evidence: {
+          benchmarks: [
+            expect.objectContaining({ non_cache_sample_count: 0 }),
+            expect.objectContaining({ non_cache_sample_count: 0 }),
+          ],
+        },
+      });
   });
 
   it('fails when deploy-readiness evidence is required but missing', () => {

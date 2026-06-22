@@ -73,4 +73,22 @@ describe('package scripts', () => {
       'node scripts/a-plus-proof.mjs',
     );
   });
+
+  it('keeps a named S-grade scorecard command', () => {
+    expect(pkg.scripts?.['scorecard:s']).toBe(
+      'node scripts/a-plus-scorecard.mjs --require-grade S',
+    );
+  });
+
+  it('keeps a named S-grade proof bundle command', () => {
+    expect(pkg.scripts?.['proof:s']).toBe(
+      'node scripts/a-plus-proof.mjs --require-grade S --input fixtures/s-grade-consumer-evals.json --repeat 8',
+    );
+  });
+
+  it('keeps a named authenticated consumer smoke command', () => {
+    expect(pkg.scripts?.['smoke:consumer-auth']).toBe(
+      'node scripts/consumer-auth-smokes.mjs',
+    );
+  });
 });

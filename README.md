@@ -127,6 +127,8 @@ cd cloudflare/worker && RAG_SERVICE_KEY=<service-key> pnpm run release-status:em
 cd cloudflare/worker && RAG_SERVICE_KEY=<service-key> pnpm run readiness:embedding-model
 cd cloudflare/worker && RAG_SERVICE_KEY=<service-key> RAG_BASE_URL="$RAG_BASE_URL" pnpm run smoke:rag-crud:embedding-model
 cd cloudflare/worker && RAG_ALLOW_LIVE_OCR=1 RAG_SERVICE_KEY=<service-key> pnpm run readiness:full-port
+cd cloudflare/worker && KARTE_SESSION_COOKIE=<cookie> STARBOARD_SESSION_COOKIE=<cookie> pnpm run smoke:consumer-auth -- --require-authenticated
+cd cloudflare/worker && RAG_SERVICE_KEY=<service-key> pnpm run proof:s -- --domain <domain> --output-dir /tmp/kb-s-proof
 ```
 
 After deploying this port, the `/healthz` row in `smoke:legacy-routes` should
@@ -151,6 +153,12 @@ free-ai cost/type/test check, the Vectorize embedding binding selectability audi
 full-port gap matrix, the no-network NVDA scanned-PDF OCR eval payload dry-run,
 the read-only embedding-model release plan, local cutover smoke, and Wrangler
 deploy dry-run.
+`pnpm run scorecard:s` is stricter than A+: it requires authenticated Karte and
+Starboard consumer-smoke evidence, real consumer eval packs, non-cache latency
+buckets, trace drilldown/export evidence, and explicit ingestion
+idempotency/replay/preview/failure-classification evidence. Without the product
+session cookies, `pnpm run smoke:consumer-auth` reports skipped authenticated
+flows and S proof correctly remains blocked.
 The sibling `../rag-service` repo is already retired. Use
 `pnpm run audit:sibling-rag-service -- --json --require-retired` to prove it
 stays gone. The current embedding-model release is live: matching `../free-ai`
