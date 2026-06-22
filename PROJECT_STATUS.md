@@ -75,7 +75,10 @@ Workers AI embedding calls and is an opt-in post-cutover step.
   audit for Linkchat/Karte and Starboard. It now proves karte's profile-memory
   create/ingest/delete/search payload contract and Starboard's user-scoped
   semantic search plus full README-backed repo text content and
-  `user_id`/`repo_id`/`full_name`/`language` ingest metadata contract. It also
+  `user_id`/`repo_id`/`full_name`/`language` ingest metadata contract, and
+  requires Starboard's deterministic README-only recall plus bounded-ingest
+  batching regression test, so description-only ingestion cannot pass the gate.
+  It also
   fails if either consumer keeps the old
   `src/lib/rag-service.ts` client filename; the shared client module is
   `src/lib/knowledgebase.ts`. It verifies both checked-out consumer repos still

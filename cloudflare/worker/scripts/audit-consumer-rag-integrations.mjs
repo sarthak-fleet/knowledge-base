@@ -97,6 +97,17 @@ function starboardReadmeContractOk(route, helper) {
     ]);
 }
 
+function starboardReadmeEvalOk(testSource) {
+  return containsAll(testSource, [
+    /keeps README-only terms recallable through bounded ingest batches/,
+    /readmeOnlyNeedle/,
+    /batchRagDocuments/,
+    /buildStarboardRagDocument/,
+    /has_readme:\s*true/,
+    /source:\s*['"]github_readme['"]/,
+  ]);
+}
+
 function resolveFirstExistingRepo(fleetRoot, names) {
   for (const name of names) {
     const repo = resolve(fleetRoot, name);
@@ -347,6 +358,16 @@ function auditStarboard(fleetRoot) {
   checks.push(existsSync(legacyRagClient)
     ? fail('legacy_rag_service_client_removed', 'src/lib/rag-service.ts still exists; use src/lib/knowledgebase.ts')
     : pass('legacy_rag_service_client_removed'));
+
+  const readmeEvalPath = resolve(repo, 'src/__tests__/knowledgebase-rag.test.ts');
+  if (!existsSync(readmeEvalPath)) {
+    checks.push(fail('starboard_readme_recall_eval', 'src/__tests__/knowledgebase-rag.test.ts is missing'));
+  } else {
+    const testSource = readText(readmeEvalPath);
+    checks.push(starboardReadmeEvalOk(testSource)
+      ? pass('starboard_readme_recall_eval', 'README-only recall and bounded ingest batching are covered by Starboard tests')
+      : fail('starboard_readme_recall_eval', 'Starboard must keep a deterministic README-only recall + batching regression test'));
+  }
 
   return { repo: 'starboard', ok: checks.every((check) => check.ok), checks };
 }

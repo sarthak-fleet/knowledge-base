@@ -110,6 +110,17 @@ function writeHealthyStarboard(fleetRoot: string) {
     '  };',
     '}',
   ].join('\n'));
+  write(resolve(repo, 'src/__tests__/knowledgebase-rag.test.ts'), [
+    'import { batchRagDocuments } from "@/lib/knowledgebase";',
+    'import { buildStarboardRagDocument } from "@/lib/starboard-rag-documents";',
+    'it("keeps README-only terms recallable through bounded ingest batches", () => {',
+    '  const readmeOnlyNeedle = "holographic scheduler webhooks";',
+    '  const document = buildStarboardRagDocument("user-1", repo, "README-only content");',
+    '  const batches = batchRagDocuments([document], 850);',
+    '  expect(readmeOnlyNeedle).toBeTruthy();',
+    '  expect(batches[0][0].metadata).toMatchObject({ has_readme: true, source: "github_readme" });',
+    '});',
+  ].join('\n'));
 }
 
 describe('audit-consumer-rag-integrations', () => {
@@ -426,6 +437,25 @@ describe('audit-consumer-rag-integrations', () => {
 
       expect(report.ok).toBe(false);
       expect(report.blockers).toContain('starboard:stars_sync_content_contract');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('fails when Starboard drops the README recall and batching regression', () => {
+    const { fleetRoot, cleanup } = makeFleet();
+    try {
+      writeHealthyLinkchat(fleetRoot);
+      writeHealthyStarboard(fleetRoot);
+      write(resolve(fleetRoot, 'starboard/src/__tests__/knowledgebase-rag.test.ts'), [
+        'import { buildStarboardRagDocument } from "@/lib/starboard-rag-documents";',
+        'it("includes README text", () => buildStarboardRagDocument("user-1", repo, "# README"));',
+      ].join('\n'));
+
+      const report = auditConsumerRagIntegrations({ fleetRoot });
+
+      expect(report.ok).toBe(false);
+      expect(report.blockers).toContain('starboard:starboard_readme_recall_eval');
     } finally {
       cleanup();
     }
