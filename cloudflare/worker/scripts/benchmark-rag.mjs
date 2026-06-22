@@ -10,6 +10,8 @@ function usage() {
 Options:
   --index-id <id>        Query an existing index instead of creating one
   --index-name <name>    Override input.index.name when creating an index
+  --surface <surface>    index, kb-search, or kb-query; default index
+  --domain <domain>      Required for kb-search and kb-query
   --repeat <n>           Number of query passes; default 3
   --top-k <n>            Query top_k; default 5
   --mode <mode>          Query mode: auto, lexical, semantic, or hybrid; default auto
@@ -25,6 +27,8 @@ function parseArgs(argv) {
     input: '',
     indexId: '',
     indexName: '',
+    surface: 'index',
+    domain: '',
     repeat: 3,
     topK: 5,
     mode: 'auto',
@@ -51,6 +55,8 @@ function parseArgs(argv) {
     else if (arg === '--input') out.input = value;
     else if (arg === '--index-id') out.indexId = value;
     else if (arg === '--index-name') out.indexName = value;
+    else if (arg === '--surface') out.surface = parseSurface(value);
+    else if (arg === '--domain') out.domain = value.trim();
     else if (arg === '--repeat') out.repeat = parsePositiveInteger(value, '--repeat');
     else if (arg === '--top-k') out.topK = parsePositiveInteger(value, '--top-k');
     else if (arg === '--mode') out.mode = parseMode(value);
@@ -59,7 +65,16 @@ function parseArgs(argv) {
   }
   if (!out.input) throw new Error('--input is required');
   if (!out.key && !out.dryRun) throw new Error('--key or RAG_SERVICE_KEY is required');
+  if (out.surface !== 'index' && !out.domain) throw new Error('--domain is required for kb-search and kb-query surfaces');
   return out;
+}
+
+function parseSurface(value) {
+  const surface = String(value || '').trim();
+  if (!['index', 'kb-search', 'kb-query'].includes(surface)) {
+    throw new Error('--surface must be index, kb-search, or kb-query');
+  }
+  return surface;
 }
 
 function parseMode(value) {
@@ -85,11 +100,13 @@ function asObject(value, label) {
 
 export { parseArgs };
 
-export function normalizeBenchmarkInput(raw) {
+export function normalizeBenchmarkInput(raw, options = {}) {
   const root = asObject(typeof raw === 'string' ? JSON.parse(raw) : raw, 'input');
   const documents = Array.isArray(root.documents) ? root.documents : [];
   const queries = Array.isArray(root.queries) ? root.queries : [];
-  if (documents.length === 0) throw new Error('input.documents must be a non-empty array');
+  if (documents.length === 0 && options.requireDocuments !== false) {
+    throw new Error('input.documents must be a non-empty array');
+  }
   if (queries.length === 0) throw new Error('input.queries must be a non-empty array');
   return {
     index: {
@@ -134,8 +151,8 @@ function sleep(ms) {
   });
 }
 
-async function requestJson(url, { key, method = 'GET', body } = {}) {
-  const res = await fetch(url, {
+async function requestJson(fetchImpl, url, { key, method = 'GET', body } = {}) {
+  const res = await fetchImpl(url, {
     method,
     headers: {
       Authorization: `Bearer ${key}`,
@@ -214,16 +231,43 @@ export function scoreResults(expectation, results) {
   });
 }
 
+function benchmarkRequest({ baseUrl, indexId, surface, domain, query, topK, mode }) {
+  if (surface === 'kb-search') {
+    return {
+      url: `${baseUrl}/v1/kb/search`,
+      body: { domain, query: query.query, top_k: topK, mode },
+    };
+  }
+  if (surface === 'kb-query') {
+    return {
+      url: `${baseUrl}/v1/kb/query`,
+      body: { domain, question: query.query, top_k: topK, mode, answer_mode: 'extractive' },
+    };
+  }
+  return {
+    url: `${baseUrl}/v1/indexes/${indexId}/query`,
+    body: { query: query.query, top_k: topK, mode },
+  };
+}
+
 export async function runBenchmark(options) {
-  const input = normalizeBenchmarkInput(options.input);
   const repeat = Math.max(1, options.repeat || 3);
   const topK = Math.max(1, options.topK || 5);
   const mode = parseMode(options.mode || 'auto');
+  const surface = parseSurface(options.surface || 'index');
+  const domain = String(options.domain || '').trim();
+  const fetchImpl = options.fetchImpl ?? fetch;
+  if (surface !== 'index' && !domain) throw new Error('domain is required for kb-search and kb-query surfaces');
+  const input = normalizeBenchmarkInput(options.input, {
+    requireDocuments: surface === 'index' && !options.indexId,
+  });
   if (options.dryRun) {
     return {
       dry_run: true,
       documents: input.documents.length,
       queries: input.queries.length,
+      surface,
+      domain: domain || null,
       mode,
       planned_requests: input.queries.length * repeat,
     };
@@ -231,8 +275,8 @@ export async function runBenchmark(options) {
 
   let indexId = options.indexId || '';
   let createdIndex = false;
-  if (!indexId) {
-    const created = await requestJson(`${options.baseUrl}/v1/indexes`, {
+  if (surface === 'index' && !indexId) {
+    const created = await requestJson(fetchImpl, `${options.baseUrl}/v1/indexes`, {
       key: options.key,
       method: 'POST',
       body: {
@@ -242,7 +286,7 @@ export async function runBenchmark(options) {
     });
     indexId = created.payload.id;
     createdIndex = true;
-    await requestJson(`${options.baseUrl}/v1/indexes/${indexId}/ingest`, {
+    await requestJson(fetchImpl, `${options.baseUrl}/v1/indexes/${indexId}/ingest`, {
       key: options.key,
       method: 'POST',
       body: { documents: input.documents },
@@ -261,10 +305,19 @@ export async function runBenchmark(options) {
     for (let pass = 0; pass < repeat; pass += 1) {
       for (const query of input.queries) {
         const started = performance.now();
-        const { payload, cache, timing } = await requestJson(`${options.baseUrl}/v1/indexes/${indexId}/query`, {
+        const request = benchmarkRequest({
+          baseUrl: options.baseUrl,
+          indexId,
+          surface,
+          domain,
+          query,
+          topK,
+          mode,
+        });
+        const { payload, cache, timing } = await requestJson(fetchImpl, request.url, {
           key: options.key,
           method: 'POST',
-          body: { query: query.query, top_k: topK, mode },
+          body: request.body,
         });
         const elapsed = performance.now() - started;
         const data = Array.isArray(payload.data) ? payload.data : [];
@@ -292,7 +345,7 @@ export async function runBenchmark(options) {
     }
   } finally {
     if (createdIndex && options.cleanup) {
-      await requestJson(`${options.baseUrl}/v1/indexes/${indexId}`, { key: options.key, method: 'DELETE' });
+      await requestJson(fetchImpl, `${options.baseUrl}/v1/indexes/${indexId}`, { key: options.key, method: 'DELETE' });
     }
   }
 
@@ -300,6 +353,8 @@ export async function runBenchmark(options) {
     dry_run: false,
     index_id: indexId,
     created_index: createdIndex,
+    surface,
+    domain: domain || null,
     repeat,
     top_k: topK,
     mode,

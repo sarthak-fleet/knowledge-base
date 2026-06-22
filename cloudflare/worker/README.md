@@ -676,19 +676,23 @@ pnpm run scorecard:a-plus -- \
 For A+ performance evidence, run route-specific benchmarks and pass them
 directly to the scorecard. The operator report already includes capability proof
 for the hosted UI, custom text input, async progress, and whether visible UI copy
-hides retrieval/storage internals:
+hides retrieval/storage internals. Existing domain/index benchmarks can use a
+query-only input file; `documents` are required only when the benchmark creates a
+temporary index:
 
 ```bash
 RAG_SERVICE_KEY=<service-key> pnpm run benchmark:rag -- \
   --input fixtures/benchmark.sample.json \
-  --index-id <index-id> \
+  --surface kb-search \
+  --domain <domain> \
   --mode lexical \
   --repeat 5 \
   > /tmp/kb-benchmark-lexical.json
 
 RAG_SERVICE_KEY=<service-key> pnpm run benchmark:rag -- \
   --input fixtures/benchmark.sample.json \
-  --index-id <index-id> \
+  --surface kb-query \
+  --domain <domain> \
   --mode semantic \
   --repeat 5 \
   > /tmp/kb-benchmark-semantic.json

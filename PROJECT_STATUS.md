@@ -302,8 +302,9 @@ Worker: Fleet consumer → Hono → free-ai/Workers AI embed → Vectorize query
   so missing proof cannot be mistaken for production excellence. Operator
   reports automatically prove hosted UI, custom text input, async progress, and
   user-visible UI copy that hides retrieval/storage internals. `benchmark:rag`
-  emits mode-labeled lexical/semantic/hybrid evidence, and the scorecard CLI can
-  merge an operator report plus repeated benchmark files without hand-built JSON.
+  emits mode-labeled lexical/semantic/hybrid evidence for index, domain search,
+  and domain answer surfaces, and the scorecard CLI can merge an operator report
+  plus repeated benchmark files without hand-built JSON.
 - Public `/readyz` and Prometheus-compatible `/metrics` compatibility endpoints
   for the retired FastAPI meta surface, backed by Cloudflare D1/Vectorize/R2
   binding checks.
