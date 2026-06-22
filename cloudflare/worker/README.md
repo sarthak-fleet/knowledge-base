@@ -466,10 +466,10 @@ Explicit `hybrid` query mode fuses BM25-style fuzzy D1 sparse lexical and Vector
 and local keyword rerank/MMR. Set `rerank_model: "workers_ai"` to run the
 Cloudflare `@cf/baai/bge-reranker-base` neural reranker over the bounded
 candidate set before returning results. Lexical timing reports
-`lexical_scoring: "bm25_fuzzy_sparse_v2"` and `lexical_prefilter:
-"d1_like_fuzzy_candidates"` when that zero-AI sparse scorer is used; the
-prefilter uses bounded exact/stem/subtoken candidates and keeps non-cache
-lexical/hybrid queries from loading every chunk before scoring.
+`lexical_scoring: "bm25_fuzzy_sparse_v3"` and `lexical_prefilter:
+"chunk_cache_full_scan"` when that zero-AI sparse scorer is used; hot
+lexical/hybrid queries reuse the in-Worker chunk cache instead of issuing D1
+LIKE prefilter scans.
 `/v1/kb/query` defaults to the fast
 extractive cited answer path; set `answer_mode: "workers_ai"` to synthesize a
 richer cited answer with Workers AI using `answer_model`, `RAG_ANSWER_MODEL`, or
@@ -477,8 +477,9 @@ richer cited answer with Workers AI using `answer_model`, `RAG_ANSWER_MODEL`, or
 model returns no usable citations. Lexical paths apply deterministic rewrite and
 decompose fanout for multi-part questions, with `query_rewrite: false` and
 `query_decompose: false` available for benchmark comparisons. Explicit
-`semantic` mode corrects weak or empty Vectorize evidence with a D1 lexical
-fallback before returning, without making a second Workers AI embedding call.
+`semantic` mode corrects low-score or empty Vectorize evidence with cached D1
+lexical fallback before returning, without making a second Workers AI embedding
+call.
 `/v1/kb/query` responses include deterministic answer/evidence verification in
 `confidence` and persist the same verification fields into D1 query traces.
 `/v1/kb/evals/query` keeps deterministic scoring as the default and accepts

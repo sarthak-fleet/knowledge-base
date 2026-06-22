@@ -107,11 +107,12 @@ Workers AI embedding calls and is an opt-in post-cutover step.
   metadata indexes, read-only selected-model readiness is green, and
   `smoke:rag-crud:embedding-model` proves generic index CRUD plus the
   `/v1/kb/ingest/text` custom-input domain path and `/v1/kb/search`.
-- **Next A/A+ evidence release:** local `main` now expects
-  `deploy_fingerprint=knowledgebase-a-plus-evidence-2026-06-23` so deployed
-  readiness cannot pass against the older embedding-model cutover after the
-  scorecard, hosted UI, and benchmark evidence-gate changes. This fingerprint is
-  pending an approved Worker deploy.
+- **A+ evidence release:** deployed Worker version
+  `954be3b0-1689-43d8-9f0b-c2b9d9b37329` exposes
+  `deploy_fingerprint=knowledgebase-a-plus-evidence-2026-06-23`. Live
+  Starboard-domain proof at `/tmp/kb-a-plus-proof-starboard-1782158950`
+  passed overall A+ with readiness, scoped query eval, lexical `kb-search`,
+  semantic `kb-query`, ingestion, observability, and hosted UI evidence.
 - **Python runtime:** retired. The Worker full-port/preflight gates, UI,
   migration tooling, and local checks are TypeScript/Node-only; the old Python
   FastAPI server, Python UI, Docker Compose runtime, parser/query/eval package,
@@ -162,8 +163,9 @@ Worker: Fleet consumer → Hono → free-ai/Workers AI embed → Vectorize query
         /v1/kb/query plans explicit D1 field filters such as counterparty: Acme
         /v1/kb/query expands D1 structured matches with D1 relationship graph evidence
         explicit hybrid mode fuses D1 BM25-style fuzzy sparse lexical + Vectorize retrieval with RRF, local MMR, and opt-in Workers AI neural rerank
+        hot KB search/query paths cache domain index lookups and lexical chunks to avoid repeated D1 external-id and LIKE-prefilter work
         query rewrite/decompose fans out lexical variants inside the Worker without extra AI
-        semantic mode corrects weak/empty Vectorize evidence with D1 lexical RRF fallback
+        semantic mode corrects low-score/empty Vectorize evidence with cached D1 lexical RRF fallback
         /v1/kb/query auto-uses the D1 entity fast path before Vectorize/Workers AI fallback
         /v1/kb/query returns fast extractive cited answers by default and opt-in Workers AI cited synthesis via answer_mode
         /v1/kb/query/stream preserves the retired FastAPI SSE stream contract with started/stage/answer/error events
@@ -283,8 +285,9 @@ Worker: Fleet consumer → Hono → free-ai/Workers AI embed → Vectorize query
 - Zero-AI D1 exact field-filter planning in `/v1/kb/query` for structured entity fields.
 - Zero-AI D1 graph evidence expansion in `/v1/kb/query` for structured entity matches.
 - Explicit `hybrid` retrieval mode with D1 BM25-style fuzzy sparse lexical + Vectorize RRF fusion plus Worker-native keyword rerank/MMR and opt-in Workers AI neural rerank.
+- Cached KB domain index lookup plus cached-chunk lexical scoring for hot `/v1/kb/search` and `/v1/kb/query` paths.
 - Deterministic rewrite/decompose lexical fanout for multi-part questions, exposed through Worker API/UI flags for benchmark comparison.
-- Corrective semantic fallback: explicit `semantic` queries with weak/empty Vectorize evidence fuse D1 lexical evidence before returning.
+- Corrective semantic fallback: explicit `semantic` queries with low-score/empty Vectorize evidence fuse cached lexical evidence before returning.
 - Opt-in Workers AI answer synthesis for `/v1/kb/query` through `answer_mode: "workers_ai"`, with extractive cited answers kept as the default fast path.
 - SSE query lifecycle parity through `/v1/kb/query/stream`, exposed in the
   hosted testing UI as Stream Answer and backed by the same answer path as

@@ -41,7 +41,7 @@ const MAX_BENCHMARK_QUERIES = 20;
 const MAX_BENCHMARK_REPEAT = 200;
 const MAX_BENCHMARK_WARMUP = 20;
 const MAX_EVAL_CASES = 100;
-const CORRECTIVE_SEMANTIC_MIN_SCORE = 0.35;
+const CORRECTIVE_SEMANTIC_MIN_SCORE = 0.55;
 const DEFAULT_BASE_EMBEDDING_MODEL = '@cf/baai/bge-base-en-v1.5';
 const DEFAULT_SMALL_EMBEDDING_MODEL = '@cf/baai/bge-small-en-v1.5';
 const DEFAULT_BASE_EMBEDDING_DIMENSIONS = 768;
@@ -50,7 +50,7 @@ const DEFAULT_RERANKER_MODEL = '@cf/baai/bge-reranker-base';
 const DEFAULT_ANSWER_MODEL = '@cf/meta/llama-3.1-8b-instruct';
 const WORKER_VERSION = '0.1.0';
 const WORKER_DEPLOY_FINGERPRINT = 'knowledgebase-a-plus-evidence-2026-06-23';
-const LEXICAL_SCORING_VERSION = 'bm25_fuzzy_sparse_v2';
+const LEXICAL_SCORING_VERSION = 'bm25_fuzzy_sparse_v3';
 const MAX_RERANK_CONTEXT_CHARS = 1200;
 const STOP_WORDS = new Set([
   'a',
@@ -140,6 +140,7 @@ interface AppOptions {
   embeddingCache?: TtlCache<number[]>;
   indexCache?: TtlCache<boolean>;
   indexRecordCache?: TtlCache<IndexRecord>;
+  kbDomainIndexCache?: TtlCache<IndexRecord>;
   lexicalChunkCache?: TtlCache<ChunkRecord[]>;
 }
 
@@ -2515,6 +2516,7 @@ export function createApp(options: AppOptions = {}) {
   const embeddingCache = options.embeddingCache ?? new TtlCache<number[]>(parseCacheOptions({}));
   const indexCache = options.indexCache ?? new TtlCache<boolean>(parseCacheOptions({}));
   const indexRecordCache = options.indexRecordCache ?? new TtlCache<IndexRecord>(parseCacheOptions({}));
+  const kbDomainIndexCache = options.kbDomainIndexCache ?? new TtlCache<IndexRecord>(parseCacheOptions({}));
   const lexicalChunkCache = options.lexicalChunkCache ?? new TtlCache<ChunkRecord[]>(parseCacheOptions({}));
 
   function rememberIndex(env: Env, tenant: string, indexId: string): void {
@@ -2526,6 +2528,23 @@ export function createApp(options: AppOptions = {}) {
     rememberIndex(env, index.tenant, index.id);
     indexRecordCache.configure(parseCacheOptions(env));
     indexRecordCache.set(buildCacheKey({ tenant: index.tenant, indexId: index.id }), index);
+  }
+
+  function rememberKbDomainIndexRecord(env: Env, domain: string, index: IndexRecord): void {
+    rememberIndexRecord(env, index);
+    kbDomainIndexCache.configure(parseCacheOptions(env));
+    kbDomainIndexCache.set(buildCacheKey({ tenant: index.tenant, domain }), index);
+  }
+
+  async function getKbDomainIndex(env: Env, repo: Repository, tenant: string, domain: string): Promise<IndexRecord | null> {
+    kbDomainIndexCache.configure(parseCacheOptions(env));
+    const key = buildCacheKey({ tenant, domain });
+    const cached = kbDomainIndexCache.get(key);
+    if (cached) return cached;
+    const index = await repo.getIndexByExternalId(tenant, kbIndexExternalId(domain));
+    if (!index) return null;
+    rememberKbDomainIndexRecord(env, domain, index);
+    return index;
   }
 
   async function getIndexRecord(env: Env, repo: Repository, tenant: string, indexId: string): Promise<IndexRecord | null> {
@@ -2718,6 +2737,7 @@ export function createApp(options: AppOptions = {}) {
     const ragRepo = makeRepository(env);
     const index = await ragRepo.getIndexByExternalId(tenant, kbIndexExternalId(domain));
     queryCache.clear();
+    kbDomainIndexCache.clear();
     if (index) {
       clearLexicalChunkCache(tenant, index.id);
       await clearSharedQueryCache(env, tenant, index.id);
@@ -2812,6 +2832,16 @@ export function createApp(options: AppOptions = {}) {
     lexicalChunkCache.configure(parseCacheOptions({}));
     lexicalChunkCache.set(buildCacheKey({ tenant, indexId }), []);
     lexicalChunkCache.clear();
+  }
+
+  async function primeLexicalChunkCache(env: Env, repo: Repository, tenant: string, indexId: string): Promise<void> {
+    try {
+      lexicalChunkCache.configure(parseCacheOptions(env));
+      const chunks = await repo.listChunksForIndex(tenant, indexId, MAX_LEXICAL_CHUNKS);
+      lexicalChunkCache.set(buildCacheKey({ tenant, indexId }), chunks);
+    } catch {
+      // Cache priming is only a latency optimization; retrieval can still load chunks on demand.
+    }
   }
 
   async function runTextQuery(c: AppContext, query: string, body: QueryBody): Promise<{
@@ -3019,7 +3049,7 @@ export function createApp(options: AppOptions = {}) {
     const externalId = kbIndexExternalId(domain);
     const existing = await repo.getIndexByExternalId(tenant, externalId);
     if (existing) {
-      rememberIndexRecord(env, existing);
+      rememberKbDomainIndexRecord(env, domain, existing);
       return existing.id;
     }
     const profile = await resolveCreateEmbeddingProfile(env, await kbDomainCreateIndexBody(env, tenant, domain));
@@ -3032,7 +3062,7 @@ export function createApp(options: AppOptions = {}) {
       embeddingModel: profile.model,
       embeddingProvider: profile.provider ?? null,
     });
-    rememberIndexRecord(env, created);
+    rememberKbDomainIndexRecord(env, domain, created);
     return created.id;
   }
 
@@ -4441,6 +4471,7 @@ export function createApp(options: AppOptions = {}) {
     }
     queryCache.clear();
     clearLexicalChunkCache(tenant, indexId);
+    await primeLexicalChunkCache(env, repo, tenant, indexId);
     await clearSharedQueryCache(env, tenant, indexId);
     return { project: tenant, domain, run_id: runId, index_id: indexId, files: results };
   }
@@ -4793,7 +4824,7 @@ export function createApp(options: AppOptions = {}) {
         };
       }
     }
-    const index = await repo.getIndexByExternalId(tenant, kbIndexExternalId(domain));
+    const index = await getKbDomainIndex(c.env, repo, tenant, domain);
     if (!index) throw new Error('domain index not found');
     const result = await runTextQuery(contextWithIndex(c, index.id), question, queryBody);
     const citations = citationsFromResults(result.payload.data, question);
@@ -4865,7 +4896,7 @@ export function createApp(options: AppOptions = {}) {
     if (!query) return c.json({ error: 'query is required' }, 400);
     const tenant = c.get('tenant');
     const repo = makeRepository(c.env);
-    const index = await repo.getIndexByExternalId(tenant, kbIndexExternalId(domain));
+    const index = await getKbDomainIndex(c.env, repo, tenant, domain);
     if (!index) return c.json({ error: 'domain index not found' }, 404);
     const queryBody: QueryBody = {};
     if (body.top_k !== undefined) queryBody.top_k = body.top_k;
@@ -5065,6 +5096,7 @@ export function createApp(options: AppOptions = {}) {
     queryCache.clear();
     indexCache.clear();
     indexRecordCache.clear();
+    kbDomainIndexCache.clear();
     clearLexicalChunkCache(tenant, indexId);
     await clearSharedQueryCache(c.env, tenant, indexId);
     return c.json({ ok: true });
@@ -5227,6 +5259,7 @@ export function createApp(options: AppOptions = {}) {
     await vectorizeProfile.binding.upsert(vectorRows);
     queryCache.clear();
     clearLexicalChunkCache(tenant, indexId);
+    await primeLexicalChunkCache(c.env, repo, tenant, indexId);
     await clearSharedQueryCache(c.env, tenant, indexId);
     return c.json({ upserted: vectorRows.length }, 201);
   });
@@ -5244,6 +5277,7 @@ export function createApp(options: AppOptions = {}) {
     await repo.deleteDocument(tenant, docId);
     queryCache.clear();
     indexCache.clear();
+    kbDomainIndexCache.clear();
     clearLexicalChunkCache(tenant, doc.index_id);
     await clearSharedQueryCache(c.env, tenant, doc.index_id);
     return c.json({ ok: true });
@@ -5338,10 +5372,8 @@ export function createApp(options: AppOptions = {}) {
     if (!indexId) throw new Error('Index not found');
     const topK = clampTopK(body.top_k);
     const repo = makeRepository(c.env);
-    const candidateLimit = Math.min(MAX_LEXICAL_CHUNKS, Math.max(topK * 50, 500));
-    const prefilterTokens = lexicalPrefilterTokens(tokens);
     const prefilterStarted = performance.now();
-    const candidateChunks = await repo.searchLexicalChunks(tenant, indexId, prefilterTokens, candidateLimit);
+    const candidateChunks = await getCachedLexicalChunks(c.env, repo, tenant, indexId, timing);
     if (candidateChunks.length === 0) {
       const indexStarted = performance.now();
       if (!(await indexExists(c.env, repo, tenant, indexId))) throw new Error('Index not found');
@@ -5351,12 +5383,11 @@ export function createApp(options: AppOptions = {}) {
     if (timing) {
       timing.lexical_ms = elapsedMs(started);
       timing.lexical_prefilter_ms = elapsedMs(prefilterStarted);
-      timing.lexical_prefilter = 'd1_like_fuzzy_candidates';
+      timing.lexical_prefilter = 'chunk_cache_full_scan';
       timing.lexical_tokens = tokens.length;
-      timing.lexical_prefilter_tokens = prefilterTokens.length;
       timing.lexical_scoring = LEXICAL_SCORING_VERSION;
       timing.lexical_corpus_chunks = candidateChunks.length;
-      timing.lexical_candidate_limit = candidateLimit;
+      timing.lexical_candidate_limit = MAX_LEXICAL_CHUNKS;
       timing.retrieval = ranked.length > 0 ? 'lexical' : 'semantic_fallback';
     }
     return {

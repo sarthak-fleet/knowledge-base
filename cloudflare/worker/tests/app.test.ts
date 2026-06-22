@@ -96,6 +96,7 @@ class MemoryRepository implements Repository {
   documents = new Map<string, DocumentRecord>();
   chunks = new Map<string, ChunkRecord>();
   getIndexCalls = 0;
+  getIndexByExternalIdCalls = 0;
   listChunksForIndexCalls = 0;
 
   async createIndex(input: CreateIndexInput): Promise<IndexRecord> {
@@ -125,6 +126,7 @@ class MemoryRepository implements Repository {
   }
 
   async getIndexByExternalId(tenant: string, externalId: string): Promise<IndexRecord | null> {
+    this.getIndexByExternalIdCalls += 1;
     return [...this.indexes.values()].find(
       (row) => row.tenant === tenant && row.external_id === externalId,
     ) ?? null;
@@ -6084,18 +6086,18 @@ describe('knowledgebase RAG Worker app', () => {
     expect(query.status).toBe(200);
     expect(timing).toMatchObject({
       retrieval: 'lexical',
-      lexical_scoring: 'bm25_fuzzy_sparse_v2',
+      lexical_scoring: 'bm25_fuzzy_sparse_v3',
       lexical_corpus_chunks: 3,
-      lexical_prefilter: 'd1_like_fuzzy_candidates',
+      lexical_prefilter: 'chunk_cache_full_scan',
     });
     expect(result.data[0]?.chunk_id).toBe('chunk-rare');
     expect(result.data[0]?.metadata).toMatchObject({
-      lexical_scoring: 'bm25_fuzzy_sparse_v2',
+      lexical_scoring: 'bm25_fuzzy_sparse_v3',
       lexical_matched_terms: ['ultrarare'],
     });
     expect(aiCalls).toBe(0);
     expect(vectorQueries).toBe(0);
-    expect(repo.listChunksForIndexCalls).toBe(0);
+    expect(repo.listChunksForIndexCalls).toBe(1);
   });
 
   it('handles fuzzy lexical typos without AI or Vectorize', async () => {
@@ -6164,13 +6166,66 @@ describe('knowledgebase RAG Worker app', () => {
     expect(query.status).toBe(200);
     expect(timing).toMatchObject({
       retrieval: 'lexical',
-      lexical_prefilter: 'd1_like_fuzzy_candidates',
-      lexical_scoring: 'bm25_fuzzy_sparse_v2',
+      lexical_prefilter: 'chunk_cache_full_scan',
+      lexical_scoring: 'bm25_fuzzy_sparse_v3',
     });
     expect(result.data[0]?.chunk_id).toBe('chunk-guardrails');
     expect(result.data[0]?.metadata.lexical_matched_terms).toEqual(['guadrails~guardrails']);
     expect(aiCalls).toBe(0);
     expect(vectorQueries).toBe(0);
+    expect(repo.listChunksForIndexCalls).toBe(1);
+  });
+
+  it('caches knowledgebase domain index lookups across hot searches', async () => {
+    const repo = new MemoryRepository();
+    const metadata = new MemoryMetadataRepository();
+    const rawDocs = new FakeR2Bucket();
+    const vectorize = new FakeVectorize();
+    const app = createApp({
+      makeRepository: () => repo,
+      makeMetadataRepository: () => metadata,
+      embed: async (_env, texts) => texts.map(vectorFor),
+    });
+    const env = makeEnv(
+      vectorize,
+      undefined as unknown as D1Database,
+      undefined,
+      rawDocs as unknown as R2Bucket,
+    );
+    const auth = { Authorization: 'Bearer key-a', 'Content-Type': 'application/json' };
+
+    const ingested = await app.request(
+      '/v1/kb/ingest/text',
+      {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({
+          domain: 'kb-hot-path',
+          title: 'cache-note',
+          text: 'Dashboard cache facts should be found quickly.',
+          async: false,
+        }),
+      },
+      env,
+    );
+    expect(ingested.status).toBe(201);
+
+    repo.getIndexByExternalIdCalls = 0;
+    repo.listChunksForIndexCalls = 0;
+    for (let i = 0; i < 2; i += 1) {
+      const searched = await app.request(
+        '/v1/kb/search',
+        {
+          method: 'POST',
+          headers: auth,
+          body: JSON.stringify({ domain: 'kb-hot-path', query: 'dashboard cache', mode: 'lexical', top_k: 1 }),
+        },
+        env,
+      );
+      expect(searched.status).toBe(200);
+    }
+
+    expect(repo.getIndexByExternalIdCalls).toBe(0);
     expect(repo.listChunksForIndexCalls).toBe(0);
   });
 
@@ -6402,6 +6457,86 @@ describe('knowledgebase RAG Worker app', () => {
     expect(result.data[0]?.metadata.hybrid_sources).toEqual(['lexical']);
     expect(aiCalls).toBe(1);
     expect(vectorQueries).toBe(1);
+  });
+
+  it('corrects low-score semantic retrieval with lexical evidence', async () => {
+    const repo = new MemoryRepository();
+    const vectorize = new FakeVectorize();
+    const app = createApp({
+      makeRepository: () => repo,
+      embed: async (_env, texts) => texts.map(vectorFor),
+    });
+    const env = makeEnv(vectorize);
+    const auth = { Authorization: 'Bearer key-a', 'Content-Type': 'application/json' };
+
+    const created = await app.request(
+      '/v1/indexes',
+      { method: 'POST', headers: auth, body: JSON.stringify({ name: 'Low Score Corrective Docs' }) },
+      env,
+    );
+    const index = (await created.json()) as IndexRecord;
+    await app.request(
+      `/v1/indexes/${index.id}/ingest-vectors`,
+      {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({
+          chunks: [
+            {
+              id: 'chunk-lexical-low-score',
+              document_id: 'doc-lexical-low-score',
+              document_content: 'dashboard cache is documented here',
+              content: 'dashboard cache is documented here',
+              embedding: vectorFor('unrelated'),
+              chunk_index: 0,
+            },
+            {
+              id: 'chunk-semantic-low-score',
+              document_id: 'doc-semantic-low-score',
+              document_content: 'unrelated semantic neighbor',
+              content: 'unrelated semantic neighbor',
+              embedding: vectorFor('semantic'),
+              chunk_index: 1,
+            },
+          ],
+        }),
+      },
+      env,
+    );
+    vectorize.query = async () => ({
+      matches: [{
+        id: 'chunk-semantic-low-score',
+        score: 0.46,
+        metadata: {
+          document_id: 'doc-semantic-low-score',
+          chunk_content: 'unrelated semantic neighbor',
+          chunk_metadata: '{}',
+        },
+      }],
+    });
+
+    const query = await app.request(
+      `/v1/indexes/${index.id}/query`,
+      {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({ query: 'what mentions dashboard cache?', top_k: 1, mode: 'semantic' }),
+      },
+      env,
+    );
+    const result = (await query.json()) as { data: Array<{ chunk_id: string; chunk_content: string; metadata: JsonRecord }> };
+    const timing = JSON.parse(query.headers.get('X-RAG-Timing') ?? '{}');
+
+    expect(query.status).toBe(200);
+    expect(timing).toMatchObject({
+      retrieval: 'corrective_hybrid',
+      corrective_reason: 'semantic_low_score',
+      corrective_lexical_results: 1,
+      corrective_semantic_results: 1,
+    });
+    expect(result.data[0]?.chunk_id).toBe('chunk-lexical-low-score');
+    expect(result.data[0]?.chunk_content).toContain('dashboard cache');
+    expect(result.data[0]?.metadata.hybrid_sources).toEqual(['lexical']);
   });
 
   it('benchmarks warmed text queries inside the Worker', async () => {
