@@ -311,7 +311,8 @@ Worker: Fleet consumer → Hono → free-ai/Workers AI embed → Vectorize query
   and domain answer surfaces, and the scorecard CLI can merge an operator report
   plus repeated benchmark files without hand-built JSON. The scorecard can also
   require specific benchmark modes and surfaces so a narrow benchmark cannot
-  masquerade as across-the-board A/A+ evidence.
+  masquerade as across-the-board A/A+ evidence, and it can require the expected
+  deploy fingerprint so stale production reports fail inside the A/A+ gate.
 - Public `/readyz` and Prometheus-compatible `/metrics` compatibility endpoints
   for the retired FastAPI meta surface, backed by Cloudflare D1/Vectorize/R2
   binding checks.

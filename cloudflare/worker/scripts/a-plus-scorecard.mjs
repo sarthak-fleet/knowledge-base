@@ -43,6 +43,7 @@ Input can be:
   - {"operator_report": {...}, "benchmarks": [{...}], "capabilities": {...}}
 
 Options:
+  --expected-deploy-fingerprint <value> Require operator report health to match this deploy fingerprint.
   --require-benchmark-mode <mode>       Require lexical, semantic, or hybrid evidence. Repeatable.
   --require-benchmark-surface <surface> Require index, kb-search, or kb-query evidence. Repeatable.
 
@@ -56,6 +57,7 @@ function parseArgs(argv) {
     operatorReport: '',
     benchmarks: [],
     requireGrade: 'A',
+    expectedDeployFingerprint: process.env.RAG_EXPECTED_DEPLOY_FINGERPRINT || '',
     requiredBenchmarkModes: [],
     requiredBenchmarkSurfaces: [],
   };
@@ -69,6 +71,7 @@ function parseArgs(argv) {
     else if (arg === '--operator-report') out.operatorReport = value;
     else if (arg === '--benchmark') out.benchmarks.push(value);
     else if (arg === '--require-grade') out.requireGrade = normalizeGrade(value);
+    else if (arg === '--expected-deploy-fingerprint') out.expectedDeployFingerprint = value.trim();
     else if (arg === '--require-benchmark-mode') out.requiredBenchmarkModes.push(normalizeBenchmarkMode(value));
     else if (arg === '--require-benchmark-surface') out.requiredBenchmarkSurfaces.push(normalizeBenchmarkSurface(value));
     else throw new Error(`unknown argument: ${arg}`);
@@ -185,7 +188,7 @@ async function loadScorecardEvidence(args) {
   };
 }
 
-function scoreReliability(operatorReport) {
+function scoreReliability(operatorReport, requirements = {}) {
   if (!operatorReport) {
     return {
       name: 'reliability',
@@ -197,7 +200,21 @@ function scoreReliability(operatorReport) {
   }
   const checks = asArray(operatorReport.checks);
   const failedChecks = checks.filter((check) => check?.ok !== true).map((check) => check?.name ?? 'unknown');
-  const blockers = [...asArray(operatorReport.blockers), ...failedChecks];
+  const healthCheck = checks.find((check) => check?.name === 'public_health');
+  const deployFingerprint = typeof healthCheck?.deploy_fingerprint === 'string'
+    ? healthCheck.deploy_fingerprint
+    : typeof operatorReport.deploy_fingerprint === 'string'
+      ? operatorReport.deploy_fingerprint
+      : null;
+  const expectedDeployFingerprint = typeof requirements.expectedDeployFingerprint === 'string'
+    ? requirements.expectedDeployFingerprint.trim()
+    : '';
+  const fingerprintBlockers = expectedDeployFingerprint
+    ? deployFingerprint === expectedDeployFingerprint
+      ? []
+      : [deployFingerprint ? 'stale_deploy_fingerprint' : 'missing_deploy_fingerprint']
+    : [];
+  const blockers = [...asArray(operatorReport.blockers), ...failedChecks, ...fingerprintBlockers];
   const authenticated = operatorReport.authenticated === true;
   const a = operatorReport.ok === true && blockers.length === 0;
   const aPlus = a && authenticated && checks.length >= 2;
@@ -209,6 +226,8 @@ function scoreReliability(operatorReport) {
       check_count: checks.length,
       failed_checks: failedChecks,
       blocker_count: blockers.length,
+      deploy_fingerprint: deployFingerprint,
+      expected_deploy_fingerprint: expectedDeployFingerprint || null,
     },
   });
   return { name: 'reliability', ...result, blockers };
@@ -425,7 +444,9 @@ export function buildAPlusScorecard(rawEvidence, options = {}) {
   const requiredGrade = normalizeGrade(options.requireGrade ?? 'A');
   const evidence = normalizeEvidence(rawEvidence);
   const categories = [
-    scoreReliability(evidence.operatorReport),
+    scoreReliability(evidence.operatorReport, {
+      expectedDeployFingerprint: options.expectedDeployFingerprint,
+    }),
     scorePerformance(evidence.benchmarks, {
       modes: options.requiredBenchmarkModes,
       surfaces: options.requiredBenchmarkSurfaces,
@@ -462,6 +483,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     const input = await loadScorecardEvidence(args);
     const scorecard = buildAPlusScorecard(input, {
       requireGrade: args.requireGrade,
+      expectedDeployFingerprint: args.expectedDeployFingerprint,
       requiredBenchmarkModes: args.requiredBenchmarkModes,
       requiredBenchmarkSurfaces: args.requiredBenchmarkSurfaces,
     });

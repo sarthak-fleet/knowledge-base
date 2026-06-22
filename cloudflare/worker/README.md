@@ -701,6 +701,7 @@ pnpm run scorecard:a-plus -- \
   --operator-report /tmp/kb-operator-report.json \
   --benchmark /tmp/kb-benchmark-lexical.json \
   --benchmark /tmp/kb-benchmark-semantic.json \
+  --expected-deploy-fingerprint knowledgebase-a-plus-evidence-2026-06-23 \
   --require-benchmark-mode lexical \
   --require-benchmark-mode semantic \
   --require-benchmark-surface kb-search \

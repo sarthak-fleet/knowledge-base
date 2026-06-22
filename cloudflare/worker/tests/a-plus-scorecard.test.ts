@@ -8,7 +8,7 @@ const aPlusOperatorReport = {
   ok: true,
   authenticated: true,
   checks: [
-    { name: 'public_health', ok: true, status: 200 },
+    { name: 'public_health', ok: true, status: 200, deploy_fingerprint: 'current-fp' },
     { name: 'auth_boundary', ok: true, status: 401 },
     { name: 'hosted_ui', ok: true, status: 200 },
   ],
@@ -52,6 +52,7 @@ describe('a-plus-scorecard', () => {
       operatorReport: '',
       benchmarks: [],
       requireGrade: 'A+',
+      expectedDeployFingerprint: '',
       requiredBenchmarkModes: ['lexical'],
       requiredBenchmarkSurfaces: ['kb-query'],
     });
@@ -112,6 +113,51 @@ describe('a-plus-scorecard', () => {
     expect(scorecard.blockers).toEqual([]);
   });
 
+  it('fails reliability when the operator report fingerprint is stale', () => {
+    const scorecard = buildAPlusScorecard({
+      operator_report: {
+        ...aPlusOperatorReport,
+        checks: [
+          { name: 'public_health', ok: true, status: 200, deploy_fingerprint: 'old-fp' },
+          { name: 'auth_boundary', ok: true, status: 401 },
+          { name: 'hosted_ui', ok: true, status: 200 },
+        ],
+      },
+      benchmarks: [
+        {
+          surface: 'kb-search',
+          mode: 'lexical',
+          hit_rate: 0.98,
+          latency: { p95_ms: 180 },
+          server_latency: { p95_ms: 140 },
+        },
+        {
+          surface: 'kb-query',
+          mode: 'semantic',
+          hit_rate: 0.93,
+          latency: { p95_ms: 1300 },
+          server_latency: { p95_ms: 980 },
+        },
+      ],
+    }, {
+      requireGrade: 'A',
+      expectedDeployFingerprint: 'current-fp',
+      requiredBenchmarkModes: ['lexical', 'semantic'],
+      requiredBenchmarkSurfaces: ['kb-search', 'kb-query'],
+    });
+
+    expect(scorecard.ok).toBe(false);
+    expect(scorecard.blockers).toContain('stale_deploy_fingerprint');
+    expect(scorecard.categories.find((category) => category.name === 'reliability'))
+      .toMatchObject({
+        grade: 'B',
+        evidence: {
+          deploy_fingerprint: 'old-fp',
+          expected_deploy_fingerprint: 'current-fp',
+        },
+      });
+  });
+
   it('fails when required benchmark modes or surfaces are missing', () => {
     const scorecard = buildAPlusScorecard({
       operator_report: aPlusOperatorReport,
@@ -159,6 +205,7 @@ describe('a-plus-scorecard', () => {
       ],
     }, {
       requireGrade: 'A+',
+      expectedDeployFingerprint: 'current-fp',
       requiredBenchmarkModes: ['lexical', 'semantic'],
       requiredBenchmarkSurfaces: ['kb-search', 'kb-query'],
     });
