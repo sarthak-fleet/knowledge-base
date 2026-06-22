@@ -1,5 +1,8 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildPlan, parseArgs, queryEvalCases, runAPlusProof, runQueryEvalProof } from '../scripts/a-plus-proof.mjs';
+import { buildPlan, parseArgs, queryEvalCases, runAPlusProof, runQueryEvalProof, validateProofInput } from '../scripts/a-plus-proof.mjs';
 
 const originalFetch = globalThis.fetch;
 
@@ -85,6 +88,35 @@ describe('a-plus-proof', () => {
       { id: 'q1', question: 'What mentions cache?', expected_text: 'dashboard cache' },
       { id: 'custom', question: 'What mentions billing?', expected_text: 'billing guardrails' },
     ]);
+  });
+
+  it('validates proof inputs before live proof requests', () => {
+    expect(validateProofInput({
+      queries: [
+        { query: 'What mentions cache?', expected_contains: ['dashboard cache'] },
+        { query: 'Where is billing?', expected_document_ids: ['doc-1'] },
+      ],
+    })).toMatchObject({
+      ok: true,
+      query_count: 2,
+      scored_query_count: 2,
+    });
+
+    expect(validateProofInput({
+      queries: [{ query: 'What mentions cache?', expected_contains: ['dashboard cache'] }],
+    })).toMatchObject({
+      ok: false,
+      errors: ['proof input must include at least 2 queries', 'proof input must include at least 2 scored queries with expected_contains, expected_document_ids, or expected_chunk_ids'],
+    });
+
+    expect(validateProofInput({
+      queries: [{ query: 'What mentions cache?' }, { query: 'Where is billing?' }],
+    })).toMatchObject({
+      ok: false,
+      query_count: 2,
+      scored_query_count: 0,
+      errors: ['proof input must include at least 2 scored queries with expected_contains, expected_document_ids, or expected_chunk_ids'],
+    });
   });
 
   it('runs deterministic query eval proof without enabling AI judge', async () => {
@@ -179,5 +211,29 @@ describe('a-plus-proof', () => {
         ]),
       },
     });
+  });
+
+  it('rejects invalid proof input before readiness requests', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kb-proof-'));
+    try {
+      const inputPath = join(dir, 'invalid.json');
+      await writeFile(inputPath, JSON.stringify({ queries: [{ query: 'unlabeled' }] }));
+      await expect(runAPlusProof({
+        ...parseArgs([
+          '--base-url',
+          'https://kb.example',
+          '--domain',
+          'manuals',
+          '--input',
+          inputPath,
+        ]),
+        key: 'service-key',
+        readinessRunner: async () => {
+          throw new Error('readiness should not run');
+        },
+      })).rejects.toThrow('invalid A/A+ proof input');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

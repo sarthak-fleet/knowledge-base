@@ -672,8 +672,10 @@ requests if the Worker fingerprint or health checks are stale. After readiness
 passes, it writes local JSON proof artifacts and creates deterministic query
 eval/query trace evidence on the deployed Worker, then runs authenticated
 inventory, lexical `kb-search`, semantic `kb-query`, and the A/A+ scorecard.
-Use `--dry-run` to inspect the planned proof without network calls or file
-writes:
+The benchmark input must include at least two labeled queries with
+`expected_contains`, `expected_document_ids`, or `expected_chunk_ids`; invalid
+proof inputs fail locally before readiness or live requests. Use `--dry-run` to
+inspect the planned proof without network calls or file writes:
 
 ```bash
 pnpm run proof:a-plus -- --domain <domain> --dry-run

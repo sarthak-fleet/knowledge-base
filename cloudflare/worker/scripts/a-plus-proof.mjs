@@ -9,6 +9,7 @@ import { runOperatorReport } from './operator-report.mjs';
 
 const DEFAULT_BASE_URL = 'https://knowledgebase.sarthakagrawal927.workers.dev';
 const DEFAULT_QUERY = 'what should this account remember?';
+const MIN_PROOF_QUERIES = 2;
 
 function usage() {
   console.error(`Usage:
@@ -120,7 +121,7 @@ function buildPlan(options) {
       required_benchmark_modes: ['lexical', 'semantic'],
       required_benchmark_surfaces: ['kb-search', 'kb-query'],
       min_benchmark_repeat: options.repeat,
-      min_benchmark_samples: options.repeat * 2,
+      min_benchmark_samples: options.repeat * MIN_PROOF_QUERIES,
       required_eval_kinds: ['query'],
     },
   };
@@ -151,6 +152,33 @@ function queryEvalCases(input) {
       };
     })
     .filter(Boolean);
+}
+
+function hasScoringLabel(query) {
+  return ['expected_contains', 'expected_document_ids', 'expected_chunk_ids']
+    .some((key) => Array.isArray(query?.[key]) && query[key].some((value) => String(value || '').trim()));
+}
+
+function validateProofInput(input, { minQueries = MIN_PROOF_QUERIES } = {}) {
+  const parsed = typeof input === 'string' ? JSON.parse(input) : input;
+  const queries = Array.isArray(parsed?.queries) ? parsed.queries : [];
+  const labeledQueries = queries
+    .filter((query) => String(query?.query || '').trim())
+    .filter(hasScoringLabel);
+  const errors = [];
+  if (queries.length < minQueries) {
+    errors.push(`proof input must include at least ${minQueries} queries`);
+  }
+  if (labeledQueries.length < minQueries) {
+    errors.push(`proof input must include at least ${minQueries} scored queries with expected_contains, expected_document_ids, or expected_chunk_ids`);
+  }
+  return {
+    ok: errors.length === 0,
+    errors,
+    query_count: queries.length,
+    scored_query_count: labeledQueries.length,
+    min_queries: minQueries,
+  };
 }
 
 async function requestJson(url, { key, method = 'GET', body } = {}) {
@@ -198,6 +226,10 @@ export async function runAPlusProof(options) {
   if (!options.key) throw new Error('--key or RAG_SERVICE_KEY is required');
 
   const input = await readFile(options.input, 'utf8');
+  const inputValidation = validateProofInput(input);
+  if (!inputValidation.ok) {
+    throw new Error(`invalid A/A+ proof input: ${inputValidation.errors.join('; ')}`);
+  }
   const readinessReport = await (options.readinessRunner ?? runDeployReadiness)({
     baseUrl: options.baseUrl,
     key: options.key,
@@ -214,7 +246,7 @@ export async function runAPlusProof(options) {
       requiredBenchmarkModes: ['lexical', 'semantic'],
       requiredBenchmarkSurfaces: ['kb-search', 'kb-query'],
       minBenchmarkRepeat: options.repeat,
-      minBenchmarkSamples: options.repeat * 2,
+      minBenchmarkSamples: options.repeat * MIN_PROOF_QUERIES,
       requiredEvalKinds: ['query'],
     });
     const artifacts = {
@@ -288,7 +320,7 @@ export async function runAPlusProof(options) {
     requiredBenchmarkModes: ['lexical', 'semantic'],
     requiredBenchmarkSurfaces: ['kb-search', 'kb-query'],
     minBenchmarkRepeat: options.repeat,
-    minBenchmarkSamples: options.repeat * 2,
+    minBenchmarkSamples: options.repeat * MIN_PROOF_QUERIES,
     requiredEvalKinds: ['query'],
   });
 
@@ -345,4 +377,4 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
 }
 
-export { buildPlan, parseArgs, queryEvalCases };
+export { buildPlan, parseArgs, queryEvalCases, validateProofInput };
