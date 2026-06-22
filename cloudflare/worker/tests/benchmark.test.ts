@@ -1,13 +1,24 @@
 import { describe, expect, it } from 'vitest';
 import {
   normalizeBenchmarkInput,
+  parseArgs,
   parseTimingHeader,
+  runBenchmark,
   scoreResults,
   summarizeLatencies,
   summarizeTimingBreakdown,
 } from '../scripts/benchmark-rag.mjs';
 
 describe('benchmark-rag', () => {
+  it('accepts the pnpm run argument separator', () => {
+    expect(parseArgs(['--', '--input', 'fixtures/benchmark.sample.json', '--mode', 'lexical', '--dry-run']))
+      .toMatchObject({
+        input: 'fixtures/benchmark.sample.json',
+        mode: 'lexical',
+        dryRun: true,
+      });
+  });
+
   it('normalizes documents and queries for a benchmark run', () => {
     const normalized = normalizeBenchmarkInput(
       JSON.stringify({
@@ -19,6 +30,24 @@ describe('benchmark-rag', () => {
 
     expect(normalized.documents).toHaveLength(1);
     expect(normalized.queries[0]).toMatchObject({ query: 'alpha', expected_contains: ['alpha'] });
+  });
+
+  it('labels dry-run benchmark evidence with the requested mode', async () => {
+    const result = await runBenchmark({
+      dryRun: true,
+      mode: 'lexical',
+      input: {
+        index: { name: 'Bench' },
+        documents: [{ content: 'alpha document', metadata: {} }],
+        queries: [{ query: 'alpha', expected_contains: ['alpha'] }],
+      },
+    });
+
+    expect(result).toMatchObject({
+      dry_run: true,
+      mode: 'lexical',
+      planned_requests: 3,
+    });
   });
 
   it('summarizes latency percentiles', () => {

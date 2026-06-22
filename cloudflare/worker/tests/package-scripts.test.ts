@@ -61,4 +61,10 @@ describe('package scripts', () => {
       'node scripts/operator-report.mjs',
     );
   });
+
+  it('keeps a named RAG benchmark evidence command', () => {
+    expect(pkg.scripts?.['benchmark:rag']).toBe(
+      'node scripts/benchmark-rag.mjs',
+    );
+  });
 });

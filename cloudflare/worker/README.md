@@ -643,6 +643,7 @@ RAG_SERVICE_KEY=<service-key> \
 pnpm run operator:report -- \
   --index-id <index-id> \
   --query "what should this account remember?" \
+  --mode semantic \
   --repeat 5 \
   --top-k 5
 ```
@@ -672,19 +673,31 @@ pnpm run scorecard:a-plus -- \
   --require-grade A
 ```
 
-For A+ performance evidence, pass a combined JSON object with multiple
-route-specific benchmarks. The operator report already includes capability proof
+For A+ performance evidence, run route-specific benchmarks and pass them
+directly to the scorecard. The operator report already includes capability proof
 for the hosted UI, custom text input, async progress, and whether visible UI copy
 hides retrieval/storage internals:
 
-```json
-{
-  "operator_report": { "...": "output from operator:report --json" },
-  "benchmarks": [
-    { "mode": "lexical", "hit_rate": 0.95, "latency": { "p95_ms": 250 } },
-    { "mode": "semantic", "hit_rate": 0.92, "latency": { "p95_ms": 1800 } }
-  ]
-}
+```bash
+RAG_SERVICE_KEY=<service-key> pnpm run benchmark:rag -- \
+  --input fixtures/benchmark.sample.json \
+  --index-id <index-id> \
+  --mode lexical \
+  --repeat 5 \
+  > /tmp/kb-benchmark-lexical.json
+
+RAG_SERVICE_KEY=<service-key> pnpm run benchmark:rag -- \
+  --input fixtures/benchmark.sample.json \
+  --index-id <index-id> \
+  --mode semantic \
+  --repeat 5 \
+  > /tmp/kb-benchmark-semantic.json
+
+pnpm run scorecard:a-plus -- \
+  --operator-report /tmp/kb-operator-report.json \
+  --benchmark /tmp/kb-benchmark-lexical.json \
+  --benchmark /tmp/kb-benchmark-semantic.json \
+  --require-grade A+
 ```
 
 The initial thresholds are:

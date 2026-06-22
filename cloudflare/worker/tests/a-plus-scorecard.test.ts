@@ -1,5 +1,8 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { buildAPlusScorecard, parseArgs } from '../scripts/a-plus-scorecard.mjs';
+import { buildAPlusScorecard, loadScorecardEvidence, parseArgs } from '../scripts/a-plus-scorecard.mjs';
 
 const aPlusOperatorReport = {
   ok: true,
@@ -36,8 +39,41 @@ describe('a-plus-scorecard', () => {
   it('accepts the pnpm run argument separator', () => {
     expect(parseArgs(['--', '--input', '/tmp/report.json', '--require-grade', 'A+'])).toEqual({
       input: '/tmp/report.json',
+      operatorReport: '',
+      benchmarks: [],
       requireGrade: 'A+',
     });
+  });
+
+  it('loads an operator report with repeated benchmark files', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kb-scorecard-'));
+    try {
+      const operatorPath = join(dir, 'operator.json');
+      const lexicalPath = join(dir, 'lexical.json');
+      const semanticPath = join(dir, 'semantic.json');
+      await writeFile(operatorPath, JSON.stringify(aPlusOperatorReport));
+      await writeFile(lexicalPath, JSON.stringify({ mode: 'lexical', hit_rate: 0.96, latency: { p95_ms: 120 } }));
+      await writeFile(semanticPath, JSON.stringify({ mode: 'semantic', hit_rate: 0.93, latency: { p95_ms: 1100 } }));
+
+      const evidence = await loadScorecardEvidence(parseArgs([
+        '--operator-report',
+        operatorPath,
+        '--benchmark',
+        lexicalPath,
+        '--benchmark',
+        semanticPath,
+      ]));
+
+      expect(evidence).toMatchObject({
+        operator_report: { ok: true },
+        benchmarks: [
+          { mode: 'lexical', hit_rate: 0.96 },
+          { mode: 'semantic', hit_rate: 0.93 },
+        ],
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it('grades complete fast evidence as A+', () => {

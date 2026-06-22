@@ -8,6 +8,7 @@
     "deploy": "wrangler deploy",
     "deploy:dry-run": "wrangler deploy --dry-run",
     "predeploy:local": "node scripts/predeploy-local.mjs",
+    "benchmark:rag": "node scripts/benchmark-rag.mjs",
     "backfill:dry-run": "node scripts/backfill-saas-maker.mjs --input fixtures/saas-maker-export.sample.json --dry-run",
     "benchmark:dry-run": "node scripts/benchmark-rag.mjs --input fixtures/benchmark.sample.json --dry-run",
     "migrate:raw:dry-run": "node scripts/migrate-raw-files.mjs --manifest fixtures/raw-migration.sample.json --infer-schema --apply-schema --queue-ingest --dry-run",

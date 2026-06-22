@@ -12,6 +12,7 @@ Options:
   --index-name <name>    Override input.index.name when creating an index
   --repeat <n>           Number of query passes; default 3
   --top-k <n>            Query top_k; default 5
+  --mode <mode>          Query mode: auto, lexical, semantic, or hybrid; default auto
   --settle-ms <n>        Wait after ingest before querying; default 15000 when creating an index
   --cleanup              Delete an index created by this benchmark at the end
   --dry-run              Validate input and print the planned run without network calls`);
@@ -26,12 +27,14 @@ function parseArgs(argv) {
     indexName: '',
     repeat: 3,
     topK: 5,
+    mode: 'auto',
     settleMs: 15000,
     cleanup: false,
     dryRun: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
+    if (arg === '--') continue;
     if (arg === '--cleanup') {
       out.cleanup = true;
       continue;
@@ -50,12 +53,21 @@ function parseArgs(argv) {
     else if (arg === '--index-name') out.indexName = value;
     else if (arg === '--repeat') out.repeat = parsePositiveInteger(value, '--repeat');
     else if (arg === '--top-k') out.topK = parsePositiveInteger(value, '--top-k');
+    else if (arg === '--mode') out.mode = parseMode(value);
     else if (arg === '--settle-ms') out.settleMs = parsePositiveInteger(value, '--settle-ms');
     else throw new Error(`unknown argument: ${arg}`);
   }
   if (!out.input) throw new Error('--input is required');
   if (!out.key && !out.dryRun) throw new Error('--key or RAG_SERVICE_KEY is required');
   return out;
+}
+
+function parseMode(value) {
+  const mode = String(value || '').trim();
+  if (!['auto', 'lexical', 'semantic', 'hybrid'].includes(mode)) {
+    throw new Error('--mode must be auto, lexical, semantic, or hybrid');
+  }
+  return mode;
 }
 
 function parsePositiveInteger(value, label) {
@@ -70,6 +82,8 @@ function asObject(value, label) {
   }
   return value;
 }
+
+export { parseArgs };
 
 export function normalizeBenchmarkInput(raw) {
   const root = asObject(typeof raw === 'string' ? JSON.parse(raw) : raw, 'input');
@@ -204,11 +218,13 @@ export async function runBenchmark(options) {
   const input = normalizeBenchmarkInput(options.input);
   const repeat = Math.max(1, options.repeat || 3);
   const topK = Math.max(1, options.topK || 5);
+  const mode = parseMode(options.mode || 'auto');
   if (options.dryRun) {
     return {
       dry_run: true,
       documents: input.documents.length,
       queries: input.queries.length,
+      mode,
       planned_requests: input.queries.length * repeat,
     };
   }
@@ -248,7 +264,7 @@ export async function runBenchmark(options) {
         const { payload, cache, timing } = await requestJson(`${options.baseUrl}/v1/indexes/${indexId}/query`, {
           key: options.key,
           method: 'POST',
-          body: { query: query.query, top_k: topK },
+          body: { query: query.query, top_k: topK, mode },
         });
         const elapsed = performance.now() - started;
         const data = Array.isArray(payload.data) ? payload.data : [];
@@ -286,6 +302,7 @@ export async function runBenchmark(options) {
     created_index: createdIndex,
     repeat,
     top_k: topK,
+    mode,
     latency: summarizeLatencies(samples),
     server_latency: summarizeLatencies(serverSamples),
     server_timing: summarizeTimingBreakdown(serverTimings),

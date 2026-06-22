@@ -35,6 +35,7 @@ const PERFORMANCE_THRESHOLDS = {
 function usage() {
   console.error(`Usage:
   node scripts/a-plus-scorecard.mjs --input <operator-or-benchmark-report.json> [--require-grade A|A+|S]
+  node scripts/a-plus-scorecard.mjs --operator-report <report.json> --benchmark <bench.json> [--benchmark <bench.json> ...]
 
 Input can be:
   - operator-report JSON
@@ -48,6 +49,8 @@ not call the deployed Worker or spend AI/Vectorize requests.`);
 function parseArgs(argv) {
   const out = {
     input: '',
+    operatorReport: '',
+    benchmarks: [],
     requireGrade: 'A',
   };
   for (let i = 0; i < argv.length; i += 1) {
@@ -57,10 +60,14 @@ function parseArgs(argv) {
     if (!value) throw new Error(`missing value for ${arg}`);
     i += 1;
     if (arg === '--input') out.input = value;
+    else if (arg === '--operator-report') out.operatorReport = value;
+    else if (arg === '--benchmark') out.benchmarks.push(value);
     else if (arg === '--require-grade') out.requireGrade = normalizeGrade(value);
     else throw new Error(`unknown argument: ${arg}`);
   }
-  if (!out.input) throw new Error('--input is required');
+  if (!out.input && !out.operatorReport && out.benchmarks.length === 0) {
+    throw new Error('--input or --operator-report/--benchmark is required');
+  }
   return out;
 }
 
@@ -125,6 +132,29 @@ function normalizeEvidence(raw) {
     return { operatorReport: null, benchmarks: [raw], capabilities: {} };
   }
   return { operatorReport: null, benchmarks: [], capabilities: {} };
+}
+
+async function readJson(path) {
+  return JSON.parse(await readFile(path, 'utf8'));
+}
+
+async function loadScorecardEvidence(args) {
+  if (!args.operatorReport && args.benchmarks.length === 0) return readJson(args.input);
+
+  const base = args.input ? normalizeEvidence(await readJson(args.input)) : {
+    operatorReport: null,
+    benchmarks: [],
+    capabilities: {},
+  };
+  const operatorReport = args.operatorReport
+    ? await readJson(args.operatorReport)
+    : base.operatorReport;
+  const benchmarkFiles = await Promise.all(args.benchmarks.map((path) => readJson(path)));
+  return {
+    operator_report: operatorReport,
+    benchmarks: [...base.benchmarks, ...benchmarkFiles],
+    capabilities: base.capabilities,
+  };
 }
 
 function scoreReliability(operatorReport) {
@@ -368,7 +398,7 @@ function printHuman(scorecard) {
 if (import.meta.url === `file://${process.argv[1]}`) {
   try {
     const args = parseArgs(process.argv.slice(2));
-    const input = JSON.parse(await readFile(args.input, 'utf8'));
+    const input = await loadScorecardEvidence(args);
     const scorecard = buildAPlusScorecard(input, { requireGrade: args.requireGrade });
     console.log(JSON.stringify(scorecard, null, 2));
     if (!scorecard.ok) process.exitCode = 1;
@@ -379,4 +409,4 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
 }
 
-export { parseArgs, printHuman };
+export { loadScorecardEvidence, parseArgs, printHuman };
