@@ -46,6 +46,7 @@ Options:
   --expected-deploy-fingerprint <value> Require operator report health to match this deploy fingerprint.
   --require-benchmark-mode <mode>       Require lexical, semantic, or hybrid evidence. Repeatable.
   --require-benchmark-surface <surface> Require index, kb-search, or kb-query evidence. Repeatable.
+  --require-eval-kind <kind>            Require query, search, parse, or other eval report kind. Repeatable.
 
 The scorecard is read-only and deterministic. It grades evidence only; it does
 not call the deployed Worker or spend AI/Vectorize requests.`);
@@ -60,6 +61,7 @@ function parseArgs(argv) {
     expectedDeployFingerprint: process.env.RAG_EXPECTED_DEPLOY_FINGERPRINT || '',
     requiredBenchmarkModes: [],
     requiredBenchmarkSurfaces: [],
+    requiredEvalKinds: [],
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -74,12 +76,19 @@ function parseArgs(argv) {
     else if (arg === '--expected-deploy-fingerprint') out.expectedDeployFingerprint = value.trim();
     else if (arg === '--require-benchmark-mode') out.requiredBenchmarkModes.push(normalizeBenchmarkMode(value));
     else if (arg === '--require-benchmark-surface') out.requiredBenchmarkSurfaces.push(normalizeBenchmarkSurface(value));
+    else if (arg === '--require-eval-kind') out.requiredEvalKinds.push(normalizeEvalKind(value));
     else throw new Error(`unknown argument: ${arg}`);
   }
   if (!out.input && !out.operatorReport && out.benchmarks.length === 0) {
     throw new Error('--input or --operator-report/--benchmark is required');
   }
   return out;
+}
+
+function normalizeEvalKind(value) {
+  const kind = String(value || '').trim().toLowerCase();
+  if (!kind) throw new Error(`unsupported eval kind: ${value}`);
+  return kind;
 }
 
 function normalizeBenchmarkMode(value) {
@@ -303,7 +312,12 @@ function scorePerformance(benchmarks, requirements = {}) {
   };
 }
 
-function scoreQuality(operatorReport, benchmarks) {
+function scoreQuality(operatorReport, benchmarks, requirements = {}) {
+  const requiredEvalKinds = asArray(requirements.evalKinds).map(normalizeEvalKind);
+  const evalKinds = asArray(operatorReport?.inventory?.eval_kinds)
+    .map(normalizeEvalKind)
+    .filter(Boolean);
+  const missingEvalKinds = requiredEvalKinds.filter((kind) => !evalKinds.includes(kind));
   const hitRates = benchmarks
     .map((benchmark) => asNumber(benchmark?.hit_rate))
     .filter((value) => value !== null);
@@ -323,26 +337,51 @@ function scoreQuality(operatorReport, benchmarks) {
       name: 'retrieval_quality',
       grade: 'C',
       ok: false,
-      blockers: ['missing_quality_evidence'],
-      evidence: { hit_rate: hitRate, citation_rate: citationRate, eval_report_count: evalReportCount },
+      blockers: [
+        'missing_quality_evidence',
+        ...missingEvalKinds.map((kind) => `missing_${kind}_eval_report`),
+      ],
+      evidence: {
+        hit_rate: hitRate,
+        citation_rate: citationRate,
+        eval_report_count: evalReportCount,
+        eval_kinds: evalKinds,
+        required_eval_kinds: requiredEvalKinds,
+        missing_eval_kinds: missingEvalKinds,
+      },
     };
   }
 
-  const aPlus = (hitRate === null || hitRate >= 0.92)
+  const hasRequiredEvalKinds = missingEvalKinds.length === 0;
+  const aPlus = hasRequiredEvalKinds
+    && (hitRate === null || hitRate >= 0.92)
     && (citationRate === null || citationRate >= 0.95)
     && (evalReportCount === null || evalReportCount >= 1);
-  const a = (hitRate === null || hitRate >= 0.85)
+  const a = hasRequiredEvalKinds
+    && (hitRate === null || hitRate >= 0.85)
     && (citationRate === null || citationRate >= 0.9)
     && (evalReportCount === null || evalReportCount >= 1);
   const result = gradeCheck({
     aPlus,
     a,
-    evidence: { hit_rate: hitRate, citation_rate: citationRate, eval_report_count: evalReportCount },
+    evidence: {
+      hit_rate: hitRate,
+      citation_rate: citationRate,
+      eval_report_count: evalReportCount,
+      eval_kinds: evalKinds,
+      required_eval_kinds: requiredEvalKinds,
+      missing_eval_kinds: missingEvalKinds,
+    },
   });
   return {
     name: 'retrieval_quality',
     ...result,
-    blockers: result.ok ? [] : ['quality_below_a'],
+    blockers: result.ok
+      ? []
+      : [
+        ...missingEvalKinds.map((kind) => `missing_${kind}_eval_report`),
+        'quality_below_a',
+      ],
   };
 }
 
@@ -451,7 +490,9 @@ export function buildAPlusScorecard(rawEvidence, options = {}) {
       modes: options.requiredBenchmarkModes,
       surfaces: options.requiredBenchmarkSurfaces,
     }),
-    scoreQuality(evidence.operatorReport, evidence.benchmarks),
+    scoreQuality(evidence.operatorReport, evidence.benchmarks, {
+      evalKinds: options.requiredEvalKinds,
+    }),
     scoreIngestion(evidence.operatorReport),
     scoreObservability(evidence.operatorReport),
     scoreEaseOfUse(evidence.operatorReport, evidence.capabilities),
@@ -486,6 +527,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       expectedDeployFingerprint: args.expectedDeployFingerprint,
       requiredBenchmarkModes: args.requiredBenchmarkModes,
       requiredBenchmarkSurfaces: args.requiredBenchmarkSurfaces,
+      requiredEvalKinds: args.requiredEvalKinds,
     });
     console.log(JSON.stringify(scorecard, null, 2));
     if (!scorecard.ok) process.exitCode = 1;

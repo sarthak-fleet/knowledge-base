@@ -21,6 +21,7 @@ const aPlusOperatorReport = {
     source_set_count: 1,
     recent_trace_count: 12,
     eval_report_count: 2,
+    eval_kinds: ['query', 'search'],
     avg_trace_latency_ms: 420,
   },
   capabilities: {
@@ -47,6 +48,8 @@ describe('a-plus-scorecard', () => {
       'lexical',
       '--require-benchmark-surface',
       'kb-query',
+      '--require-eval-kind',
+      'query',
     ])).toEqual({
       input: '/tmp/report.json',
       operatorReport: '',
@@ -55,6 +58,7 @@ describe('a-plus-scorecard', () => {
       expectedDeployFingerprint: '',
       requiredBenchmarkModes: ['lexical'],
       requiredBenchmarkSurfaces: ['kb-query'],
+      requiredEvalKinds: ['query'],
     });
   });
 
@@ -208,6 +212,64 @@ describe('a-plus-scorecard', () => {
       expectedDeployFingerprint: 'current-fp',
       requiredBenchmarkModes: ['lexical', 'semantic'],
       requiredBenchmarkSurfaces: ['kb-search', 'kb-query'],
+      requiredEvalKinds: ['query', 'search'],
+    });
+
+    expect(scorecard.ok).toBe(true);
+    expect(scorecard.overall_grade).toBe('A+');
+  });
+
+  it('fails retrieval quality when required eval kinds are missing', () => {
+    const scorecard = buildAPlusScorecard({
+      operator_report: {
+        ...aPlusOperatorReport,
+        inventory: {
+          ...aPlusOperatorReport.inventory,
+          eval_kinds: ['search'],
+        },
+      },
+      benchmarks: [
+        {
+          surface: 'kb-query',
+          mode: 'semantic',
+          hit_rate: 0.93,
+          latency: { p95_ms: 1300 },
+          server_latency: { p95_ms: 980 },
+        },
+      ],
+    }, {
+      requireGrade: 'A',
+      requiredEvalKinds: ['query'],
+    });
+
+    expect(scorecard.ok).toBe(false);
+    expect(scorecard.blockers).toContain('missing_query_eval_report');
+    expect(scorecard.categories.find((category) => category.name === 'retrieval_quality'))
+      .toMatchObject({
+        grade: 'B',
+        evidence: {
+          eval_kinds: ['search'],
+          required_eval_kinds: ['query'],
+          missing_eval_kinds: ['query'],
+        },
+      });
+  });
+
+  it('passes retrieval quality when required eval kinds are present', () => {
+    const scorecard = buildAPlusScorecard({
+      operator_report: aPlusOperatorReport,
+      benchmarks: [
+        {
+          surface: 'kb-query',
+          mode: 'semantic',
+          hit_rate: 0.93,
+          latency: { p95_ms: 1300 },
+          server_latency: { p95_ms: 980 },
+        },
+      ],
+    }, {
+      requireGrade: 'A+',
+      requiredEvalKinds: ['query'],
     });
 
     expect(scorecard.ok).toBe(true);

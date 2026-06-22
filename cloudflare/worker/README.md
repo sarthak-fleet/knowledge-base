@@ -706,6 +706,7 @@ pnpm run scorecard:a-plus -- \
   --require-benchmark-mode semantic \
   --require-benchmark-surface kb-search \
   --require-benchmark-surface kb-query \
+  --require-eval-kind query \
   --require-grade A+
 ```
 
@@ -714,5 +715,6 @@ The initial thresholds are:
 - lexical A+: p95 <= 300 ms; A: p95 <= 500 ms
 - hybrid A+: p95 <= 1000 ms; A: p95 <= 1500 ms
 - semantic A+: p95 <= 2000 ms; A: p95 <= 3000 ms
-- retrieval quality A+: hit rate >= 0.92 plus citation/eval evidence; A: hit
-  rate >= 0.85 plus citation/eval evidence
+- retrieval quality A+: hit rate >= 0.92 plus citation/eval evidence and any
+  required eval report kinds; A: hit rate >= 0.85 plus citation/eval evidence
+  and any required eval report kinds
