@@ -146,10 +146,18 @@ function queryEvalCases(input) {
       const expected = Array.isArray(query?.expected_contains)
         ? query.expected_contains.map(String).find((value) => value.trim())
         : null;
+      const expectedDocumentIds = Array.isArray(query?.expected_document_ids)
+        ? query.expected_document_ids.map(String).filter((value) => value.trim())
+        : [];
+      const expectedChunkIds = Array.isArray(query?.expected_chunk_ids)
+        ? query.expected_chunk_ids.map(String).filter((value) => value.trim())
+        : [];
       return {
         id: query?.id ? String(query.id) : `q${index + 1}`,
         question,
         ...(expected ? { expected_text: expected } : {}),
+        ...(expectedDocumentIds.length ? { expected_document_ids: expectedDocumentIds } : {}),
+        ...(expectedChunkIds.length ? { expected_chunk_ids: expectedChunkIds } : {}),
       };
     })
     .filter(Boolean);

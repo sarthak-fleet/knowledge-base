@@ -82,11 +82,23 @@ describe('a-plus-proof', () => {
     expect(queryEvalCases({
       queries: [
         { query: 'What mentions cache?', expected_contains: ['dashboard cache'] },
-        { id: 'custom', query: 'What mentions billing?', expected_contains: ['billing guardrails'] },
+        {
+          id: 'custom',
+          query: 'What mentions billing?',
+          expected_contains: ['billing guardrails'],
+          expected_document_ids: ['doc-1'],
+          expected_chunk_ids: ['chunk-1'],
+        },
       ],
     })).toEqual([
       { id: 'q1', question: 'What mentions cache?', expected_text: 'dashboard cache' },
-      { id: 'custom', question: 'What mentions billing?', expected_text: 'billing guardrails' },
+      {
+        id: 'custom',
+        question: 'What mentions billing?',
+        expected_text: 'billing guardrails',
+        expected_document_ids: ['doc-1'],
+        expected_chunk_ids: ['chunk-1'],
+      },
     ]);
   });
 

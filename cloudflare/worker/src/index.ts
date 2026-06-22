@@ -1185,6 +1185,24 @@ function evalMatch(result: SearchResult, testCase: SearchEvalCase): boolean {
   return false;
 }
 
+function queryEvalHit(payload: KbAnswerPayload, testCase: QueryEvalCase): boolean {
+  const expectedText = (
+    testCase.expected_answer_text
+    ?? testCase.expected_citation_text
+    ?? testCase.expected_text
+    ?? ''
+  ).trim().toLowerCase();
+  const hasExpectedIds = Boolean(testCase.expected_chunk_ids?.length || testCase.expected_document_ids?.length);
+  if (hasExpectedIds && payload.data.some((result) => evalMatch(result, testCase))) return true;
+  if (!expectedText) return hasExpectedIds ? false : payload.data.length > 0;
+  const evidenceText = [
+    payload.answer,
+    ...payload.citations.map((citation) => citation.excerpt),
+    ...payload.data.map((item) => item.chunk_content),
+  ].join('\n').toLowerCase();
+  return evidenceText.includes(expectedText);
+}
+
 function parseEvalCaseBytes(testCase: ParseEvalCase): ArrayBuffer {
   function copyBytes(bytes: Uint8Array): ArrayBuffer {
     const out = new ArrayBuffer(bytes.byteLength);
@@ -5720,12 +5738,7 @@ export function createApp(options: AppOptions = {}) {
         ?? testCase.expected_text
         ?? ''
       ).trim().toLowerCase();
-      const evidenceText = [
-        result.payload.answer,
-        ...result.payload.citations.map((citation) => citation.excerpt),
-        ...result.payload.data.map((item) => item.chunk_content),
-      ].join('\n').toLowerCase();
-      const hit = expectedText ? evidenceText.includes(expectedText) : result.payload.data.length > 0;
+      const hit = queryEvalHit(result.payload, testCase);
 	      const hasCitation = result.payload.citations.length > 0 && /\[\d+\]/.test(result.payload.answer);
 	      const quality = answerSupportQuality(result.payload.answer, result.payload.citations, result.payload.data);
 	      let modelJudge: JsonRecord = {};

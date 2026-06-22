@@ -5485,6 +5485,78 @@ describe('knowledgebase RAG Worker app', () => {
     });
   });
 
+  it('scores query eval document and chunk expectations against retrieved evidence', async () => {
+    const repo = new MemoryRepository();
+    const metadata = new MemoryMetadataRepository();
+    const vectorize = new FakeVectorize();
+    const app = createApp({
+      makeRepository: () => repo,
+      makeMetadataRepository: () => metadata,
+      embed: async (_env, texts) => texts.map(vectorFor),
+    });
+    const env = makeEnv(vectorize);
+    const auth = { Authorization: 'Bearer key-a', 'Content-Type': 'application/json' };
+
+    const created = await app.request(
+      '/v1/indexes',
+      {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({ name: 'Eval Domain', external_id: 'kb:eval-docs' }),
+      },
+      env,
+    );
+    const index = (await created.json()) as IndexRecord;
+    await app.request(
+      `/v1/indexes/${index.id}/ingest-vectors`,
+      {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({
+          chunks: [{
+            id: 'chunk-present',
+            document_id: 'doc-present',
+            document_content: 'alpha query eval document',
+            content: 'alpha query eval document',
+            embedding: vectorFor('alpha query eval document'),
+            chunk_index: 0,
+          }],
+        }),
+      },
+      env,
+    );
+
+    const res = await app.request(
+      '/v1/kb/evals/query',
+      {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({
+          domain: 'eval-docs',
+          mode: 'semantic',
+          cases: [
+            { id: 'hit-doc', question: 'alpha query eval', expected_document_ids: ['doc-present'] },
+            { id: 'hit-chunk', question: 'alpha query eval', expected_chunk_ids: ['chunk-present'] },
+            { id: 'miss-doc', question: 'alpha query eval', expected_document_ids: ['doc-missing'] },
+          ],
+        }),
+      },
+      env,
+    );
+    const body = await res.json() as {
+      hit_rate: number;
+      rows: Array<{ id: string; hit: boolean; result_count: number }>;
+    };
+
+    expect(res.status).toBe(200);
+    expect(body.hit_rate).toBe(2 / 3);
+    expect(body.rows).toEqual([
+      expect.objectContaining({ id: 'hit-doc', hit: true, result_count: 1 }),
+      expect.objectContaining({ id: 'hit-chunk', hit: true, result_count: 1 }),
+      expect.objectContaining({ id: 'miss-doc', hit: false, result_count: 1 }),
+    ]);
+  });
+
   it('runs parse evals and persists Markdown Conversion fallback reports', async () => {
     const metadata = new MemoryMetadataRepository();
     const vectorize = new FakeVectorize();

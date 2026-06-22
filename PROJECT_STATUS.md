@@ -312,7 +312,8 @@ Worker: Fleet consumer → Hono → free-ai/Workers AI embed → Vectorize query
   eval or benchmark requests. The proof runner also validates at least two
   labeled benchmark/eval queries locally before any live request, and the
   scorecard consumes fresh query eval hit/citation rates directly with domain
-  and row-count checks. Operator
+  and row-count checks. Query evals honor expected text, document IDs, and
+  chunk IDs so non-empty retrieval cannot inflate labeled hit rates. Operator
   reports automatically prove hosted UI, custom text input, async progress, and
   user-visible UI copy that hides retrieval/storage internals. `benchmark:rag`
   emits mode-labeled lexical/semantic/hybrid evidence for index, domain search,
