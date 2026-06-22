@@ -5223,6 +5223,17 @@ describe('knowledgebase RAG Worker app', () => {
 	    expect(res.headers.get('content-type')).toContain('text/html');
 	    expect(html).toContain('Knowledgebase Cloudflare');
 	    expect(html).toContain('/v1/kb/files/upload');
+	    expect(html).toContain('<h2>Admin</h2>');
+	    expect(html).toContain('id="loadProjects"');
+	    expect(html).toContain('id="loadDomains"');
+	    expect(html).toContain('id="loadFiles"');
+	    expect(html).toContain('id="loadIndexes"');
+	    expect(html).toContain('id="loadEmbeddingModelsAdmin"');
+	    expect(html).toContain('/v1/kb/projects');
+	    expect(html).toContain('/v1/kb/domains');
+	    expect(html).toContain('/v1/kb/files?domain=');
+	    expect(html).toContain('/v1/indexes');
+	    expect(html).toContain('/v1/embedding-models');
 	    expect(html).toContain('/v1/kb/entities');
 	    expect(html).toContain('/v1/kb/entities/search');
 	    expect(html).toContain('/v1/kb/relationships');

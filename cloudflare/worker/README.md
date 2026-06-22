@@ -340,6 +340,24 @@ embedding dimensions have Vectorize bindings plus metadata indexes,
 scanned-PDF OCR parity is proven, sibling `../rag-service` retirement is proven,
 and `pnpm run gaps:full-port` reports 0 remaining.
 
+Consumer index policy:
+
+- Karte/Linkchat uses one lazily-created profile-memory index per account
+  (`users.smIndexId`, index name `linkchat-${userId}`) and scopes profile memory
+  documents with `userId`, `pageId`, `pageSlug`, and `blockId` metadata. The
+  `/api/settings/knowledgebase` route exposes account index status and repair.
+- Starboard uses one shared application index from `STARBOARD_RAG_INDEX_ID` and
+  scopes every query and ingest with `user_id` metadata because each account's
+  corpus is small and relevance needs to cross that account's saved repos.
+- Prefer account indexes when a product has user-owned mutable memory that needs
+  cheap deletes and no cross-account fanout. Prefer a shared app index plus
+  metadata filters when each account's slice is small and the product benefits
+  from fewer Vectorize indexes. Split further by domain/page only after measured
+  p95 latency, file count, or delete/rebuild volume shows the account index is
+  too large.
+- Do not rely on caller-supplied tenant/index filters for isolation. The Worker
+  always enforces service-key tenant and `index_id` server-side before Vectorize.
+
 Schema inference accepts structured records, JSON/NDJSON/CSV-like input, HTML,
 digital PDF text with coordinate-derived table rows, XLSX rows, DOCX paragraph text, PPTX slide text, or
 text samples and produces a reviewable schema draft. It also declares inferred
@@ -604,3 +622,31 @@ Use `--index-id <id>` to benchmark an existing populated index. Add `--cleanup` 
 when the script created the benchmark index and you want it deleted after the run.
 Fresh-index runs wait 15 seconds after ingest by default so Vectorize can make
 newly-upserted vectors queryable before accuracy is scored.
+
+## Operator Performance Report
+
+Use the read-only operator report to inspect existing projects, domains, indexes,
+files, jobs, source sets, recent traces, eval summaries, selectable embedding
+models, and cost-risk signals from one command:
+
+```bash
+RAG_BASE_URL=https://knowledgebase.<your-subdomain>.workers.dev \
+RAG_SERVICE_KEY=<service-key> \
+pnpm run operator:report -- --domain <domain>
+```
+
+Add an existing index benchmark when you want speed numbers without ingesting new
+data:
+
+```bash
+RAG_SERVICE_KEY=<service-key> \
+pnpm run operator:report -- \
+  --index-id <index-id> \
+  --query "what should this account remember?" \
+  --repeat 5 \
+  --top-k 5
+```
+
+The default report performs only GET requests after health/auth-boundary checks.
+The benchmark option calls `/v1/indexes/:id/benchmark-query` on an existing
+index; it does not create, ingest, or delete data.

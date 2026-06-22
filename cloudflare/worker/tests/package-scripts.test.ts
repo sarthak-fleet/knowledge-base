@@ -55,4 +55,10 @@ describe('package scripts', () => {
       'node scripts/embedding-model-release-status.mjs',
     );
   });
+
+  it('keeps a named read-only operator report', () => {
+    expect(pkg.scripts?.['operator:report']).toBe(
+      'node scripts/operator-report.mjs',
+    );
+  });
 });

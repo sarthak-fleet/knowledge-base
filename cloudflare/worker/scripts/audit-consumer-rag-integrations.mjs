@@ -149,7 +149,7 @@ function auditLinkchat(fleetRoot) {
       : fail('rag_client_crud_contract', 'knowledgebase.ts must expose the full profile-memory RAG CRUD/search contract'));
     checks.push(containsAll(client, [
       /documents:\s*\[\s*\{\s*content,\s*metadata\s*\}\s*\]/,
-      /body:\s*JSON\.stringify\(\s*\{\s*query,\s*top_k:\s*topK\s*\}\s*\)/,
+      /body:\s*JSON\.stringify\(\s*\{[\s\S]*query,\s*top_k:\s*topK[\s\S]*\}\s*\)/,
     ])
       ? pass('rag_client_payload_contract', 'knowledgebase client sends document content/metadata and query/top_k payloads')
       : fail('rag_client_payload_contract', 'knowledgebase.ts must send knowledgebase document content/metadata and query/top_k payloads'));
@@ -170,8 +170,22 @@ function auditLinkchat(fleetRoot) {
     ? fail('legacy_rag_service_client_removed', 'src/lib/rag-service.ts still exists; use src/lib/knowledgebase.ts')
     : pass('legacy_rag_service_client_removed'));
 
+  const profileMemoryHelper = resolve(repo, 'src/lib/profile-memory-index.ts');
+  if (!existsSync(profileMemoryHelper)) {
+    checks.push(fail('profile_memory_index_helper', 'src/lib/profile-memory-index.ts is missing'));
+  } else {
+    const helper = readText(profileMemoryHelper);
+    checks.push(containsAll(helper, [
+      /@\/lib\/knowledgebase/,
+      /createIndex\(`linkchat-\$\{userId\}`\)/,
+      /smIndexId/,
+      /set\(\{\s*smIndexId:\s*index\.id\s*\}\)/,
+    ])
+      ? pass('profile_memory_index_helper', 'lazy per-account profile-memory index helper stores users.smIndexId')
+      : fail('profile_memory_index_helper', 'profile-memory helper must create linkchat-${userId} indexes and persist users.smIndexId'));
+  }
+
   const routePaths = [
-    'src/app/api/settings/ai-key/route.ts',
     'src/app/api/pages/[pageId]/info/route.ts',
     'src/app/api/pages/[pageId]/info/[blockId]/route.ts',
     'src/app/api/chat/[slug]/route.ts',
@@ -186,6 +200,40 @@ function auditLinkchat(fleetRoot) {
     checks.push(source.includes('@/lib/knowledgebase') && !/@\/lib\/saasmaker|SAASMAKER_API_URL|SAASMAKER_ADMIN_KEY/.test(source)
       ? pass(`route_${route}`, 'uses knowledgebase RAG client')
       : fail(`route_${route}`, 'route does not use knowledgebase RAG client cleanly'));
+  }
+
+  const infoRoute = resolve(repo, 'src/app/api/pages/[pageId]/info/route.ts');
+  if (existsSync(infoRoute)) {
+    const source = readText(infoRoute);
+    checks.push(containsAll(source, [
+      /ensureProfileMemoryIndex\(auth\.userId\)/,
+      /userId:\s*auth\.userId/,
+      /pageId:\s*page\.id/,
+      /pageSlug:\s*page\.slug/,
+      /blockId:\s*block\.id/,
+    ])
+      ? pass('profile_memory_ingest_scope', 'profile-memory ingest is account-indexed and page/block-scoped')
+      : fail('profile_memory_ingest_scope', 'info-block ingest must use ensureProfileMemoryIndex and user/page/block metadata'));
+  }
+
+  const settingsAiKeyRoute = resolve(repo, 'src/app/api/settings/ai-key/route.ts');
+  if (!existsSync(settingsAiKeyRoute)) {
+    checks.push(fail('route_src/app/api/settings/ai-key/route.ts', 'src/app/api/settings/ai-key/route.ts is missing'));
+  } else {
+    const source = readText(settingsAiKeyRoute);
+    checks.push(source.includes('@/lib/profile-memory-index') && source.includes('ensureProfileMemoryIndex(auth.userId)')
+      ? pass('route_src/app/api/settings/ai-key/route.ts', 'uses profile-memory index lifecycle helper')
+      : fail('route_src/app/api/settings/ai-key/route.ts', 'settings route must use ensureProfileMemoryIndex for lazy account index repair'));
+  }
+
+  const knowledgebaseSettingsRoute = resolve(repo, 'src/app/api/settings/knowledgebase/route.ts');
+  if (!existsSync(knowledgebaseSettingsRoute)) {
+    checks.push(fail('knowledgebase_settings_route', 'src/app/api/settings/knowledgebase/route.ts is missing'));
+  } else {
+    const source = readText(knowledgebaseSettingsRoute);
+    checks.push(containsAll(source, [/GET\(/, /POST\(/, /ensureProfileMemoryIndex\(auth\.userId\)/, /hasIndex/, /indexId/])
+      ? pass('knowledgebase_settings_route', 'settings route exposes read/repair index lifecycle')
+      : fail('knowledgebase_settings_route', 'settings route must expose GET status and POST repair for the account index'));
   }
 
   return { repo: 'linkchat', ok: checks.every((check) => check.ok), checks };

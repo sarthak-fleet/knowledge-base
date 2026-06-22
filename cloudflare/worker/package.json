@@ -31,6 +31,7 @@
     "preflight": "node scripts/preflight.mjs",
     "release-plan:embedding-model": "node scripts/embedding-model-release-plan.mjs",
     "release-status:embedding-model": "node scripts/embedding-model-release-status.mjs",
+    "operator:report": "node scripts/operator-report.mjs",
     "readiness": "node scripts/deploy-readiness.mjs",
     "readiness:auth": "node scripts/deploy-readiness.mjs --require-auth",
     "readiness:embedding-model": "node scripts/deploy-readiness.mjs --require-auth --require-embedding-model gemini-embedding-001",

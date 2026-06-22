@@ -163,6 +163,18 @@ export const TESTING_UI_HTML = `<!doctype html>
         <button class="secondary" id="loadStatus">Refresh Status</button>
       </section>
       <section class="span-4 stack">
+        <h2>Admin</h2>
+        <button class="secondary" id="loadProjects">Load Projects</button>
+        <button class="secondary" id="loadDomains">Load Domains</button>
+        <button class="secondary" id="loadFiles">Load Files</button>
+        <button class="secondary" id="loadIndexes">Load Indexes</button>
+        <button class="secondary" id="loadEmbeddingModelsAdmin">Load Embedding Models</button>
+        <button class="secondary" id="loadSourceSetsAdmin">Load Source Sets</button>
+        <button class="secondary" id="loadJobsAdmin">Load Jobs</button>
+        <button class="secondary" id="loadTracesAdmin">Load Traces</button>
+        <button class="secondary" id="loadEvalReportsAdmin">Load Eval Reports</button>
+      </section>
+      <section class="span-4 stack">
         <h2>Index</h2>
         <label>Index name <input id="indexName" value="Test Index"></label>
         <label>Embedding profile
@@ -412,6 +424,43 @@ export const TESTING_UI_HTML = `<!doctype html>
     };
     $('loadStatus').onclick = async () => {
       await call('/v1/kb/status', { headers: headers(false) });
+    };
+    $('loadProjects').onclick = async () => {
+      await call('/v1/kb/projects', { headers: headers(false) });
+    };
+    $('loadDomains').onclick = async () => {
+      await call('/v1/kb/domains', { headers: headers(false) });
+    };
+    $('loadFiles').onclick = async () => {
+      await call('/v1/kb/files?domain=' + encodeURIComponent($('domain').value.trim()), {
+        headers: headers(false),
+      });
+    };
+    $('loadIndexes').onclick = async () => {
+      await call('/v1/indexes', { headers: headers(false) });
+    };
+    $('loadEmbeddingModelsAdmin').onclick = async () => {
+      await call('/v1/embedding-models', { headers: headers(false) });
+    };
+    $('loadSourceSetsAdmin').onclick = async () => {
+      await call('/v1/kb/source-sets?domain=' + encodeURIComponent($('domain').value.trim()), {
+        headers: headers(false),
+      });
+    };
+    $('loadJobsAdmin').onclick = async () => {
+      await call('/v1/kb/jobs?domain=' + encodeURIComponent($('domain').value.trim()), {
+        headers: headers(false),
+      });
+    };
+    $('loadTracesAdmin').onclick = async () => {
+      await call('/v1/kb/query/traces?domain=' + encodeURIComponent($('domain').value.trim()), {
+        headers: headers(false),
+      });
+    };
+    $('loadEvalReportsAdmin').onclick = async () => {
+      await call('/v1/kb/evals/reports?domain=' + encodeURIComponent($('domain').value.trim()), {
+        headers: headers(false),
+      });
     };
     $('loadJobs').onclick = async () => {
       await call('/v1/kb/jobs?domain=' + encodeURIComponent($('domain').value.trim()), {

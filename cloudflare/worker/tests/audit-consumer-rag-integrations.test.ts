@@ -39,14 +39,33 @@ function writeHealthyLinkchat(fleetRoot: string, dirname = 'linkchat') {
     'export async function deleteDocument(docId) { return fetch(`/v1/documents/${docId}`); }',
     'export async function search(indexId, query, topK) { return fetch(`/v1/indexes/${indexId}/query`, { body: JSON.stringify({ query, top_k: topK }) }); }',
   ].join('\n'));
+  write(resolve(repo, 'src/lib/profile-memory-index.ts'), [
+    'import { createIndex } from "@/lib/knowledgebase";',
+    'export async function ensureProfileMemoryIndex(userId) {',
+    '  const index = await createIndex(`linkchat-${userId}`);',
+    '  await db.update(users).set({ smIndexId: index.id }).where(eq(users.id, userId));',
+    '  return index.id;',
+    '}',
+  ].join('\n'));
+  write(resolve(repo, 'src/app/api/settings/knowledgebase/route.ts'), [
+    'import { ensureProfileMemoryIndex } from "@/lib/profile-memory-index";',
+    'export async function GET() { return Response.json({ hasIndex: true, indexId: "idx" }); }',
+    'export async function POST() { const indexId = await ensureProfileMemoryIndex(auth.userId); return Response.json({ hasIndex: true, indexId }); }',
+  ].join('\n'));
+  write(resolve(repo, 'src/app/api/settings/ai-key/route.ts'), 'import { ensureProfileMemoryIndex } from "@/lib/profile-memory-index";\nensureProfileMemoryIndex(auth.userId);\n');
   for (const route of [
-    'src/app/api/settings/ai-key/route.ts',
     'src/app/api/pages/[pageId]/info/route.ts',
     'src/app/api/pages/[pageId]/info/[blockId]/route.ts',
     'src/app/api/chat/[slug]/route.ts',
   ]) {
     write(resolve(repo, route), 'import { search } from "@/lib/knowledgebase";\n');
   }
+  write(resolve(repo, 'src/app/api/pages/[pageId]/info/route.ts'), [
+    'import { ingestDocument } from "@/lib/knowledgebase";',
+    'import { ensureProfileMemoryIndex } from "@/lib/profile-memory-index";',
+    'const indexId = await ensureProfileMemoryIndex(auth.userId);',
+    'ingestDocument(indexId, content, { userId: auth.userId, pageId: page.id, pageSlug: page.slug, blockId: block.id });',
+  ].join('\n'));
 }
 
 function writeHealthyStarboard(fleetRoot: string) {
