@@ -750,6 +750,7 @@ pnpm run scorecard:a-plus -- \
   --require-benchmark-surface kb-query \
   --min-benchmark-repeat 5 \
   --min-benchmark-samples 10 \
+  --min-query-eval-rows 2 \
   --require-eval-kind query \
   --require-grade A+
 ```
@@ -761,6 +762,7 @@ The initial thresholds are:
 - semantic A+: p95 <= 2000 ms; A: p95 <= 3000 ms
 - A+ proof command: each benchmark report must have repeat >= 5 and at least 10
   measured requests
+- direct query eval evidence must include at least 2 evaluated rows for A+
 - retrieval quality A+: hit rate >= 0.92 plus citation/eval evidence and any
   required eval report kinds; A: hit rate >= 0.85 plus citation/eval evidence
   and any required eval report kinds

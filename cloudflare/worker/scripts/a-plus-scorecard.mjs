@@ -52,6 +52,7 @@ Options:
   --require-benchmark-surface <surface> Require index, kb-search, or kb-query evidence. Repeatable.
   --min-benchmark-repeat <n>            Require each benchmark report to have repeat >= n.
   --min-benchmark-samples <n>           Require each benchmark report to include at least n measured requests.
+  --min-query-eval-rows <n>             Require each direct query eval report to include at least n rows.
   --require-eval-kind <kind>            Require query, search, parse, or other eval report kind. Repeatable.
 
 The scorecard is read-only and deterministic. It grades evidence only; it does
@@ -73,6 +74,7 @@ function parseArgs(argv) {
     requiredBenchmarkSurfaces: [],
     minBenchmarkRepeat: 0,
     minBenchmarkSamples: 0,
+    minQueryEvalRows: 0,
     requiredEvalKinds: [],
   };
   for (let i = 0; i < argv.length; i += 1) {
@@ -97,6 +99,7 @@ function parseArgs(argv) {
     else if (arg === '--require-benchmark-surface') out.requiredBenchmarkSurfaces.push(normalizeBenchmarkSurface(value));
     else if (arg === '--min-benchmark-repeat') out.minBenchmarkRepeat = parseNonNegativeInteger(value, arg);
     else if (arg === '--min-benchmark-samples') out.minBenchmarkSamples = parseNonNegativeInteger(value, arg);
+    else if (arg === '--min-query-eval-rows') out.minQueryEvalRows = parseNonNegativeInteger(value, arg);
     else if (arg === '--require-eval-kind') out.requiredEvalKinds.push(normalizeEvalKind(value));
     else throw new Error(`unknown argument: ${arg}`);
   }
@@ -195,6 +198,13 @@ function benchmarkSampleCount(benchmark) {
   const samples = asArray(benchmark?.samples);
   if (samples.length > 0) return samples.length;
   return null;
+}
+
+function queryEvalRowCount(report) {
+  const rows = asArray(report?.rows);
+  if (rows.length > 0) return rows.length;
+  const n = asNumber(report?.n);
+  return n;
 }
 
 function normalizeEvidence(raw) {
@@ -350,7 +360,7 @@ function scoreDeployReadiness(readinessReports, requirements = {}) {
   };
 }
 
-function scoreScope(operatorReport, benchmarks, requirements = {}) {
+function scoreScope(operatorReport, benchmarks, queryEvals, requirements = {}) {
   const requiredDomain = normalizeDomain(requirements.domain);
   const operatorDomain = normalizeDomain(operatorReport?.domain);
   const domainBenchmarks = benchmarks
@@ -359,6 +369,7 @@ function scoreScope(operatorReport, benchmarks, requirements = {}) {
       domain: normalizeDomain(benchmark?.domain),
     }))
     .filter((benchmark) => benchmark.surface !== 'index');
+  const queryEvalDomains = queryEvals.map((report) => normalizeDomain(report?.domain));
   if (!requiredDomain) {
     return {
       name: 'evidence_scope',
@@ -369,6 +380,7 @@ function scoreScope(operatorReport, benchmarks, requirements = {}) {
         required_domain: null,
         operator_domain: operatorDomain || null,
         benchmark_domains: domainBenchmarks,
+        query_eval_domains: queryEvalDomains.map((domain) => domain || null),
       },
     };
   }
@@ -385,6 +397,10 @@ function scoreScope(operatorReport, benchmarks, requirements = {}) {
     .map((benchmark) => `${benchmark.surface}:${benchmark.domain}`);
   if (missingBenchmarkDomains.length > 0) blockers.push('missing_benchmark_domain_scope');
   if (mismatchedBenchmarkDomains.length > 0) blockers.push('benchmark_domain_scope_mismatch');
+  const missingQueryEvalDomains = queryEvalDomains.filter((domain) => !domain);
+  const mismatchedQueryEvalDomains = queryEvalDomains.filter((domain) => domain && domain !== requiredDomain);
+  if (missingQueryEvalDomains.length > 0) blockers.push('missing_query_eval_domain_scope');
+  if (mismatchedQueryEvalDomains.length > 0) blockers.push('query_eval_domain_scope_mismatch');
 
   return {
     name: 'evidence_scope',
@@ -395,8 +411,11 @@ function scoreScope(operatorReport, benchmarks, requirements = {}) {
       required_domain: requiredDomain,
       operator_domain: operatorDomain || null,
       benchmark_domains: domainBenchmarks,
+      query_eval_domains: queryEvalDomains.map((domain) => domain || null),
       missing_benchmark_domain_surfaces: missingBenchmarkDomains,
       mismatched_benchmark_domains: mismatchedBenchmarkDomains,
+      missing_query_eval_domain_count: missingQueryEvalDomains.length,
+      mismatched_query_eval_domains: mismatchedQueryEvalDomains,
     },
   };
 }
@@ -498,6 +517,13 @@ function scorePerformance(benchmarks, requirements = {}) {
 
 function scoreQuality(operatorReport, benchmarks, queryEvals, requirements = {}) {
   const requiredEvalKinds = asArray(requirements.evalKinds).map(normalizeEvalKind);
+  const minQueryEvalRows = asNumber(requirements.minQueryEvalRows) ?? 0;
+  const queryEvalRows = queryEvals.map((report) => ({
+    report_id: report?.report_id ?? null,
+    row_count: queryEvalRowCount(report),
+  }));
+  const queryEvalRowsBelowMin = queryEvalRows
+    .filter((report) => minQueryEvalRows > 0 && (report.row_count === null || report.row_count < minQueryEvalRows));
   const evalKinds = [
     ...asArray(operatorReport?.inventory?.eval_kinds).map(normalizeEvalKind).filter(Boolean),
     ...(queryEvals.length > 0 ? ['query'] : []),
@@ -542,6 +568,8 @@ function scoreQuality(operatorReport, benchmarks, queryEvals, requirements = {})
         query_eval_citation_rate: queryEvalCitationRate,
         eval_report_count: evalReportCount,
         query_eval_count: queryEvals.length,
+        query_eval_rows: queryEvalRows,
+        min_query_eval_rows: minQueryEvalRows,
         eval_kinds: evalKinds,
         required_eval_kinds: requiredEvalKinds,
         missing_eval_kinds: missingEvalKinds,
@@ -550,12 +578,15 @@ function scoreQuality(operatorReport, benchmarks, queryEvals, requirements = {})
   }
 
   const hasRequiredEvalKinds = missingEvalKinds.length === 0;
+  const hasRequiredQueryEvalRows = queryEvalRowsBelowMin.length === 0;
   const aPlus = hasRequiredEvalKinds
+    && hasRequiredQueryEvalRows
     && (hitRate === null || hitRate >= 0.92)
     && (queryEvalHitRate === null || queryEvalHitRate >= 0.92)
     && (citationRate === null || citationRate >= 0.95)
     && (evalReportCount === null || evalReportCount >= 1);
   const a = hasRequiredEvalKinds
+    && hasRequiredQueryEvalRows
     && (hitRate === null || hitRate >= 0.85)
     && (queryEvalHitRate === null || queryEvalHitRate >= 0.85)
     && (citationRate === null || citationRate >= 0.9)
@@ -570,6 +601,8 @@ function scoreQuality(operatorReport, benchmarks, queryEvals, requirements = {})
       query_eval_citation_rate: queryEvalCitationRate,
       eval_report_count: evalReportCount,
       query_eval_count: queryEvals.length,
+      query_eval_rows: queryEvalRows,
+      min_query_eval_rows: minQueryEvalRows,
       eval_kinds: evalKinds,
       required_eval_kinds: requiredEvalKinds,
       missing_eval_kinds: missingEvalKinds,
@@ -582,6 +615,7 @@ function scoreQuality(operatorReport, benchmarks, queryEvals, requirements = {})
       ? []
       : [
         ...missingEvalKinds.map((kind) => `missing_${kind}_eval_report`),
+        ...queryEvalRowsBelowMin.map((report) => `${report.report_id ?? 'query_eval'}_rows_below_min`),
         'quality_below_a',
       ],
   };
@@ -692,7 +726,7 @@ export function buildAPlusScorecard(rawEvidence, options = {}) {
     scoreDeployReadiness(evidence.readinessReports, {
       requireReport: options.requireReadinessReport,
     }),
-    scoreScope(evidence.operatorReport, evidence.benchmarks, {
+    scoreScope(evidence.operatorReport, evidence.benchmarks, evidence.queryEvals, {
       domain: options.requiredDomain,
     }),
     scorePerformance(evidence.benchmarks, {
@@ -703,6 +737,7 @@ export function buildAPlusScorecard(rawEvidence, options = {}) {
     }),
     scoreQuality(evidence.operatorReport, evidence.benchmarks, evidence.queryEvals, {
       evalKinds: options.requiredEvalKinds,
+      minQueryEvalRows: options.minQueryEvalRows,
     }),
     scoreIngestion(evidence.operatorReport),
     scoreObservability(evidence.operatorReport, evidence.queryEvals),
@@ -742,6 +777,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       requiredBenchmarkSurfaces: args.requiredBenchmarkSurfaces,
       minBenchmarkRepeat: args.minBenchmarkRepeat,
       minBenchmarkSamples: args.minBenchmarkSamples,
+      minQueryEvalRows: args.minQueryEvalRows,
       requiredEvalKinds: args.requiredEvalKinds,
     });
     console.log(JSON.stringify(scorecard, null, 2));

@@ -63,6 +63,8 @@ const aPlusReadinessReport = {
 
 const aPlusQueryEvalReport = {
   report_id: 'eval-query-1',
+  domain: 'demo.example',
+  n: 2,
   hit_rate: 0.95,
   citation_rate: 1,
   ai_use_rate: 0,
@@ -95,6 +97,8 @@ describe('a-plus-scorecard', () => {
       '5',
       '--min-benchmark-samples',
       '10',
+      '--min-query-eval-rows',
+      '2',
       '--require-eval-kind',
       'query',
     ])).toEqual({
@@ -111,6 +115,7 @@ describe('a-plus-scorecard', () => {
       requiredBenchmarkSurfaces: ['kb-query'],
       minBenchmarkRepeat: 5,
       minBenchmarkSamples: 10,
+      minQueryEvalRows: 2,
       requiredEvalKinds: ['query'],
     });
   });
@@ -439,6 +444,38 @@ describe('a-plus-scorecard', () => {
       });
   });
 
+  it('fails evidence scope when query eval evidence is for the wrong account', () => {
+    const scorecard = buildAPlusScorecard({
+      operator_report: aPlusOperatorReport,
+      query_evals: [{ ...aPlusQueryEvalReport, domain: 'other.example' }],
+      benchmarks: [
+        {
+          surface: 'kb-query',
+          domain: 'demo.example',
+          mode: 'semantic',
+          hit_rate: 0.93,
+          latency: { p95_ms: 1300 },
+          server_latency: { p95_ms: 980 },
+        },
+      ],
+    }, {
+      requireGrade: 'A',
+      requiredDomain: 'demo.example',
+    });
+
+    expect(scorecard.ok).toBe(false);
+    expect(scorecard.blockers).toContain('query_eval_domain_scope_mismatch');
+    expect(scorecard.categories.find((category) => category.name === 'evidence_scope'))
+      .toMatchObject({
+        grade: 'C',
+        evidence: {
+          required_domain: 'demo.example',
+          query_eval_domains: ['other.example'],
+          mismatched_query_eval_domains: ['other.example'],
+        },
+      });
+  });
+
   it('fails retrieval quality when required eval kinds are missing', () => {
     const scorecard = buildAPlusScorecard({
       operator_report: {
@@ -498,6 +535,7 @@ describe('a-plus-scorecard', () => {
     }, {
       requireGrade: 'A+',
       requiredEvalKinds: ['query'],
+      minQueryEvalRows: 2,
     });
 
     expect(scorecard.ok).toBe(true);
@@ -508,8 +546,41 @@ describe('a-plus-scorecard', () => {
           query_eval_count: 1,
           query_eval_hit_rate: 0.95,
           query_eval_citation_rate: 1,
+          query_eval_rows: [{ report_id: 'eval-query-1', row_count: 2 }],
+          min_query_eval_rows: 2,
           eval_kinds: ['query'],
           missing_eval_kinds: [],
+        },
+      });
+  });
+
+  it('fails retrieval quality when direct query eval evidence is too small', () => {
+    const scorecard = buildAPlusScorecard({
+      operator_report: aPlusOperatorReport,
+      query_evals: [{ ...aPlusQueryEvalReport, report_id: 'eval-small', n: 1, rows: [{ id: 'q1', hit: true, cited: true }] }],
+      benchmarks: [
+        {
+          surface: 'kb-query',
+          mode: 'semantic',
+          hit_rate: 0.93,
+          latency: { p95_ms: 1300 },
+          server_latency: { p95_ms: 980 },
+        },
+      ],
+    }, {
+      requireGrade: 'A',
+      requiredEvalKinds: ['query'],
+      minQueryEvalRows: 2,
+    });
+
+    expect(scorecard.ok).toBe(false);
+    expect(scorecard.blockers).toContain('eval-small_rows_below_min');
+    expect(scorecard.categories.find((category) => category.name === 'retrieval_quality'))
+      .toMatchObject({
+        grade: 'B',
+        evidence: {
+          query_eval_rows: [{ report_id: 'eval-small', row_count: 1 }],
+          min_query_eval_rows: 2,
         },
       });
   });

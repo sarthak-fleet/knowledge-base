@@ -122,6 +122,7 @@ function buildPlan(options) {
       required_benchmark_surfaces: ['kb-search', 'kb-query'],
       min_benchmark_repeat: options.repeat,
       min_benchmark_samples: options.repeat * MIN_PROOF_QUERIES,
+      min_query_eval_rows: MIN_PROOF_QUERIES,
       required_eval_kinds: ['query'],
     },
   };
@@ -247,6 +248,7 @@ export async function runAPlusProof(options) {
       requiredBenchmarkSurfaces: ['kb-search', 'kb-query'],
       minBenchmarkRepeat: options.repeat,
       minBenchmarkSamples: options.repeat * MIN_PROOF_QUERIES,
+      minQueryEvalRows: MIN_PROOF_QUERIES,
       requiredEvalKinds: ['query'],
     });
     const artifacts = {
@@ -322,6 +324,7 @@ export async function runAPlusProof(options) {
     requiredBenchmarkSurfaces: ['kb-search', 'kb-query'],
     minBenchmarkRepeat: options.repeat,
     minBenchmarkSamples: options.repeat * MIN_PROOF_QUERIES,
+    minQueryEvalRows: MIN_PROOF_QUERIES,
     requiredEvalKinds: ['query'],
   });
 
