@@ -117,7 +117,7 @@ describe('embedding-model-release-status', () => {
       ragBaseUrl: 'https://rag.example.test/',
       freeAiBaseUrl: 'https://free-ai.example.test/',
       model: 'gemini-embedding-001',
-      expectedDeployFingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21',
+      expectedDeployFingerprint: 'knowledgebase-a-plus-evidence-2026-06-23',
       fetchImpl,
       vectorizeReport: vectorizeMissing,
       vectorizeMetadataReport: vectorizeMetadataMissing,
@@ -240,7 +240,7 @@ describe('embedding-model-release-status', () => {
     ]);
 
     expect(formatHumanReport(report)).toContain(
-      'deploy_fingerprint=knowledgebase-cloudflare-full-port-2026-06-21 expected=knowledgebase-cloudflare-embedding-models-2026-06-21',
+      'deploy_fingerprint=knowledgebase-cloudflare-full-port-2026-06-21 expected=knowledgebase-a-plus-evidence-2026-06-23',
     );
     expect(formatHumanReport(report)).toContain('embedding_model_count=0 valid_embedding_model_count=0 required_model=gemini-embedding-001');
     expect(formatHumanReport(report)).toContain('free_ai_catalog_ready=false configured_dimensions=1536 deployed_embedding_dimensions=none');
@@ -271,7 +271,7 @@ describe('embedding-model-release-status', () => {
 
     const report = await embeddingModelReleaseStatus({
       model: 'gemini-embedding-001',
-      expectedDeployFingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21',
+      expectedDeployFingerprint: 'knowledgebase-a-plus-evidence-2026-06-23',
       fetchImpl,
       vectorizeReport: vectorizeMissing,
       vectorizeMetadataReport: vectorizeMetadataMissing,
@@ -296,7 +296,7 @@ describe('embedding-model-release-status', () => {
           d1_schema: true,
           vectorize: true,
           r2: true,
-          deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21',
+          deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23',
         });
       }
       if (href.endsWith('/v1/models')) {
@@ -350,7 +350,7 @@ describe('embedding-model-release-status', () => {
           d1_schema: true,
           vectorize: true,
           r2: true,
-          deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21',
+          deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23',
         });
       }
       if (href.endsWith('/v1/models')) {
@@ -463,7 +463,7 @@ describe('embedding-model-release-status', () => {
           d1_schema: true,
           vectorize: true,
           r2: true,
-          deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21',
+          deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23',
         });
       }
       if (href.endsWith('/v1/models')) {
@@ -531,7 +531,7 @@ describe('embedding-model-release-status', () => {
           d1_schema: true,
           vectorize: true,
           r2: true,
-          deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21',
+          deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23',
         });
       }
       if (href.endsWith('/v1/models')) {
@@ -601,7 +601,7 @@ describe('embedding-model-release-status', () => {
           d1_schema: true,
           vectorize: true,
           r2: true,
-          deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21',
+          deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23',
         });
       }
       if (href.endsWith('/v1/models')) {
@@ -665,7 +665,7 @@ describe('embedding-model-release-status', () => {
           d1_schema: true,
           vectorize: true,
           r2: true,
-          deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21',
+          deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23',
         });
       }
       if (href.endsWith('/v1/models')) {
@@ -731,7 +731,7 @@ describe('embedding-model-release-status', () => {
           d1_schema: true,
           vectorize: true,
           r2: true,
-          deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21',
+          deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23',
         });
       }
       if (href.endsWith('/v1/models')) {
@@ -789,7 +789,7 @@ describe('embedding-model-release-status', () => {
           d1_schema: true,
           vectorize: true,
           r2: true,
-          deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21',
+          deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23',
         });
       }
       if (href.endsWith('/v1/models')) {

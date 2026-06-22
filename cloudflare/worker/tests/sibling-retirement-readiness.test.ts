@@ -14,7 +14,7 @@ const deployedLegacyRoutesReady = async () => ({
   ok: true,
   checked: 11,
   failed: [],
-  deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21',
+  deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23',
 });
 
 const preflightReady = async () => ({

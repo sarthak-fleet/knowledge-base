@@ -13,7 +13,7 @@ const DEFAULT_BASE_URL = 'https://knowledgebase.sarthakagrawal927.workers.dev';
 const NVDA_SCANNED_HASH = 'a56062aa2ee3c2eb6e1128e440e4ab683641e2ef4ccfa7e955538676a02c4c39';
 const NVDA_SCANNED_FILENAME = 'NVDA_riskfactors_sample_scanned.pdf';
 const NVDA_VISION_MODEL_CHAIN = '@cf/meta/llama-3.2-11b-vision-instruct,@cf/meta/llama-4-scout-17b-16e-instruct';
-export const EXPECTED_DEPLOY_FINGERPRINT = 'knowledgebase-cloudflare-embedding-models-2026-06-21';
+export const EXPECTED_DEPLOY_FINGERPRINT = 'knowledgebase-a-plus-evidence-2026-06-23';
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 
 function usage() {

@@ -2203,14 +2203,14 @@ describe('knowledgebase RAG Worker app', () => {
       object: { ok: true },
       worker: {
         version: '0.1.0',
-        deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21',
+        deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23',
       },
     });
     expect(metrics.status).toBe(200);
     expect(metrics.headers.get('content-type')).toContain('text/plain');
     expect(metricsText).toContain('kb_worker_ready 1');
     expect(metricsText).toContain('kb_d1_schema_ready 1');
-    expect(metricsText).toContain('deploy_fingerprint="knowledgebase-cloudflare-embedding-models-2026-06-21"');
+    expect(metricsText).toContain('deploy_fingerprint="knowledgebase-a-plus-evidence-2026-06-23"');
     expect(metricsText).toContain('kb_queries_total');
     expect(metricsText).toContain('kb_ingest_files_total');
   });
@@ -2554,7 +2554,7 @@ describe('knowledgebase RAG Worker app', () => {
     const trace = await app.request(`/query/trace/${queryBody.trace_id}`, { headers: { Authorization: 'Bearer key-a' } }, env);
 
     expect(health.status).toBe(200);
-    expect(healthBody.deploy_fingerprint).toBe('knowledgebase-cloudflare-embedding-models-2026-06-21');
+    expect(healthBody.deploy_fingerprint).toBe('knowledgebase-a-plus-evidence-2026-06-23');
     expect(noAuthDomains.status).toBe(401);
     expect(domain.status).toBe(201);
     expect(await domains.json()).toMatchObject({ data: [expect.objectContaining({ name: 'manuals' })] });

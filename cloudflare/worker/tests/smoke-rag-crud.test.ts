@@ -15,7 +15,7 @@ function healthyResponse() {
     d1_schema: true,
     vectorize: true,
     r2: true,
-    deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21',
+    deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23',
   });
 }
 
@@ -152,13 +152,13 @@ describe('smoke-rag-crud', () => {
       d1_schema: true,
       vectorize: true,
       r2: true,
-      deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21',
+      deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23',
     }));
     expect(report.checks).toContainEqual(expect.objectContaining({
       name: 'deployed-worker-fingerprint',
       ok: true,
-      deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21',
-      expected_deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21',
+      deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23',
+      expected_deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23',
     }));
     expect(report.checks).toContainEqual(expect.objectContaining({
       name: 'embedding-model-catalog',
@@ -523,12 +523,12 @@ describe('smoke-rag-crud', () => {
       name: 'deployed-worker-fingerprint',
       ok: false,
       deploy_fingerprint: 'knowledgebase-cloudflare-full-port-2026-06-21',
-      expected_deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21',
+      expected_deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23',
     }));
     expect(report.checks).toContainEqual(expect.objectContaining({
       name: 'rag-crud-error',
       ok: false,
-      error: 'deployed fingerprint does not match expected knowledgebase-cloudflare-embedding-models-2026-06-21',
+      error: 'deployed fingerprint does not match expected knowledgebase-a-plus-evidence-2026-06-23',
     }));
     expect(calls).toEqual(['GET /v1/healthz']);
   });

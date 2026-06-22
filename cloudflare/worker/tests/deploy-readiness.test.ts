@@ -13,8 +13,8 @@ const deployedLegacyRoutesOk = async () => ({
   ok: true,
   checked: 11,
   failed: [],
-  deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21',
-  expected_deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21',
+  deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23',
+  expected_deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23',
   fingerprint_ok: true,
   checks: [],
 });
@@ -49,7 +49,7 @@ describe('deploy-readiness', () => {
           vectorize: true,
           r2: true,
           version: '0.1.0',
-          deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21',
+          deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23',
         });
       }
       if (url.endsWith('/v1/indexes')) {
@@ -70,13 +70,13 @@ describe('deploy-readiness', () => {
       expect.objectContaining({
         name: 'public-health',
         ok: true,
-        deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21',
+        deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23',
       }),
       expect.objectContaining({
         name: 'deployed-worker-fingerprint',
         ok: true,
-        deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21',
-        expected_deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21',
+        deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23',
+        expected_deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23',
       }),
       expect.objectContaining({ name: 'protected-indexes-require-auth', ok: true }),
       expect.objectContaining({ name: 'authenticated-key-present', ok: true, skipped: true }),
@@ -113,14 +113,14 @@ describe('deploy-readiness', () => {
       name: 'deployed-worker-fingerprint',
       ok: false,
       deploy_fingerprint: 'knowledgebase-cloudflare-full-port-2026-06-21',
-      expected_deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21',
+      expected_deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23',
     }));
   });
 
   it('fails when authenticated checks are required without a key', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       if (url.endsWith('/v1/healthz')) {
-        return Response.json({ ok: true, d1: true, d1_schema: true, vectorize: true, r2: true, deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21' });
+        return Response.json({ ok: true, d1: true, d1_schema: true, vectorize: true, r2: true, deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23' });
       }
       return Response.json({ error: 'unauthorized' }, { status: 401 });
     }));
@@ -244,7 +244,7 @@ describe('deploy-readiness', () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       calls.push({ url, auth: new Headers(init?.headers).get('authorization') });
       if (url.endsWith('/v1/healthz')) {
-        return Response.json({ ok: true, d1: true, d1_schema: true, vectorize: true, r2: true, deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21' });
+        return Response.json({ ok: true, d1: true, d1_schema: true, vectorize: true, r2: true, deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23' });
       }
       if (url.endsWith('/v1/indexes') && !new Headers(init?.headers).has('authorization')) {
         return Response.json({ error: 'unauthorized' }, { status: 401 });
@@ -276,7 +276,7 @@ describe('deploy-readiness', () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       calls.push({ url, auth: new Headers(init?.headers).get('authorization') });
       if (url.endsWith('/v1/healthz')) {
-        return Response.json({ ok: true, d1: true, d1_schema: true, vectorize: true, r2: true, deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21' });
+        return Response.json({ ok: true, d1: true, d1_schema: true, vectorize: true, r2: true, deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23' });
       }
       if (url.endsWith('/v1/indexes') && !new Headers(init?.headers).has('authorization')) {
         return Response.json({ error: 'unauthorized' }, { status: 401 });
@@ -328,7 +328,7 @@ describe('deploy-readiness', () => {
   it('fails the embedding model catalog check when it is static fallback', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url.endsWith('/v1/healthz')) {
-        return Response.json({ ok: true, d1: true, d1_schema: true, vectorize: true, r2: true, deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21' });
+        return Response.json({ ok: true, d1: true, d1_schema: true, vectorize: true, r2: true, deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23' });
       }
       if (url.endsWith('/v1/indexes') && !new Headers(init?.headers).has('authorization')) {
         return Response.json({ error: 'unauthorized' }, { status: 401 });
@@ -372,7 +372,7 @@ describe('deploy-readiness', () => {
   it('fails the embedding model catalog check when the model has no configured Vectorize binding', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url.endsWith('/v1/healthz')) {
-        return Response.json({ ok: true, d1: true, d1_schema: true, vectorize: true, r2: true, deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21' });
+        return Response.json({ ok: true, d1: true, d1_schema: true, vectorize: true, r2: true, deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23' });
       }
       if (url.endsWith('/v1/indexes') && !new Headers(init?.headers).has('authorization')) {
         return Response.json({ error: 'unauthorized' }, { status: 401 });
@@ -420,7 +420,7 @@ describe('deploy-readiness', () => {
   it('fails the embedding model catalog check without a service key', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       if (url.endsWith('/v1/healthz')) {
-        return Response.json({ ok: true, d1: true, d1_schema: true, vectorize: true, r2: true, deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21' });
+        return Response.json({ ok: true, d1: true, d1_schema: true, vectorize: true, r2: true, deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23' });
       }
       return Response.json({ error: 'unauthorized' }, { status: 401 });
     }));
@@ -448,7 +448,7 @@ describe('deploy-readiness', () => {
       const method = init?.method ?? 'GET';
       calls.push({ url, method });
       if (url.endsWith('/healthz')) {
-        return Response.json({ ok: true, deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21' });
+        return Response.json({ ok: true, deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23' });
       }
       if (url.endsWith('/readyz') || url.endsWith('/metrics')) {
         return new Response('{}', { status: 200 });
@@ -461,10 +461,10 @@ describe('deploy-readiness', () => {
     expect(result.ok).toBe(true);
     expect(result.checked).toBe(11);
     expect(result.failed).toEqual([]);
-    expect(result.deploy_fingerprint).toBe('knowledgebase-cloudflare-embedding-models-2026-06-21');
+    expect(result.deploy_fingerprint).toBe('knowledgebase-a-plus-evidence-2026-06-23');
     expect(result.checks).toContainEqual(expect.objectContaining({
       path: '/healthz',
-      deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21',
+      deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23',
     }));
     expect(calls).toEqual(expect.arrayContaining([
       { url: 'http://rag.local/healthz', method: 'GET' },
@@ -478,7 +478,7 @@ describe('deploy-readiness', () => {
   it('fails deployed legacy route smoke checks when an alias is missing', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       if (url.endsWith('/healthz')) {
-        return Response.json({ ok: true, deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21' });
+        return Response.json({ ok: true, deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23' });
       }
       if (url.endsWith('/readyz') || url.endsWith('/metrics')) {
         return new Response('{}', { status: 200 });
@@ -513,7 +513,7 @@ describe('deploy-readiness', () => {
     expect(result.failed).toContainEqual(expect.objectContaining({
       path: '/healthz',
       deploy_fingerprint: 'old-worker-build',
-      expected_deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21',
+      expected_deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23',
       error: 'unexpected deploy fingerprint',
     }));
   });
@@ -565,7 +565,7 @@ describe('deploy-readiness', () => {
   it('skips the live OCR eval in full-port mode until deployed aliases and fingerprint are current', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url.endsWith('/v1/healthz')) {
-        return Response.json({ ok: true, d1: true, d1_schema: true, vectorize: true, r2: true, deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21' });
+        return Response.json({ ok: true, d1: true, d1_schema: true, vectorize: true, r2: true, deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23' });
       }
       if (url.endsWith('/v1/indexes') && !new Headers(init?.headers).has('authorization')) {
         return Response.json({ error: 'unauthorized' }, { status: 401 });
@@ -589,7 +589,7 @@ describe('deploy-readiness', () => {
         checked: 11,
         failed: [{ path: '/search', status: 404 }],
         deploy_fingerprint: null,
-        expected_deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21',
+        expected_deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23',
         fingerprint_ok: false,
         checks: [],
       }),
@@ -621,7 +621,7 @@ describe('deploy-readiness', () => {
   it('fails full-port readiness when the root gap gate reports remaining blockers', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       if (url.endsWith('/v1/healthz')) {
-        return Response.json({ ok: true, d1: true, d1_schema: true, vectorize: true, r2: true, deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21' });
+        return Response.json({ ok: true, d1: true, d1_schema: true, vectorize: true, r2: true, deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23' });
       }
       return Response.json({ error: 'unauthorized' }, { status: 401 });
     }));
@@ -679,7 +679,7 @@ describe('deploy-readiness', () => {
   it('fails full-port readiness when the sibling rag-service audit still finds deployable surfaces', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url.endsWith('/v1/healthz')) {
-        return Response.json({ ok: true, d1: true, d1_schema: true, vectorize: true, r2: true, deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21' });
+        return Response.json({ ok: true, d1: true, d1_schema: true, vectorize: true, r2: true, deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23' });
       }
       if (url.endsWith('/v1/indexes') && !new Headers(init?.headers).has('authorization')) {
         return Response.json({ error: 'unauthorized' }, { status: 401 });
@@ -765,7 +765,7 @@ describe('deploy-readiness', () => {
         checked: 11,
         failed: [],
         deploy_fingerprint: 'old-worker-build',
-        expected_deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21',
+        expected_deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23',
         fingerprint_ok: false,
         checks: [],
       }),
@@ -788,14 +788,14 @@ describe('deploy-readiness', () => {
       name: 'deployed-worker-fingerprint',
       ok: false,
       deploy_fingerprint: 'old-worker-build',
-      expected_deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21',
+      expected_deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23',
     }));
   });
 
   it('fails the live NVDA OCR check when it is required without a key', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       if (url.endsWith('/v1/healthz')) {
-        return Response.json({ ok: true, d1: true, d1_schema: true, vectorize: true, r2: true, deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21' });
+        return Response.json({ ok: true, d1: true, d1_schema: true, vectorize: true, r2: true, deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23' });
       }
       return Response.json({ error: 'unauthorized' }, { status: 401 });
     }));
@@ -819,7 +819,7 @@ describe('deploy-readiness', () => {
   it('passes the live NVDA OCR check when the deployed parse eval passes', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url.endsWith('/v1/healthz')) {
-        return Response.json({ ok: true, d1: true, d1_schema: true, vectorize: true, r2: true, deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21' });
+        return Response.json({ ok: true, d1: true, d1_schema: true, vectorize: true, r2: true, deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23' });
       }
       if (url.endsWith('/v1/indexes') && !new Headers(init?.headers).has('authorization')) {
         return Response.json({ error: 'unauthorized' }, { status: 401 });
@@ -861,7 +861,7 @@ describe('deploy-readiness', () => {
   it('skips the live NVDA OCR check without an explicit live OCR opt-in', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url.endsWith('/v1/healthz')) {
-        return Response.json({ ok: true, d1: true, d1_schema: true, vectorize: true, r2: true, deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21' });
+        return Response.json({ ok: true, d1: true, d1_schema: true, vectorize: true, r2: true, deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23' });
       }
       if (url.endsWith('/v1/indexes') && !new Headers(init?.headers).has('authorization')) {
         return Response.json({ error: 'unauthorized' }, { status: 401 });
@@ -895,7 +895,7 @@ describe('deploy-readiness', () => {
   it('fails the live NVDA OCR check when the deployed parse eval misses expected text', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url.endsWith('/v1/healthz')) {
-        return Response.json({ ok: true, d1: true, d1_schema: true, vectorize: true, r2: true, deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21' });
+        return Response.json({ ok: true, d1: true, d1_schema: true, vectorize: true, r2: true, deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23' });
       }
       if (url.endsWith('/v1/indexes') && !new Headers(init?.headers).has('authorization')) {
         return Response.json({ error: 'unauthorized' }, { status: 401 });
@@ -936,7 +936,7 @@ describe('deploy-readiness', () => {
   it('explains how to fix Llama 3.2 Vision license failures in the live OCR gate', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url.endsWith('/v1/healthz')) {
-        return Response.json({ ok: true, d1: true, d1_schema: true, vectorize: true, r2: true, deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21' });
+        return Response.json({ ok: true, d1: true, d1_schema: true, vectorize: true, r2: true, deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23' });
       }
       if (url.endsWith('/v1/indexes') && !new Headers(init?.headers).has('authorization')) {
         return Response.json({ error: 'unauthorized' }, { status: 401 });
@@ -972,7 +972,7 @@ describe('deploy-readiness', () => {
   it('passes full-port readiness when the root gap gate is complete', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url.endsWith('/v1/healthz')) {
-        return Response.json({ ok: true, d1: true, d1_schema: true, vectorize: true, r2: true, deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21' });
+        return Response.json({ ok: true, d1: true, d1_schema: true, vectorize: true, r2: true, deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23' });
       }
       if (url.endsWith('/v1/indexes') && !new Headers(init?.headers).has('authorization')) {
         return Response.json({ error: 'unauthorized' }, { status: 401 });
@@ -1020,8 +1020,8 @@ describe('deploy-readiness', () => {
     expect(result.checks).toContainEqual(expect.objectContaining({
       name: 'deployed-worker-fingerprint',
       ok: true,
-      deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21',
-      expected_deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21',
+      deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23',
+      expected_deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23',
     }));
     expect(result.checks).toContainEqual(expect.objectContaining({
       name: 'deployed-testing-ui',
@@ -1040,7 +1040,7 @@ describe('deploy-readiness', () => {
   it('fails full-port readiness when local Worker preflight fails', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url.endsWith('/v1/healthz')) {
-        return Response.json({ ok: true, d1: true, d1_schema: true, vectorize: true, r2: true, deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21' });
+        return Response.json({ ok: true, d1: true, d1_schema: true, vectorize: true, r2: true, deploy_fingerprint: 'knowledgebase-a-plus-evidence-2026-06-23' });
       }
       if (url.endsWith('/v1/indexes') && !new Headers(init?.headers).has('authorization')) {
         return Response.json({ error: 'unauthorized' }, { status: 401 });

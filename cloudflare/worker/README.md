@@ -172,7 +172,7 @@ behind local route parity.
 For a focused alias check, run
 `pnpm run smoke:legacy-routes -- --base-url <worker-url> --require-complete`.
 The `/healthz` row should include
-`deploy_fingerprint=knowledgebase-cloudflare-embedding-models-2026-06-21` and
+`deploy_fingerprint=knowledgebase-a-plus-evidence-2026-06-23` and
 `d1_schema: true` after the current Cloudflare port and D1 migrations are
 deployed. The smoke and full-port readiness gates
 enforce that fingerprint by default; pass

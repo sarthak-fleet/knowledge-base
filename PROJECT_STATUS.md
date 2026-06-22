@@ -105,6 +105,11 @@ Workers AI embedding calls and is an opt-in post-cutover step.
   metadata indexes, read-only selected-model readiness is green, and
   `smoke:rag-crud:embedding-model` proves generic index CRUD plus the
   `/v1/kb/ingest/text` custom-input domain path and `/v1/kb/search`.
+- **Next A/A+ evidence release:** local `main` now expects
+  `deploy_fingerprint=knowledgebase-a-plus-evidence-2026-06-23` so deployed
+  readiness cannot pass against the older embedding-model cutover after the
+  scorecard, hosted UI, and benchmark evidence-gate changes. This fingerprint is
+  pending an approved Worker deploy.
 - **Python runtime:** retired. The Worker full-port/preflight gates, UI,
   migration tooling, and local checks are TypeScript/Node-only; the old Python
   FastAPI server, Python UI, Docker Compose runtime, parser/query/eval package,
