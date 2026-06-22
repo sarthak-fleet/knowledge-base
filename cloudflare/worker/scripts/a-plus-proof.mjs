@@ -110,9 +110,9 @@ function buildPlan(options) {
     steps: [
       'deploy-readiness',
       'query-eval',
-      'operator-report',
       'benchmark:kb-search:lexical',
       'benchmark:kb-query:semantic',
+      'operator-report',
       'scorecard:a-plus',
     ],
     scorecard_requirements: {
@@ -288,16 +288,6 @@ export async function runAPlusProof(options) {
     input,
     topK: options.topK,
   });
-  const operatorReport = await runOperatorReport({
-    baseUrl: options.baseUrl,
-    key: options.key,
-    domain: options.domain,
-    indexId: options.indexId,
-    queries: [options.query],
-    repeat: options.repeat,
-    topK: options.topK,
-    mode: 'semantic',
-  });
   const lexicalBenchmark = await runBenchmark({
     baseUrl: options.baseUrl,
     key: options.key,
@@ -317,6 +307,16 @@ export async function runAPlusProof(options) {
     mode: 'semantic',
     repeat: options.repeat,
     topK: options.topK,
+  });
+  const operatorReport = await runOperatorReport({
+    baseUrl: options.baseUrl,
+    key: options.key,
+    domain: options.domain,
+    indexId: options.indexId,
+    queries: [options.query],
+    repeat: options.repeat,
+    topK: options.topK,
+    mode: 'semantic',
   });
   const scorecard = buildAPlusScorecard({
     operator_report: operatorReport,

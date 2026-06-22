@@ -61,9 +61,9 @@ describe('a-plus-proof', () => {
       steps: [
         'deploy-readiness',
         'query-eval',
-        'operator-report',
         'benchmark:kb-search:lexical',
         'benchmark:kb-query:semantic',
+        'operator-report',
         'scorecard:a-plus',
       ],
       scorecard_requirements: {
