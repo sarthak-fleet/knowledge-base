@@ -74,8 +74,9 @@ Workers AI embedding calls and is an opt-in post-cutover step.
 - **Consumer proof split:** `audit:consumer-rag-integrations` is a local source
   audit for Linkchat/Karte and Starboard. It now proves karte's profile-memory
   create/ingest/delete/search payload contract and Starboard's user-scoped
-  semantic search plus repo text content and `user_id`/`repo_id`/`full_name`/`language`
-  ingest metadata contract. It also fails if either consumer keeps the old
+  semantic search plus full README-backed repo text content and
+  `user_id`/`repo_id`/`full_name`/`language` ingest metadata contract. It also
+  fails if either consumer keeps the old
   `src/lib/rag-service.ts` client filename; the shared client module is
   `src/lib/knowledgebase.ts`. It verifies both checked-out consumer repos still
   expose a Cloudflare-backed `deploy:cf` script that runs the repo's Cloudflare

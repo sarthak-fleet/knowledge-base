@@ -93,7 +93,22 @@ function writeHealthyStarboard(fleetRoot: string) {
   write(resolve(repo, 'src/app/api/stars/route.ts'), 'import { searchStarboardRag } from "@/lib/knowledgebase";\n');
   write(resolve(repo, 'src/app/api/stars/sync/route.ts'), [
     'import { ingestStarboardRagDocuments } from "@/lib/knowledgebase";',
-    'ingestStarboardRagDocuments([{ content: texts[i] ?? "", metadata: { user_id: userId, repo_id: repo.id, full_name: repo.full_name, language: repo.language } }]);',
+    'import { buildStarboardRagDocument, fetchRepoReadmes } from "@/lib/starboard-rag-documents";',
+    'const readmes = await fetchRepoReadmes(session.accessToken, added);',
+    'ingestStarboardRagDocuments(added.map((repo) => buildStarboardRagDocument(userId, repo, readmes.get(repo.full_name))));',
+  ].join('\n'));
+  write(resolve(repo, 'src/lib/starboard-rag-documents.ts'), [
+    'export async function fetchRepoReadmeText(accessToken, repo, fetchImpl = fetch) {',
+    '  return fetchImpl(`https://api.github.com/repos/${repo.full_name}/readme`, { headers: { Accept: "application/vnd.github.raw" } });',
+    '}',
+    'export async function fetchRepoReadmes() { return new Map(); }',
+    'export function buildStarboardRagDocument(userId, repo, readmeText) {',
+    '  const content = ["Repository: " + repo.full_name, readmeText ? `README:\\n${readmeText}` : null].filter(Boolean).join("\\n\\n");',
+    '  return {',
+    '    content,',
+    '    metadata: { user_id: userId, repo_id: repo.id, full_name: repo.full_name, language: repo.language, has_readme: Boolean(readmeText) },',
+    '  };',
+    '}',
   ].join('\n'));
 }
 

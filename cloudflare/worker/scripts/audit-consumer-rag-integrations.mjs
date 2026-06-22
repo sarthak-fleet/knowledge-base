@@ -71,6 +71,32 @@ function knowledgebaseFallbackUrlOk(text) {
     && !/https:\/\/[^"'\s]*rag-service[^"'\s]*/i.test(text);
 }
 
+function starboardMetadataContractOk(route, helper) {
+  return containsAll(route, [/metadata:\s*\{[\s\S]*user_id:\s*userId[\s\S]*repo_id:\s*repo\.id[\s\S]*full_name:\s*repo\.full_name/])
+    || (route.includes('buildStarboardRagDocument') && containsAll(helper, [
+      /metadata:\s*\{[\s\S]*user_id:\s*userId[\s\S]*repo_id:\s*repo\.id[\s\S]*full_name:\s*repo\.full_name/,
+    ]));
+}
+
+function starboardContentContractOk(route, helper) {
+  return containsAll(route, [/content:\s*texts\[i\]\s*\?\?\s*["']["']/, /language:\s*repo\.language/])
+    || (route.includes('buildStarboardRagDocument') && containsAll(helper, [
+      /const\s+content\s*=/,
+      /language:\s*repo\.language/,
+    ]));
+}
+
+function starboardReadmeContractOk(route, helper) {
+  return containsAll(route, [/fetchRepoReadmes/, /buildStarboardRagDocument/])
+    && containsAll(helper, [
+      /fetchRepoReadmeText/,
+      /\/readme/,
+      /Accept:\s*['"]application\/vnd\.github\.raw['"]/,
+      /README:\\n/,
+      /has_readme/,
+    ]);
+}
+
 function resolveFirstExistingRepo(fleetRoot, names) {
   for (const name of names) {
     const repo = resolve(fleetRoot, name);
@@ -297,6 +323,8 @@ function auditStarboard(fleetRoot) {
   }
 
   const syncRoute = resolve(repo, 'src/app/api/stars/sync/route.ts');
+  const documentHelper = resolve(repo, 'src/lib/starboard-rag-documents.ts');
+  const documentHelperSource = existsSync(documentHelper) ? readText(documentHelper) : '';
   if (!existsSync(syncRoute)) {
     checks.push(fail('stars_sync_route', 'src/app/api/stars/sync/route.ts is missing'));
   } else {
@@ -304,12 +332,15 @@ function auditStarboard(fleetRoot) {
     checks.push(route.includes('ingestStarboardRagDocuments') && route.includes('@/lib/knowledgebase')
       ? pass('stars_sync_route', 'sync route ingests repo documents through knowledgebase RAG')
       : fail('stars_sync_route', 'sync route must use ingestStarboardRagDocuments from the knowledgebase RAG client'));
-    checks.push(containsAll(route, [/metadata:\s*\{[\s\S]*user_id:\s*userId[\s\S]*repo_id:\s*repo\.id[\s\S]*full_name:\s*repo\.full_name/])
+    checks.push(starboardMetadataContractOk(route, documentHelperSource)
       ? pass('stars_sync_metadata_contract', 'sync route sends user_id/repo_id/full_name metadata to knowledgebase')
       : fail('stars_sync_metadata_contract', 'sync route must send user_id, repo_id, and full_name metadata for knowledgebase filtering/results'));
-    checks.push(containsAll(route, [/content:\s*texts\[i\]\s*\?\?\s*["']["']/, /language:\s*repo\.language/])
+    checks.push(starboardContentContractOk(route, documentHelperSource)
       ? pass('stars_sync_content_contract', 'sync route sends repo text content and language metadata to knowledgebase')
       : fail('stars_sync_content_contract', 'sync route must send repo text content and language metadata to knowledgebase ingest'));
+    checks.push(starboardReadmeContractOk(route, documentHelperSource)
+      ? pass('stars_sync_readme_contract', 'sync route fetches full GitHub READMEs and includes them in knowledgebase content')
+      : fail('stars_sync_readme_contract', 'sync route must fetch full GitHub READMEs and include them in knowledgebase content'));
   }
 
   const legacyRagClient = resolve(repo, 'src/lib/rag-service.ts');
