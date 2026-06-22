@@ -302,9 +302,10 @@ Worker: Fleet consumer → Hono → free-ai/Workers AI embed → Vectorize query
 - D1 eval report history and rollups via `/v1/kb/evals/reports` and `/v1/kb/evals/summary`, including deterministic answer faithfulness/support coverage metrics and opt-in Workers AI model-judged support scores.
 - Analytics Engine data points for successful query traces and eval reports via the `RAG_ANALYTICS` dataset binding.
 - A/A+ scorecard gate (`pnpm run scorecard:a-plus`) grades reliability,
-  retrieval performance, retrieval quality, ingestion reliability,
-  observability, and ease-of-use evidence from operator reports and benchmarks
-  so missing proof cannot be mistaken for production excellence. Operator
+  deploy readiness, retrieval performance, retrieval quality, ingestion
+  reliability, observability, and ease-of-use evidence from readiness reports,
+  operator reports, and benchmarks so missing proof cannot be mistaken for
+  production excellence. Operator
   reports automatically prove hosted UI, custom text input, async progress, and
   user-visible UI copy that hides retrieval/storage internals. `benchmark:rag`
   emits mode-labeled lexical/semantic/hybrid evidence for index, domain search,

@@ -37,12 +37,39 @@ const aPlusOperatorReport = {
   },
 };
 
+const aPlusReadinessReport = {
+  ok: true,
+  base_url: 'https://knowledgebase.example.workers.dev',
+  checks: [
+    {
+      name: 'public-health',
+      ok: true,
+      status: 200,
+      deploy_fingerprint: 'current-fp',
+    },
+    {
+      name: 'deployed-worker-fingerprint',
+      ok: true,
+      deploy_fingerprint: 'current-fp',
+      expected_deploy_fingerprint: 'current-fp',
+    },
+    {
+      name: 'protected-indexes-require-auth',
+      ok: true,
+      status: 401,
+    },
+  ],
+};
+
 describe('a-plus-scorecard', () => {
   it('accepts the pnpm run argument separator', () => {
     expect(parseArgs([
       '--',
       '--input',
       '/tmp/report.json',
+      '--readiness-report',
+      '/tmp/readiness.json',
+      '--require-readiness-report',
       '--require-grade',
       'A+',
       '--require-domain',
@@ -61,6 +88,8 @@ describe('a-plus-scorecard', () => {
       input: '/tmp/report.json',
       operatorReport: '',
       benchmarks: [],
+      readinessReports: ['/tmp/readiness.json'],
+      requireReadinessReport: true,
       requireGrade: 'A+',
       expectedDeployFingerprint: '',
       requiredDomain: 'demo.example',
@@ -76,15 +105,19 @@ describe('a-plus-scorecard', () => {
     const dir = await mkdtemp(join(tmpdir(), 'kb-scorecard-'));
     try {
       const operatorPath = join(dir, 'operator.json');
+      const readinessPath = join(dir, 'readiness.json');
       const lexicalPath = join(dir, 'lexical.json');
       const semanticPath = join(dir, 'semantic.json');
       await writeFile(operatorPath, JSON.stringify(aPlusOperatorReport));
+      await writeFile(readinessPath, JSON.stringify(aPlusReadinessReport));
       await writeFile(lexicalPath, JSON.stringify({ mode: 'lexical', hit_rate: 0.96, latency: { p95_ms: 120 } }));
       await writeFile(semanticPath, JSON.stringify({ mode: 'semantic', hit_rate: 0.93, latency: { p95_ms: 1100 } }));
 
       const evidence = await loadScorecardEvidence(parseArgs([
         '--operator-report',
         operatorPath,
+        '--readiness-report',
+        readinessPath,
         '--benchmark',
         lexicalPath,
         '--benchmark',
@@ -93,6 +126,7 @@ describe('a-plus-scorecard', () => {
 
       expect(evidence).toMatchObject({
         operator_report: { ok: true },
+        readiness_reports: [{ ok: true }],
         benchmarks: [
           { mode: 'lexical', hit_rate: 0.96 },
           { mode: 'semantic', hit_rate: 0.93 },
@@ -106,6 +140,7 @@ describe('a-plus-scorecard', () => {
   it('grades complete fast evidence as A+', () => {
     const scorecard = buildAPlusScorecard({
       operator_report: aPlusOperatorReport,
+      readiness_reports: [aPlusReadinessReport],
       benchmarks: [
         {
           mode: 'lexical',
@@ -120,11 +155,75 @@ describe('a-plus-scorecard', () => {
           server_latency: { p95_ms: 980 },
         },
       ],
-    }, { requireGrade: 'A+' });
+    }, { requireGrade: 'A+', requireReadinessReport: true });
 
     expect(scorecard.ok).toBe(true);
     expect(scorecard.overall_grade).toBe('A+');
     expect(scorecard.blockers).toEqual([]);
+  });
+
+  it('fails when deploy-readiness evidence is required but missing', () => {
+    const scorecard = buildAPlusScorecard({
+      operator_report: aPlusOperatorReport,
+      benchmarks: [
+        {
+          mode: 'semantic',
+          hit_rate: 0.94,
+          latency: { p95_ms: 1200 },
+          server_latency: { p95_ms: 900 },
+        },
+      ],
+    }, { requireGrade: 'A', requireReadinessReport: true });
+
+    expect(scorecard.ok).toBe(false);
+    expect(scorecard.blockers).toContain('missing_deploy_readiness_report');
+    expect(scorecard.categories.find((category) => category.name === 'deploy_readiness'))
+      .toMatchObject({ grade: 'C', ok: false });
+  });
+
+  it('fails when deploy-readiness reports failed checks', () => {
+    const scorecard = buildAPlusScorecard({
+      operator_report: aPlusOperatorReport,
+      readiness_reports: [
+        {
+          ...aPlusReadinessReport,
+          ok: false,
+          checks: [
+            aPlusReadinessReport.checks[0],
+            {
+              name: 'deployed-worker-fingerprint',
+              ok: false,
+              deploy_fingerprint: 'old-fp',
+              expected_deploy_fingerprint: 'current-fp',
+            },
+          ],
+        },
+      ],
+      benchmarks: [
+        {
+          mode: 'semantic',
+          hit_rate: 0.94,
+          latency: { p95_ms: 1200 },
+          server_latency: { p95_ms: 900 },
+        },
+      ],
+    }, { requireGrade: 'A', requireReadinessReport: true });
+
+    expect(scorecard.ok).toBe(false);
+    expect(scorecard.blockers).toContain('readiness_deployed-worker-fingerprint');
+    expect(scorecard.categories.find((category) => category.name === 'deploy_readiness'))
+      .toMatchObject({
+        grade: 'C',
+        evidence: {
+          reports: [
+            {
+              ok: false,
+              failed_checks: ['deployed-worker-fingerprint'],
+              deploy_fingerprint: 'old-fp',
+            },
+          ],
+        },
+      });
   });
 
   it('fails reliability when the operator report fingerprint is stale', () => {

@@ -668,8 +668,14 @@ pnpm run operator:report -- \
   --query "what should this account remember?" \
   > /tmp/kb-operator-report.json
 
+RAG_SERVICE_KEY=<service-key> \
+node scripts/deploy-readiness.mjs --json \
+  > /tmp/kb-readiness.json
+
 pnpm run scorecard:a-plus -- \
   --input /tmp/kb-operator-report.json \
+  --readiness-report /tmp/kb-readiness.json \
+  --require-readiness-report \
   --require-grade A
 ```
 
@@ -699,6 +705,8 @@ RAG_SERVICE_KEY=<service-key> pnpm run benchmark:rag -- \
 
 pnpm run scorecard:a-plus -- \
   --operator-report /tmp/kb-operator-report.json \
+  --readiness-report /tmp/kb-readiness.json \
+  --require-readiness-report \
   --benchmark /tmp/kb-benchmark-lexical.json \
   --benchmark /tmp/kb-benchmark-semantic.json \
   --expected-deploy-fingerprint knowledgebase-a-plus-evidence-2026-06-23 \

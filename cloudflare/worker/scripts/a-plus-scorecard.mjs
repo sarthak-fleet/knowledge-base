@@ -40,9 +40,11 @@ function usage() {
 Input can be:
   - operator-report JSON
   - benchmark-rag JSON
-  - {"operator_report": {...}, "benchmarks": [{...}], "capabilities": {...}}
+  - {"operator_report": {...}, "benchmarks": [{...}], "readiness_reports": [{...}], "capabilities": {...}}
 
 Options:
+  --readiness-report <report.json>       Include deploy-readiness JSON evidence. Repeatable.
+  --require-readiness-report             Fail if no deploy-readiness report is provided.
   --expected-deploy-fingerprint <value> Require operator report health to match this deploy fingerprint.
   --require-domain <domain>             Require operator report and domain benchmarks to match this domain.
   --require-benchmark-mode <mode>       Require lexical, semantic, or hybrid evidence. Repeatable.
@@ -60,6 +62,8 @@ function parseArgs(argv) {
     input: '',
     operatorReport: '',
     benchmarks: [],
+    readinessReports: [],
+    requireReadinessReport: false,
     requireGrade: 'A',
     expectedDeployFingerprint: process.env.RAG_EXPECTED_DEPLOY_FINGERPRINT || '',
     requiredDomain: process.env.RAG_SCORECARD_DOMAIN || '',
@@ -72,12 +76,17 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--') continue;
+    if (arg === '--require-readiness-report') {
+      out.requireReadinessReport = true;
+      continue;
+    }
     const value = argv[i + 1];
     if (!value) throw new Error(`missing value for ${arg}`);
     i += 1;
     if (arg === '--input') out.input = value;
     else if (arg === '--operator-report') out.operatorReport = value;
     else if (arg === '--benchmark') out.benchmarks.push(value);
+    else if (arg === '--readiness-report') out.readinessReports.push(value);
     else if (arg === '--require-grade') out.requireGrade = normalizeGrade(value);
     else if (arg === '--expected-deploy-fingerprint') out.expectedDeployFingerprint = value.trim();
     else if (arg === '--require-domain') out.requiredDomain = normalizeDomain(value);
@@ -88,8 +97,8 @@ function parseArgs(argv) {
     else if (arg === '--require-eval-kind') out.requiredEvalKinds.push(normalizeEvalKind(value));
     else throw new Error(`unknown argument: ${arg}`);
   }
-  if (!out.input && !out.operatorReport && out.benchmarks.length === 0) {
-    throw new Error('--input or --operator-report/--benchmark is required');
+  if (!out.input && !out.operatorReport && out.benchmarks.length === 0 && out.readinessReports.length === 0) {
+    throw new Error('--input, --operator-report/--benchmark, or --readiness-report is required');
   }
   return out;
 }
@@ -186,23 +195,29 @@ function benchmarkSampleCount(benchmark) {
 }
 
 function normalizeEvidence(raw) {
-  if (raw?.operator_report || raw?.operatorReport || raw?.benchmarks) {
+  if (raw?.operator_report || raw?.operatorReport || raw?.benchmarks || raw?.readiness_reports || raw?.readinessReports || raw?.readiness_report || raw?.readinessReport) {
     return {
       operatorReport: raw.operator_report ?? raw.operatorReport ?? null,
       benchmarks: asArray(raw.benchmarks),
+      readinessReports: [
+        ...asArray(raw.readiness_reports),
+        ...asArray(raw.readinessReports),
+        ...(raw.readiness_report ? [raw.readiness_report] : []),
+        ...(raw.readinessReport ? [raw.readinessReport] : []),
+      ],
       capabilities: raw.capabilities ?? {},
     };
   }
   if (raw?.inventory || raw?.checks || raw?.cost_signals) {
-    return { operatorReport: raw, benchmarks: raw.benchmark ? [raw.benchmark] : [], capabilities: {} };
+    return { operatorReport: raw, benchmarks: raw.benchmark ? [raw.benchmark] : [], readinessReports: [], capabilities: {} };
   }
   if (raw?.capabilities) {
-    return { operatorReport: null, benchmarks: [], capabilities: raw.capabilities };
+    return { operatorReport: null, benchmarks: [], readinessReports: [], capabilities: raw.capabilities };
   }
   if (raw?.latency || raw?.server_latency || raw?.hit_rate !== undefined) {
-    return { operatorReport: null, benchmarks: [raw], capabilities: {} };
+    return { operatorReport: null, benchmarks: [raw], readinessReports: [], capabilities: {} };
   }
-  return { operatorReport: null, benchmarks: [], capabilities: {} };
+  return { operatorReport: null, benchmarks: [], readinessReports: [], capabilities: {} };
 }
 
 async function readJson(path) {
@@ -210,20 +225,23 @@ async function readJson(path) {
 }
 
 async function loadScorecardEvidence(args) {
-  if (!args.operatorReport && args.benchmarks.length === 0) return readJson(args.input);
+  if (!args.operatorReport && args.benchmarks.length === 0 && args.readinessReports.length === 0) return readJson(args.input);
 
   const base = args.input ? normalizeEvidence(await readJson(args.input)) : {
     operatorReport: null,
     benchmarks: [],
+    readinessReports: [],
     capabilities: {},
   };
   const operatorReport = args.operatorReport
     ? await readJson(args.operatorReport)
     : base.operatorReport;
   const benchmarkFiles = await Promise.all(args.benchmarks.map((path) => readJson(path)));
+  const readinessFiles = await Promise.all(args.readinessReports.map((path) => readJson(path)));
   return {
     operator_report: operatorReport,
     benchmarks: [...base.benchmarks, ...benchmarkFiles],
+    readiness_reports: [...base.readinessReports, ...readinessFiles],
     capabilities: base.capabilities,
   };
 }
@@ -271,6 +289,53 @@ function scoreReliability(operatorReport, requirements = {}) {
     },
   });
   return { name: 'reliability', ...result, blockers };
+}
+
+function scoreDeployReadiness(readinessReports, requirements = {}) {
+  const requireReport = requirements.requireReport === true;
+  if (readinessReports.length === 0) {
+    return {
+      name: 'deploy_readiness',
+      grade: requireReport ? 'C' : 'A+',
+      ok: !requireReport,
+      blockers: requireReport ? ['missing_deploy_readiness_report'] : [],
+      evidence: { required: requireReport, report_count: 0, reports: [] },
+    };
+  }
+
+  const reports = readinessReports.map((report) => {
+    const checks = asArray(report?.checks);
+    const failedChecks = checks
+      .filter((check) => check?.ok !== true)
+      .map((check) => check?.name ?? 'unknown');
+    return {
+      ok: report?.ok === true && failedChecks.length === 0,
+      base_url: report?.base_url ?? null,
+      check_count: checks.length,
+      failed_checks: failedChecks,
+      deploy_fingerprint: (
+        checks.find((check) => check?.name === 'deployed-worker-fingerprint' && typeof check?.deploy_fingerprint === 'string')
+        ?? checks.find((check) => typeof check?.deploy_fingerprint === 'string')
+      )?.deploy_fingerprint ?? null,
+    };
+  });
+  const failedReports = reports.filter((report) => !report.ok);
+  const blockers = failedReports.flatMap((report) => (
+    report.failed_checks.length > 0
+      ? report.failed_checks.map((name) => `readiness_${name}`)
+      : ['deploy_readiness_failed']
+  ));
+  return {
+    name: 'deploy_readiness',
+    grade: failedReports.length === 0 ? 'A+' : 'C',
+    ok: failedReports.length === 0,
+    blockers,
+    evidence: {
+      required: requireReport,
+      report_count: readinessReports.length,
+      reports,
+    },
+  };
 }
 
 function scoreScope(operatorReport, benchmarks, requirements = {}) {
@@ -593,6 +658,9 @@ export function buildAPlusScorecard(rawEvidence, options = {}) {
     scoreReliability(evidence.operatorReport, {
       expectedDeployFingerprint: options.expectedDeployFingerprint,
     }),
+    scoreDeployReadiness(evidence.readinessReports, {
+      requireReport: options.requireReadinessReport,
+    }),
     scoreScope(evidence.operatorReport, evidence.benchmarks, {
       domain: options.requiredDomain,
     }),
@@ -636,6 +704,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     const input = await loadScorecardEvidence(args);
     const scorecard = buildAPlusScorecard(input, {
       requireGrade: args.requireGrade,
+      requireReadinessReport: args.requireReadinessReport,
       expectedDeployFingerprint: args.expectedDeployFingerprint,
       requiredDomain: args.requiredDomain,
       requiredBenchmarkModes: args.requiredBenchmarkModes,
