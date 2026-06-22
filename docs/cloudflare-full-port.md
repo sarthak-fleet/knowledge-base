@@ -1,6 +1,6 @@
 # Cloudflare Full Port
 
-Last updated: 2026-06-21
+Last updated: 2026-06-22
 
 `knowledgebase` is the only RAG service. Cloudflare resources are implementation
 details inside this repo: Workers, Workers AI, Vectorize, D1, R2, Queues,
@@ -11,11 +11,11 @@ Workflows, and Rust/WASM modules where Worker JavaScript is not enough.
 | Current capability | Cloudflare target | Status |
 | --- | --- | --- |
 | Fleet RAG API | Worker in `cloudflare/worker` with Workers AI, Vectorize, D1, R2 | Done for the lightweight shared API, including retired FastAPI compatibility aliases for root `/search`, `/agent/search`, `/search/eval`, `/query`, `/query/stream`, and the old product route prefixes |
-| Deployed Worker cutover | Same `cloudflare/worker` code on the live Cloudflare Worker | Done; the current Worker code is deployed (version `418b60d7-5901-40e1-8948-a92d56cab351`), public health/ready/metrics aliases return 200, protected retired FastAPI aliases reject anonymous callers with 401, the deploy fingerprint `knowledgebase-cloudflare-full-port-2026-06-21` is live, and `readiness:full-port` passed deployed legacy-route parity, the fingerprint check, and authenticated checks on the same version |
+| Deployed Worker cutover | Same `cloudflare/worker` code on the live Cloudflare Worker | Done for the current embedding-model release (version `a5ae4310-9091-42c8-8d22-5c26d7d09312`); public health/ready/metrics aliases return 200, protected retired FastAPI aliases reject anonymous callers with 401, deploy fingerprint `knowledgebase-cloudflare-embedding-models-2026-06-21` is live, D1 schema readiness is true, the matching `free-ai` gateway version `14f263b7-67cf-4f8c-a213-7d83197a7fdc` returns 6 enabled embedding models, all advertised dimensions (384/768/1024/1536) have Vectorize bindings plus `tenant`/`index_id` metadata indexes, and `release-status:embedding-model`, `readiness:embedding-model`, `smoke:rag-crud:embedding-model`, and `readiness:full-port` passed on 2026-06-22. |
 | Raw files and parse artifacts | R2 | Done; Worker upload and ingest write raw files plus parse artifacts to R2, `scripts/migrate-raw-files.mjs` can migrate local/manifest/mirrored MinIO exports into R2/D1 with SHA-256 dry-run plans, upload hash verification, and direct MinIO disk-layout rejection, and the legacy MinIO raw/parse prefixes have been uploaded to R2 and verified against D1-referenced keys |
 | Dense vector search | Vectorize | Done; implemented in Worker with corrective lexical fallback, candidate-prefiltered BM25-style fuzzy D1 sparse lexical scoring, and optional Workers AI neural rerank |
 | File uploads and custom testing UI | Workers/Pages UI | Done; Worker UI covers R2 upload, direct structured-record ingestion, schema-free inline domain-text ingestion, schema inference, source-set management, queued-run progress, trace export/comparison, answer-quality drilldown, evals, answer synthesis controls, and advanced query controls |
-| Parser/OCR/runtime | TypeScript/Rust/WASM plus Workers AI conversion/vision where useful | Partial; Worker parses text/JSON/NDJSON/CSV, HTML, compressed/digital PDF text with coordinate-derived table rows, XLSX rows, DOCX paragraph text, and PPTX slide text; Workers AI Markdown Conversion covers scanned/unsupported rich files in auto/forced modes; opt-in Workers AI vision OCR covers standalone JPEG/PNG/WebP uploads plus embedded JPEG/JPX and basic Flate RGB/grayscale PDF image streams, prioritizes page-like PDF images over tiny embedded assets, can be configured by env or parse-eval payload, and merges with Markdown Conversion as `workers-ai-vision-markdown-ocr-v1`; `/v1/kb/evals/parse` plus `scripts/legacy-parse-eval.mjs` measure parser quality against migrated legacy artifacts; the deployed live scanned-PDF OCR gate (`readiness:full-port` `nvda-scanned-ocr-live`, `RAG_ALLOW_LIVE_OCR=1`) passed with pass_rate 1 on the Cloudflare vision model chain, closing the last parser gap |
+| Parser/OCR/runtime | TypeScript/Rust/WASM plus Workers AI conversion/vision where useful | Done; Worker parses text/JSON/NDJSON/CSV, HTML, compressed/digital PDF text with coordinate-derived table rows, XLSX rows, DOCX paragraph text, and PPTX slide text; Workers AI Markdown Conversion covers scanned/unsupported rich files in auto/forced modes; opt-in Workers AI vision OCR covers standalone JPEG/PNG/WebP uploads plus embedded JPEG/JPX and basic Flate RGB/grayscale PDF image streams, prioritizes page-like PDF images over tiny embedded assets, can be configured by env or parse-eval payload, and merges with Markdown Conversion as `workers-ai-vision-markdown-ocr-v1`; `/v1/kb/evals/parse` plus `scripts/legacy-parse-eval.mjs` measure parser quality against migrated legacy artifacts; the deployed live scanned-PDF OCR gate (`readiness:full-port` `nvda-scanned-ocr-live`, `RAG_ALLOW_LIVE_OCR=1`) passed with pass_rate 1 on the Cloudflare vision model chain, closing the last parser gap |
 | Async ingestion jobs | Queues and Workflows with D1 status records | Done; `/v1/kb/ingest/run` defaults to Workflow-backed Queue dispatch when bound, falls back to direct Queue dispatch, has producer/consumer, D1 job state, durable run ids in `workflow_id`, inline override via `async:false`, Workflow status on run reads, and attempt increments on per-file failures |
 | Project/schema/entity metadata | D1 | Done; D1 schema, schema inference/drafts/get/apply/discard/active/reprocess, project/status aliases, domains, file list/register/get/reprocess/delete, ingest job detail, entity find/detail/lineage/relationships with ancestors/children/mentions and relationship display names, sessions, relationships, and status exist; inferred same-type parent/ref relationships and prefixed cross-type relationships persist from singular and array reference fields, resolve exact plus canonicalized identity/display-name aliases, can target entities from earlier ingests, and can be backfilled through `/v1/kb/relationships/backfill`; the real local Postgres export now generates 2,199 D1 rows, applies locally, has been imported into remote D1 with matching counts, and authenticated Worker route smokes read migrated domains/status/entities/parse-artifact metadata |
 | Structured/text file ingest and search | R2 + D1 + Vectorize | Done; Worker can infer schemas, manage drafts/apply/discard/active/reprocess, ingest staged JSON/NDJSON/nested JSON/quoted CSV/text, HTML, digital PDF text/table rows, XLSX, DOCX, and PPTX files, supports direct `/v1/kb/ingest/record` virtual JSON input with schema inference for new domains and `/v1/kb/ingest/text` virtual text input, extracts entities/relationships, and searches by domain |
@@ -89,21 +89,22 @@ fair-access identification.
    features such as similar repos, discover, and recommendations.
 2. Keep R2 as the production object-store target for raw files and parse
    artifacts; the legacy raw/parse objects are now present in R2.
-3. Finish any remaining repository-method parity not covered by current
-   `/v1/kb/*` routes.
-4. Replace Postgres job locking with Queues/Workflows and D1 job records.
+3. Done: repository-method parity is covered by current `/v1/kb/*` routes and
+   compatibility aliases; keep `gaps:full-port` as the regression gate.
+4. Done: Postgres job locking was replaced with Queues/Workflows and D1 job
+   records.
 5. Scanned-PDF OCR path: resolved on the Cloudflare vision model chain. The
    deployed live gate (`readiness:full-port` `nvda-scanned-ocr-live`,
    `RAG_ALLOW_LIVE_OCR=1`) passed with pass_rate 1, so no extra non-default OCR
    dependency was needed.
-6. Done: `pnpm run deploy:dry-run` + `pnpm deploy` shipped the current
-   `cloudflare/worker` code (version `418b60d7-5901-40e1-8948-a92d56cab351`),
-   `pnpm run smoke:legacy-routes -- --require-complete` confirmed the deploy
-   fingerprint `knowledgebase-cloudflare-full-port-2026-06-21`, and
+6. Done for the current embedding-model release: `pnpm deploy` shipped Worker
+   version `a5ae4310-9091-42c8-8d22-5c26d7d09312`, the release-status and
+   readiness gates confirmed fingerprint
+   `knowledgebase-cloudflare-embedding-models-2026-06-21`, D1 schema readiness,
+   live free-ai catalog routing, Vectorize dimension/metadata readiness, and
    `RAG_ALLOW_LIVE_OCR=1 RAG_SERVICE_KEY=<service-key> pnpm run
-   readiness:full-port` proved deployed aliases, fingerprint, auth, and live OCR
-   on the same Worker version. Re-run this sequence whenever routes, aliases, the
-   fingerprint, or the vision model chain change.
+   readiness:full-port` proved deployed aliases, hosted testing UI, auth, and
+   live OCR on the same release.
 7. Done: the sibling `rag-service` folder was retired on 2026-06-21.
    `RAG_ALLOW_LIVE_OCR=1 RAG_SERVICE_KEY=<service-key> pnpm run
    readiness:sibling-retirement` passed (read-only), `../rag-service` was deleted
@@ -120,17 +121,26 @@ cd cloudflare/worker && pnpm run audit:legacy-route-parity
 cd cloudflare/worker && pnpm run audit:python-runtime-retirement -- --require-complete
 cd cloudflare/worker && pnpm run smoke:local-cutover
 cd cloudflare/worker && pnpm run predeploy:local
-cd cloudflare/worker && pnpm run audit:sibling-rag-service
-cd cloudflare/worker && RAG_ALLOW_LIVE_OCR=1 RAG_SERVICE_KEY=<service-key> pnpm run readiness:sibling-retirement
+cd cloudflare/worker && pnpm run audit:sibling-rag-service -- --json --require-retired
+cd cloudflare/worker && RAG_SERVICE_KEY=<service-key> pnpm run release-status:embedding-model -- --json --check-vectorize-metadata-indexes --check-knowledgebase-embedding-models
+cd cloudflare/worker && RAG_SERVICE_KEY=<service-key> pnpm run readiness:embedding-model
+cd cloudflare/worker && RAG_SERVICE_KEY=<service-key> pnpm run smoke:rag-crud:embedding-model
+cd cloudflare/worker && pnpm run build:consumer-cloudflare -- --json
 cd cloudflare/worker && pnpm run gaps:full-port
 ```
 
+The `release-status:embedding-model` JSON includes `release_plan_steps` on each
+failed check, a de-duplicated `blocker_steps` list, and `blocker_commands` with
+the exact command plus mutating/approval/env metadata. Use those fields to map
+live Cloudflare blockers back to the ordered `release-plan:embedding-model`
+steps without re-deriving the rollout commands.
+
 The executable gap matrix lives in `cloudflare/full-port-gaps.json` and is read
-by the Worker-local Node gate. `audit:sibling-rag-service` reports whether the
-old sibling Worker folder still exists, which package/config/source/script/
-migration/test/fixture surfaces remain, which discovered fleet sibling repos
-were scanned, and whether any of them still contain active references to the old
-`rag-service` Worker. `audit:python-runtime-retirement` fails if the old
+by the Worker-local Node gate. `audit:sibling-rag-service` reports the current
+sibling-retirement state, which discovered fleet sibling repos were scanned, and
+whether any of them still contain active references to the old `rag-service`
+Worker. It should now report `retirement_ok: true` and `sibling_exists: false`.
+`audit:python-runtime-retirement` fails if the old
 FastAPI package, Python UI, Docker runtime, package metadata, root pytest suite,
 or Python helper scripts reappear. Use the Worker-local Node `preflight` command
 for release readiness; it verifies Cloudflare bindings, local Worker config,
@@ -144,13 +154,18 @@ anonymous auth-boundary aliases; it does not run embedding, OCR, or answer
 generation.
 `predeploy:local` wraps the local release gate for the Worker code: typecheck
 and tests, binding preflight, Python runtime retirement, the no-external-
-`rag-service` reference guard, the no-network NVDA scanned-PDF OCR eval payload
-dry-run, local cutover smoke, and Wrangler deploy dry-run.
-`readiness:sibling-retirement` is the final read-only pre-delete gate for the
-old sibling Worker codebase. It intentionally permits `../rag-service` to still
-exist, but only when deployed auth/OCR/aliases/fingerprint, local preflight,
-external-reference cleanup, and the full-port gap matrix prove that the sibling
-folder is the last remaining blocker.
+`rag-service` reference guard, consumer RAG integration audit, Linkchat/Starboard
+Cloudflare bundle builds, local `../free-ai` embedding catalog contract audit,
+upstream free-ai cost/type/test check, Vectorize embedding binding selectability
+audit, the full-port gap matrix, the no-network NVDA scanned-PDF OCR eval
+payload dry-run, the read-only embedding-model release plan, local cutover
+smoke, and Wrangler deploy dry-run.
+`readiness:sibling-retirement` was the final read-only pre-delete gate for the
+old sibling Worker codebase. It proved deployed auth/OCR/aliases/fingerprint,
+local preflight, external-reference cleanup, and the full-port gap matrix before
+the `../rag-service` removal. After retirement, use
+`audit:sibling-rag-service -- --json` plus `gaps:full-port -- --json` to prove
+the sibling remains gone and the gap matrix stays complete.
 
 Current Cloudflare implementation:
 
@@ -168,10 +183,17 @@ Current Cloudflare implementation:
   `/agent/search`, `/search/eval`, `/query`, `/query/stream`,
   `/query/traces`, and `/query/trace/:id`. `readiness:full-port` smoke-checks
   those deployed aliases by verifying public meta aliases and anonymous
-  rejection on protected legacy aliases.
+  rejection on protected legacy aliases, then verifies the deployed `/` and
+  `/ui` hosted testing surface contains the embedding-model selector and
+  custom-input `/v1/kb/*` controls.
 - `/` and `/ui` serve the Cloudflare-hosted testing surface, and
   `/v1/kb/files/upload` accepts multipart files, writes raw bytes to R2, and
   registers the file in D1.
+- `/v1/embedding-models` exposes configured Vectorize dimensions plus the live
+  `free-ai` embedding catalog. The hosted UI only offers explicit embedding
+  choices when that endpoint reports `catalog_source: "free_ai"` and the model
+  row has `selectable: true`, meaning it is enabled with a compatible Vectorize
+  binding.
 - `/v1/kb/schemas/infer`, `/v1/kb/schemas/infer-upload`,
   `/v1/kb/schemas/drafts`, `/v1/kb/schemas/drafts/:draft_id`, and
   `/v1/kb/schemas/:domain/active` provide TypeScript schema inference, R2
@@ -285,10 +307,12 @@ Current Cloudflare implementation:
   The dry-run uses no network or AI calls and prints the chosen Cloudflare
   vision model chain, deployed base URL, `--require-cases`, and
   `--min-pass-rate 1` gate before the live command is run. `readiness:full-port`
-  intentionally fails while the live OCR proof is missing, `RAG_ALLOW_LIVE_OCR`
-  is not set to `1`, deployed legacy route aliases are not smoke-clean, the
-  sibling `rag-service` retirement audit finds deployable surfaces or active
+  intentionally fails while the deployed Worker still reports an old
+  fingerprint, deployed legacy route aliases are not smoke-clean, the sibling
+  `rag-service` retirement audit finds deployable surfaces or active
   references, or the Worker-local Node full-port gate still reports blockers.
+  The historical live scanned-PDF OCR proof has already passed; rerun it only
+  when the vision model chain or parser fallback changes.
 - `/v1/kb/source-sets` and `/v1/kb/source-sets/:id/actions` expose domain-backed
   source-set summaries, dry-run bulk actions, requeue/archive controls, and
   Vectorize/R2/D1 cleanup for delete actions.

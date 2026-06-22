@@ -132,8 +132,9 @@ Do not pitch this as:
 9. **Hosted personal product**
 
    The deployed target is the `knowledgebase` Cloudflare Worker. Remaining
-   hosted-product work is durable backup/restore drills, usage limits, live OCR
-   parity proof, and final sibling `rag-service` retirement.
+   hosted-product work is durable backup/restore drills, usage limits, the
+   current embedding-model/free-ai/Vectorize metadata-index release, and live
+   consumer smoke. Sibling `rag-service` retirement is complete.
 
 10. **Templates**
 

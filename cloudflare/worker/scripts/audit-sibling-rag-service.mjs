@@ -109,13 +109,15 @@ function deployableSurfaces(siblingPath, fleetRoot) {
     });
 }
 
-function defaultExternalRepos(fleetRoot) {
+function defaultExternalRepos(fleetRoot, repoRoot = REPO_ROOT) {
   if (!existsSync(fleetRoot)) return [];
+  const currentRepo = resolve(repoRoot);
   return readdirSync(fleetRoot)
     .map((name) => resolve(fleetRoot, name))
     .filter((path) => {
       const name = path.split('/').pop() ?? '';
       if (EXCLUDED_FLEET_DIRS.has(name) || name.startsWith('.')) return false;
+      if (resolve(path) === currentRepo) return false;
       try {
         return statSync(path).isDirectory();
       } catch {
@@ -128,7 +130,7 @@ export function auditSiblingRagService(options = {}) {
   const repoRoot = resolve(options.repoRoot ?? REPO_ROOT);
   const fleetRoot = resolve(options.fleetRoot ?? dirname(repoRoot));
   const siblingPath = resolve(options.siblingPath ?? resolve(fleetRoot, 'rag-service'));
-  const externalRepos = options.externalRepos ?? defaultExternalRepos(fleetRoot);
+  const externalRepos = options.externalRepos ?? defaultExternalRepos(fleetRoot, repoRoot);
   const activeReferences = [];
 
   for (const externalRepo of externalRepos) {

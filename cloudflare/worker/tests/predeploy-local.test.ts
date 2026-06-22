@@ -24,9 +24,9 @@ describe('predeploy-local', () => {
         const step = LOCAL_PREDEPLOY_STEPS[calls.length]!;
         calls.push(step.name);
         return {
-          exit_code: step.name === 'local-cutover-smoke' ? 1 : 0,
+          exit_code: step.name === 'full-port-gaps' ? 1 : 0,
           stdout: command.join(' '),
-          stderr: step.name === 'local-cutover-smoke' ? 'alias smoke failed' : '',
+          stderr: step.name === 'full-port-gaps' ? 'full-port gap remains' : '',
         };
       },
     });
@@ -37,14 +37,59 @@ describe('predeploy-local', () => {
       'preflight',
       'python-runtime-retirement',
       'external-rag-service-references',
-      'nvda-scanned-ocr-dry-run',
-      'local-cutover-smoke',
+      'consumer-rag-integrations',
+      'consumer-cloudflare-builds',
+      'free-ai-embedding-contract',
+      'free-ai-local-check',
+      'vectorize-embedding-bindings',
+      'full-port-gaps',
     ]);
     expect(result.checks.at(-1)).toMatchObject({
-      name: 'local-cutover-smoke',
+      name: 'full-port-gaps',
       ok: false,
       exit_code: 1,
-      stderr_tail: 'alias smoke failed',
+      stderr_tail: 'full-port gap remains',
     });
+  });
+
+  it('reports command spawn errors as structured predeploy failures', async () => {
+    const result = await runLocalPredeployGate({ cwd: '/definitely/missing/predeploy' });
+
+    expect(result.ok).toBe(false);
+    expect(result.checks).toHaveLength(1);
+    expect(result.checks[0]).toMatchObject({
+      name: 'worker-check',
+      ok: false,
+      exit_code: null,
+      signal: 'spawn_error',
+    });
+    expect(result.checks[0]?.stderr_tail).toContain('spawn');
+  });
+
+  it('keeps the local predeploy gate non-mutating', () => {
+    const mutatingPatterns = [
+      /\bwrangler\s+deploy\b(?!\s+--dry-run)/,
+      /\bwrangler\s+d1\s+migrations\s+apply\b/,
+      /\bwrangler\s+d1\s+execute\b/,
+      /\bwrangler\s+vectorize\s+create\b/,
+      /\bdeploy:cf\b/,
+      /\bsmoke:rag-crud\b/,
+      /\bsmoke:rag-crud:embedding-model\b/,
+      /\breadiness:full-port\b/,
+      /\beval:parse:nvda-scanned:live\b/,
+    ];
+
+    for (const step of LOCAL_PREDEPLOY_STEPS) {
+      const command = step.command.join(' ');
+      for (const pattern of mutatingPatterns) {
+        expect(command, `${step.name} must stay non-mutating`).not.toMatch(pattern);
+      }
+    }
+
+    expect(LOCAL_PREDEPLOY_STEPS.find((step) => step.name === 'deploy-dry-run')?.command).toEqual([
+      'pnpm',
+      'run',
+      'deploy:dry-run',
+    ]);
   });
 });

@@ -1,84 +1,98 @@
 {
-  "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "knowledgebase",
-  "main": "src/index.ts",
-  "compatibility_date": "2026-06-20",
-  "compatibility_flags": ["nodejs_compat"],
-  "observability": {
-    "enabled": true,
-    "head_sampling_rate": 1
-  },
-  "ai": {
-    "binding": "AI"
-  },
-  "services": [
-    {
-      "binding": "FREE_AI",
-      "service": "free-ai-gateway"
-    }
-  ],
-  "vectorize": [
-    {
-      "binding": "VECTORIZE",
-      "index_name": "rag-gemini-1536"
-    }
-  ],
-  "d1_databases": [
-    {
-      "binding": "DB",
-      "database_name": "rag-db",
-      "database_id": "eae4b93b-3d6c-48e4-89e8-1da1258cfd23"
-    }
-  ],
-  "r2_buckets": [
-    {
-      "binding": "RAW_DOCS",
-      "bucket_name": "rag-raw-docs"
-    }
-  ],
-  "queues": {
-    "producers": [
-      {
-        "binding": "INGEST_QUEUE",
-        "queue": "knowledgebase-ingest"
-      }
-    ],
-    "consumers": [
-      {
-        "queue": "knowledgebase-ingest",
-        "max_batch_size": 5,
-        "max_batch_timeout": 10,
-        "max_retries": 3
-      }
-    ]
-  },
-  "workflows": [
-    {
-      "binding": "KB_INGEST_WORKFLOW",
-      "name": "knowledgebase-ingest-workflow",
-      "class_name": "KbIngestWorkflow"
-    }
-  ],
-  "analytics_engine_datasets": [
-    {
-      "binding": "RAG_ANALYTICS",
-      "dataset": "knowledgebase_rag_events"
-    }
-  ],
-  "vars": {
-    "EMBEDDING_MODEL": "@cf/baai/bge-base-en-v1.5",
-    "EMBEDDING_MODEL_SMALL": "@cf/baai/bge-small-en-v1.5",
-    "RAG_AI_GATEWAY_CACHE_TTL_SECONDS": "3600",
-    "RAG_CACHE_ENABLED": "true",
-    "RAG_CACHE_TTL_SECONDS": "300",
-    "RAG_CACHE_MAX_ENTRIES": "1000",
-    "RAG_EMBED_PROVIDER": "free_ai",
-    "RAG_SYNTH_PROVIDER": "free_ai",
-    "FREE_AI_BASE_URL": "https://free-ai-gateway.sarthakagrawal927.workers.dev/v1",
-    "FREE_AI_PROJECT_ID": "knowledgebase",
-    "FREE_AI_EMBED_MODEL": "gemini-embedding-001",
-    "FREE_AI_EMBED_PROVIDER": "gemini",
-    "FREE_AI_EMBED_DIMENSIONS": "1536",
-    "FREE_AI_SYNTH_MODEL": "gemini-2.5-flash"
-  }
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "knowledgebase",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-06-20",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"observability": {
+		"enabled": true,
+		"head_sampling_rate": 1
+	},
+	"ai": {
+		"binding": "AI"
+	},
+	"services": [
+		{
+			"binding": "FREE_AI",
+			"service": "free-ai-gateway"
+		}
+	],
+	"vectorize": [
+		{
+			"binding": "VECTORIZE",
+			"index_name": "rag-gemini-1536"
+		},
+		{
+			"binding": "VECTORIZE_384",
+			"index_name": "rag-embedding-384"
+		},
+		{
+			"binding": "VECTORIZE_768",
+			"index_name": "rag-embedding-768"
+		},
+		{
+			"binding": "VECTORIZE_1024",
+			"index_name": "rag-embedding-1024"
+		}
+	],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "rag-db",
+			"database_id": "eae4b93b-3d6c-48e4-89e8-1da1258cfd23"
+		}
+	],
+	"r2_buckets": [
+		{
+			"binding": "RAW_DOCS",
+			"bucket_name": "rag-raw-docs"
+		}
+	],
+	"queues": {
+		"producers": [
+			{
+				"binding": "INGEST_QUEUE",
+				"queue": "knowledgebase-ingest"
+			}
+		],
+		"consumers": [
+			{
+				"queue": "knowledgebase-ingest",
+				"max_batch_size": 5,
+				"max_batch_timeout": 10,
+				"max_retries": 3
+			}
+		]
+	},
+	"workflows": [
+		{
+			"binding": "KB_INGEST_WORKFLOW",
+			"name": "knowledgebase-ingest-workflow",
+			"class_name": "KbIngestWorkflow"
+		}
+	],
+	"analytics_engine_datasets": [
+		{
+			"binding": "RAG_ANALYTICS",
+			"dataset": "knowledgebase_rag_events"
+		}
+	],
+	"vars": {
+		"EMBEDDING_MODEL": "@cf/baai/bge-base-en-v1.5",
+		"EMBEDDING_MODEL_SMALL": "@cf/baai/bge-small-en-v1.5",
+		"RAG_AI_GATEWAY_CACHE_TTL_SECONDS": "3600",
+		"RAG_CACHE_ENABLED": "true",
+		"RAG_CACHE_TTL_SECONDS": "300",
+		"RAG_CACHE_MAX_ENTRIES": "1000",
+		"RAG_EMBED_PROVIDER": "free_ai",
+		"RAG_SYNTH_PROVIDER": "free_ai",
+		"FREE_AI_BASE_URL": "https://free-ai-gateway.sarthakagrawal927.workers.dev/v1",
+		"FREE_AI_PROJECT_ID": "knowledgebase",
+		"FREE_AI_EMBED_MODEL": "gemini-embedding-001",
+		"FREE_AI_EMBED_PROVIDER": "gemini",
+		"FREE_AI_EMBED_DIMENSIONS": "1536",
+		"FREE_AI_SYNTH_MODEL": "gemini-2.5-flash"
+	}
 }

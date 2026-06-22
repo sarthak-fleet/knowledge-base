@@ -4,6 +4,9 @@ export interface Env {
   AI: Ai;
   DB: D1Database;
   VECTORIZE: VectorizeBinding;
+  VECTORIZE_1024?: VectorizeBinding;
+  VECTORIZE_768?: VectorizeBinding;
+  VECTORIZE_384?: VectorizeBinding;
   VECTORIZE_SMALL?: VectorizeBinding;
   RAW_DOCS?: R2Bucket;
   INGEST_QUEUE?: Queue<KbIngestQueueMessage>;
@@ -29,6 +32,9 @@ export interface Env {
   FREE_AI_EMBED_MODEL?: string;
   FREE_AI_EMBED_PROVIDER?: string;
   FREE_AI_EMBED_DIMENSIONS?: string;
+  FREE_AI_EMBED_MODEL_SMALL?: string;
+  FREE_AI_EMBED_PROVIDER_SMALL?: string;
+  FREE_AI_EMBED_DIMENSIONS_SMALL?: string;
   FREE_AI_SYNTH_MODEL?: string;
   RAG_MARKDOWN_CONVERSION?: string;
   RAG_VISION_OCR_MODEL?: string;
@@ -38,6 +44,7 @@ export interface Env {
   RAG_CACHE_ENABLED?: string;
   RAG_CACHE_TTL_SECONDS?: string;
   RAG_CACHE_MAX_ENTRIES?: string;
+  RAG_ALLOW_UNMIGRATED_LOCAL_D1?: string;
 }
 
 export interface KbIngestQueueMessage {
@@ -88,6 +95,8 @@ export interface IndexRecord {
   name: string;
   external_id: string | null;
   dimensions: number;
+  embedding_model: string | null;
+  embedding_provider: string | null;
   metric: 'cosine';
   created_at: string;
 }

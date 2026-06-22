@@ -3,6 +3,7 @@
 import { readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { auditD1Migrations } from './audit-d1-migrations.mjs';
 import { legacyRouteParityReport } from './audit-legacy-route-parity.mjs';
 import { pythonRuntimeRetirementReport } from './audit-python-runtime-retirement.mjs';
 
@@ -16,8 +17,68 @@ function hasBinding(entries, binding) {
   return Array.isArray(entries) && entries.some((entry) => entry?.binding === binding);
 }
 
+function findBinding(entries, binding) {
+  return Array.isArray(entries) ? entries.find((entry) => entry?.binding === binding) : null;
+}
+
+function hasServiceBinding(entries, binding) {
+  return Array.isArray(entries) && entries.some((entry) => entry?.binding === binding);
+}
+
 function hasQueueProducer(queues, binding) {
   return Array.isArray(queues?.producers) && queues.producers.some((entry) => entry?.binding === binding);
+}
+
+function freeAiEmbedConfigProblems(vars = {}) {
+  if (vars?.RAG_EMBED_PROVIDER !== 'free_ai') return [];
+  const problems = [];
+  const model = typeof vars.FREE_AI_EMBED_MODEL === 'string' ? vars.FREE_AI_EMBED_MODEL.trim() : '';
+  const provider = typeof vars.FREE_AI_EMBED_PROVIDER === 'string' ? vars.FREE_AI_EMBED_PROVIDER.trim() : '';
+  const dimensions = Number(vars.FREE_AI_EMBED_DIMENSIONS);
+  if (!model) problems.push('FREE_AI_EMBED_MODEL is missing');
+  if (!provider) problems.push('FREE_AI_EMBED_PROVIDER is missing');
+  if (!Number.isInteger(dimensions) || dimensions <= 0) problems.push('FREE_AI_EMBED_DIMENSIONS must be a positive integer');
+  return problems;
+}
+
+function trailingDimension(value) {
+  if (typeof value !== 'string') return null;
+  const match = value.trim().match(/(?:^|[-_])(\d{2,5})$/);
+  if (!match) return null;
+  const dimension = Number(match[1]);
+  return Number.isInteger(dimension) && dimension > 0 ? dimension : null;
+}
+
+function vectorizeDefaultDimensionCheck(config = {}) {
+  if (config?.vars?.RAG_EMBED_PROVIDER !== 'free_ai') {
+    return check('vector_store_default_dimension', 'ok', 'free-ai embedding provider is not selected');
+  }
+  const expected = Number(config?.vars?.FREE_AI_EMBED_DIMENSIONS);
+  if (!Number.isInteger(expected) || expected <= 0) {
+    return check(
+      'vector_store_default_dimension',
+      'ok',
+      'default free-ai embedding dimensions are checked by free_ai_default_embedding_config',
+    );
+  }
+  const vectorize = findBinding(config?.vectorize, 'VECTORIZE');
+  const actual = trailingDimension(vectorize?.index_name);
+  if (!actual) {
+    return check(
+      'vector_store_default_dimension',
+      'warn',
+      'default Vectorize index name does not expose a parseable dimension',
+      'Name Vectorize indexes with a trailing dimension, for example rag-gemini-1536.',
+    );
+  }
+  return check(
+    'vector_store_default_dimension',
+    actual === expected ? 'ok' : 'error',
+    actual === expected
+      ? 'default free-ai embedding dimensions match the VECTORIZE index name'
+      : `default free-ai embedding dimensions ${expected} do not match VECTORIZE index ${vectorize.index_name}`,
+    'Vectorize index dimensions are fixed at creation time; provision a matching index before changing FREE_AI_EMBED_DIMENSIONS.',
+  );
 }
 
 export async function runWorkerPreflight({ configPath = DEFAULT_CONFIG_PATH } = {}) {
@@ -57,6 +118,40 @@ export async function runWorkerPreflight({ configPath = DEFAULT_CONFIG_PATH } = 
       ? 'small embedding Vectorize binding is configured'
       : 'Cloudflare Worker is missing the optional VECTORIZE_SMALL binding',
   ));
+  const optionalDimensionBindings = ['VECTORIZE_1024', 'VECTORIZE_768', 'VECTORIZE_384'];
+  const configuredDimensionBindings = optionalDimensionBindings.filter((binding) => hasBinding(config?.vectorize, binding));
+  checks.push(check(
+    'vector_store_embedding_dimensions',
+    configuredDimensionBindings.length > 0 ? 'ok' : 'warn',
+    configuredDimensionBindings.length > 0
+      ? `optional embedding dimension bindings are configured (${configuredDimensionBindings.join(', ')})`
+      : 'optional 1024/768/384 embedding dimension bindings are not configured',
+    'Add matching Vectorize bindings only after the corresponding indexes are provisioned.',
+  ));
+
+  checks.push(check(
+    'free_ai_service_binding',
+    config?.vars?.RAG_EMBED_PROVIDER === 'free_ai'
+      ? hasServiceBinding(config?.services, 'FREE_AI') ? 'ok' : 'error'
+      : 'ok',
+    config?.vars?.RAG_EMBED_PROVIDER === 'free_ai'
+      ? hasServiceBinding(config?.services, 'FREE_AI')
+        ? 'free-ai embedding calls use a Cloudflare service binding'
+        : 'RAG_EMBED_PROVIDER=free_ai requires the FREE_AI service binding'
+      : 'free-ai embedding provider is not selected',
+    'Use the FREE_AI service binding for the fastest Cloudflare-to-Cloudflare path.',
+  ));
+
+  const freeAiProblems = freeAiEmbedConfigProblems(config?.vars);
+  checks.push(check(
+    'free_ai_default_embedding_config',
+    freeAiProblems.length === 0 ? 'ok' : 'error',
+    freeAiProblems.length === 0
+      ? 'default free-ai embedding model, provider, and dimensions are configured'
+      : 'default free-ai embedding configuration is incomplete',
+    freeAiProblems.join('; '),
+  ));
+  checks.push(vectorizeDefaultDimensionCheck(config));
   checks.push(check(
     'relational_store',
     hasBinding(config?.d1_databases, 'DB') ? 'ok' : 'error',
@@ -113,6 +208,16 @@ export async function runWorkerPreflight({ configPath = DEFAULT_CONFIG_PATH } = 
       ? `retired Python runtime surfaces are absent (${pythonRuntime.total}/${pythonRuntime.total})`
       : `${pythonRuntime.present_count} retired Python runtime surfaces still exist`,
     pythonRuntime.ok ? '' : JSON.stringify(pythonRuntime.present),
+  ));
+
+  const d1Migrations = await auditD1Migrations();
+  checks.push(check(
+    'd1_migrations',
+    d1Migrations.ok ? 'ok' : 'error',
+    d1Migrations.ok
+      ? 'required D1 migrations are present for the Worker repository schema'
+      : `${d1Migrations.blockers.length} required D1 migration checks failed`,
+    d1Migrations.ok ? '' : JSON.stringify(d1Migrations.blockers),
   ));
 
   const errors = checks.filter((item) => item.severity === 'error').length;

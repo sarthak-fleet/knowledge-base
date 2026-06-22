@@ -5,6 +5,8 @@ export interface DomainRecord {
   project: string;
   name: string;
   description: string;
+  embedding_model: string | null;
+  embedding_provider: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -263,7 +265,12 @@ export interface InsertQueryTraceInput {
 export interface MetadataRepository {
   upsertProject(name: string, description?: string): Promise<ProjectRecord>;
   listProjects(project?: string): Promise<ProjectRecord[]>;
-  upsertDomain(project: string, name: string, description?: string): Promise<DomainRecord>;
+  upsertDomain(
+    project: string,
+    name: string,
+    description?: string,
+    embedding?: { model?: string | null; provider?: string | null },
+  ): Promise<DomainRecord>;
   listDomains(project: string): Promise<DomainRecord[]>;
   insertSchema(project: string, domain: string, name: string, spec: DomainSchema): Promise<SchemaRecord>;
   listSchemas(project: string): Promise<SchemaRecord[]>;
@@ -694,21 +701,26 @@ export class D1MetadataRepository implements MetadataRepository {
     project: string,
     name: string,
     description = '',
+    embedding: { model?: string | null; provider?: string | null } = {},
   ): Promise<DomainRecord> {
     await this.ensureProject(project);
+    const embeddingModel = embedding.model?.trim() || null;
+    const embeddingProvider = embedding.provider?.trim() || null;
     await this.db
       .prepare(
-        `INSERT INTO kb_domains (project, name, description)
-         VALUES (?, ?, ?)
+        `INSERT INTO kb_domains (project, name, description, embedding_model, embedding_provider)
+         VALUES (?, ?, ?, ?, ?)
          ON CONFLICT(project, name) DO UPDATE SET
            description = excluded.description,
+           embedding_model = COALESCE(excluded.embedding_model, kb_domains.embedding_model),
+           embedding_provider = COALESCE(excluded.embedding_provider, kb_domains.embedding_provider),
            updated_at = datetime('now')`,
       )
-      .bind(project, name, description)
+      .bind(project, name, description, embeddingModel, embeddingProvider)
       .run();
     const row = await this.db
       .prepare(
-        `SELECT project, name, description, created_at, updated_at
+        `SELECT project, name, description, embedding_model, embedding_provider, created_at, updated_at
            FROM kb_domains
           WHERE project = ? AND name = ?`,
       )
@@ -721,7 +733,7 @@ export class D1MetadataRepository implements MetadataRepository {
   async listDomains(project: string): Promise<DomainRecord[]> {
     const result = await this.db
       .prepare(
-        `SELECT project, name, description, created_at, updated_at
+        `SELECT project, name, description, embedding_model, embedding_provider, created_at, updated_at
            FROM kb_domains
           WHERE project = ?
           ORDER BY name`,

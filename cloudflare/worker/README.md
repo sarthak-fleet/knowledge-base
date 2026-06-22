@@ -2,7 +2,7 @@
 
 Cloudflare-native Knowledgebase RAG Worker for fleet projects.
 
-This Worker is the Cloudflare-native shared RAG surface owned by `knowledgebase`: Hono, Workers AI embeddings, Vectorize search, D1 for chunk text and metadata, and optional R2 for raw document blobs.
+This Worker is the Cloudflare-native shared RAG surface owned by `knowledgebase`: Hono, free-ai/Workers AI embeddings, Vectorize search, D1 for chunk text and metadata, and optional R2 for raw document blobs.
 
 ## Local Checks
 
@@ -26,9 +26,9 @@ pnpm run audit:python-runtime-retirement -- --require-complete
 Create these before a real deploy:
 
 ```bash
-wrangler vectorize create rag-bge-768 --dimensions=768 --metric=cosine
-wrangler vectorize create-metadata-index rag-bge-768 --property-name=tenant --type=string
-wrangler vectorize create-metadata-index rag-bge-768 --property-name=index_id --type=string
+wrangler vectorize create rag-gemini-1536 --dimensions=1536 --metric=cosine
+wrangler vectorize create-metadata-index rag-gemini-1536 --propertyName=tenant --type=string
+wrangler vectorize create-metadata-index rag-gemini-1536 --propertyName=index_id --type=string
 wrangler d1 create rag-db
 wrangler d1 migrations apply rag-db
 wrangler r2 bucket create rag-raw-docs
@@ -57,7 +57,7 @@ Do not commit real keys.
 Fleet-level verification lives in SaaS Maker:
 
 ```bash
-cd ../saas-maker
+cd ../../../saas-maker
 pnpm fleet:secret-audit -- --project knowledgebase --fail-on-missing
 ```
 
@@ -68,36 +68,119 @@ RAG_SERVICE_KEY=<service-key> pnpm run readiness:auth
 ```
 
 Without a service key, `pnpm run readiness` still verifies that the deployed
-health endpoint is live and protected `/v1/*` routes reject anonymous access.
+health endpoint is live, D1 reports the required schema migrations through
+`d1_schema: true`, Vectorize and R2 are bound, and protected `/v1/*` routes
+reject anonymous access.
 `pnpm run readiness:full-port` also checks deployed retired FastAPI aliases:
 public `/healthz`/`/readyz`/`/metrics` must work and protected legacy aliases
-such as `/search`, `/query`, and `/domains` must reject anonymous access.
+such as `/search`, `/query`, and `/domains` must reject anonymous access. It
+also verifies the deployed `/` and `/ui` hosted testing surface contains the
+embedding-model selector and custom-input `/v1/kb/*` controls.
 Run `pnpm run predeploy:local` before the real deploy. It runs Worker
-tests/typecheck, binding preflight, Python runtime retirement audit, the
-no-external-`rag-service` reference guard, the no-network NVDA scanned-PDF OCR
-eval payload dry-run, local cutover smoke, and Wrangler deploy dry-run as a
-single gate. Run `pnpm run deploy:dry-run` and
+tests/typecheck, binding and D1 migration preflight, Python runtime retirement audit, the
+no-external-`rag-service` reference guard, the Linkchat/Starboard consumer
+knowledgebase RAG integration audit, local Linkchat/Starboard Cloudflare bundle
+builds, the local `../../../free-ai` embedding catalog and cost-audited
+Cloudflare deploy-script audit, the upstream free-ai cost/type/test check, the
+Vectorize embedding binding selectability audit, the
+full-port gap matrix, the no-network NVDA scanned-PDF OCR eval payload dry-run,
+the read-only embedding-model release plan, local cutover smoke, and Wrangler
+deploy dry-run as a single gate. Run
+`pnpm run deploy:dry-run` and
 `pnpm run audit:python-runtime-retirement -- --require-complete` before the real
 deploy. `pnpm run smoke:local-cutover` starts `wrangler dev --local` on an
 ephemeral port and proves the same root aliases plus deploy fingerprint against
 the locally bundled Worker. It only hits health/readiness/metrics and anonymous
 auth-boundary routes; it does not run an embedding, OCR, or answer-generation
-path. Then run full-port readiness after deploying the current
+path. The local smoke sets `RAG_ALLOW_UNMIGRATED_LOCAL_D1=true` because
+`wrangler dev --local` may start with an empty local D1; deployed readiness still
+requires `d1_schema: true`. The selected embedding-model path is live in the
+current release: deployed `free-ai` `/v1/models` returns enabled embedding rows
+with dimensions, aliases, custom-dimension support, priority, and availability;
+static fallback is not accepted as proof. The selected model must also report
+`selectable: true` plus a compatible Vectorize binding from
+`/v1/embedding-models`; otherwise the readiness gate and mutating CRUD smoke
+fail before treating the model as deployable. Before future approved live
+embedding/catalog actions, print the ordered checklist with `pnpm run
+release-plan:embedding-model -- --json`; it is read-only, marks mutating steps,
+and includes `cd ../../../free-ai && pnpm run check` before free-ai deploys so
+the upstream cost audit/typecheck/tests are current. The JSON also prints
+`configured_vectorize_metadata_index_commands` for the currently configured
+Vectorize indexes. `RAG_SERVICE_KEY=<service-key> pnpm run
+release-status:embedding-model -- --json --check-vectorize-metadata-indexes
+--check-knowledgebase-embedding-models` is the full read-only live status gate
+for the same release; with `RAG_SERVICE_KEY` it also proves deployed
+`/v1/embedding-models` is backed by live free-ai rows whose selected model is
+explicitly `selectable: true` with a compatible Vectorize binding, valid
+provider, and positive numeric dimensions. It separately
+checks configured Vectorize metadata indexes, the selected deployed model's
+Vectorize binding/index detail, and every enabled embedding dimension advertised
+by the deployed `free-ai` catalog; enabled free-ai embedding rows must include a
+valid provider and positive numeric dimensions. The current deployed release is
+green for every dimension advertised by deployed `free-ai`. The JSON report
+includes `release_plan_steps` on each failed check, a de-duplicated
+top-level `blocker_steps` list, and `blocker_commands` entries with command,
+mutating, approval, optional, and required-env metadata so live blockers map
+directly back to the ordered release plan. If the knowledgebase catalog check is
+skipped because `RAG_SERVICE_KEY` is missing, it maps only to the read-only
+`live-release-status` invocation step. When Vectorize metadata indexes are
+missing, `blocker_commands` expands to the exact
+`create-metadata-index` commands reported by the audit plus the follow-up
+readiness audit. After future Vectorize provisioning/config updates, run
+`pnpm run audit:vectorize-metadata-indexes -- --json --require-complete` to
+verify each configured remote index has the `tenant` and `index_id` string
+metadata indexes required by query filters. If it reports blockers, apply only
+the `remediation_commands` from the audit output after explicit provisioning
+approval, then rerun the audit with `--require-complete`; the release-plan
+command candidates are for review, not a blanket instruction to create indexes
+that already exist. After future D1 migrations and deploys, first run the
+read-only catalog gate:
+
+```bash
+RAG_SERVICE_KEY=<service-key> pnpm run readiness:embedding-model
+```
+
+Then run `RAG_SERVICE_KEY=<service-key> RAG_BASE_URL=<worker-url> pnpm run
+smoke:rag-crud:embedding-model` to prove the live RAG create/ingest/query/delete
+path, the `/v1/kb/ingest/text` custom-input domain path, `/v1/kb/search`, and
+free-ai embedding-model selection. When the requested model is an alias, the
+smoke expects both `POST /v1/indexes` and the temporary KB domain to persist the
+canonical free-ai model id, provider, and dimensions from `/v1/embedding-models`.
+The smoke first checks authenticated `/v1/healthz` and requires
+`d1_schema: true`, Vectorize, R2 readiness, and the expected
+`deploy_fingerprint` before creating the temporary index; it still mutates and
+spends embedding calls after that gate, so it is intentionally not part of
+`predeploy:local`. The release plan keeps consumer proof split into targeted
+re-runs and live proof: local source audit (`audit:consumer-rag-integrations`)
+and local Cloudflare consumer builds (`build:consumer-cloudflare`, which runs
+`../../../karte` `cf:build` and `../../../starboard` `build:cf`) are already
+included in `predeploy:local` and can be rerun directly after consumer-only
+changes; approved consumer deploys (`../../../karte` and `../../../starboard`
+`deploy:cf`) and manual deployed consumer smoke for karte profile memory plus
+Starboard sync/search remain separate live steps. The local
+consumer audit proves karte's profile-memory create/ingest/delete/search client
+contract including document content/metadata and query/top_k payloads, plus
+Starboard's user-scoped semantic search and ingest content/metadata contract,
+rejects the old `src/lib/rag-service.ts` client filename in both consumers, and
+verifies both checked-out consumer repos expose Cloudflare-backed `deploy:cf`
+scripts that run the repo's Cloudflare build pipeline before deploy. The local
+consumer builds prove those build pipelines bundle successfully; they still do
+not deploy or prove live consumer bindings. Then run
+full-port readiness after deploying the current
 `cloudflare/worker` code; a 404 on these aliases means the deployed Worker is
 behind local route parity.
 For a focused alias check, run
 `pnpm run smoke:legacy-routes -- --base-url <worker-url> --require-complete`.
 The `/healthz` row should include
-`deploy_fingerprint=knowledgebase-cloudflare-full-port-2026-06-21` after the
-current Cloudflare port is deployed. The smoke and full-port readiness gates
+`deploy_fingerprint=knowledgebase-cloudflare-embedding-models-2026-06-21` and
+`d1_schema: true` after the current Cloudflare port and D1 migrations are
+deployed. The smoke and full-port readiness gates
 enforce that fingerprint by default; pass
 `--expected-deploy-fingerprint <value>` only when intentionally deploying a
 custom `RAG_DEPLOY_FINGERPRINT`.
-Before deleting `../rag-service`, run
-`RAG_ALLOW_LIVE_OCR=1 RAG_SERVICE_KEY=<service-key> pnpm run readiness:sibling-retirement`. It is
-read-only and fails unless deployed auth, the live NVDA scanned-PDF OCR eval,
-root legacy aliases, deploy fingerprint, local preflight, no-external-reference
-audit, and the full-port gap matrix are all ready for final sibling retirement.
+The sibling `../rag-service` repo is already retired. Use
+`pnpm run audit:sibling-rag-service -- --json --require-retired` to prove it
+stays gone, and keep all fleet RAG runtime in this Worker package.
 For a narrower read-only proof that fleet repos no longer actively point at the
 old sibling service, run
 `pnpm run audit:no-external-rag-service-references -- --json`. As of the
@@ -179,6 +262,9 @@ public health/readiness/metrics probes.
 - `GET /v1/kb/evals/reports/:id`
 - `GET /v1/kb/evals/summary`
 
+Direct vector ingestion/query endpoints validate caller-supplied embeddings
+against the index/profile dimensions before they reach Vectorize.
+
 The retired FastAPI surface is preserved as Worker-side aliases that forward to
 the Cloudflare-native handlers: `/search`, `/agent/search`, `/search/eval`,
 `/query`, `/query/stream`, `/query/traces`, `/query/trace/:id`, `/projects`,
@@ -188,16 +274,71 @@ inventory. `pnpm run preflight` runs it automatically and also fails if retired
 Python runtime surfaces such as `src/kb`, `pyproject.toml`, or the root pytest
 suite reappear.
 
-The first implemented path chunks raw document text, embeds with `@cf/baai/bge-base-en-v1.5`, upserts vectors to Vectorize, stores hydrated chunk text in D1, and queries Vectorize with server-enforced `tenant + index_id` metadata filters.
+The default deployed path chunks raw document text, embeds through `free-ai` with
+`gemini-embedding-001` at 1536 dimensions, upserts vectors to the
+`rag-gemini-1536` Vectorize index, stores hydrated chunk text in D1, and queries
+Vectorize with server-enforced `tenant + index_id` metadata filters. Use
+`GET /v1/embedding-models` to see the configured Vectorize dimension profiles
+and the live free-ai embedding catalog when the `FREE_AI` binding or base URL is
+reachable. `POST /v1/indexes` accepts `embedding_profile: "base" | "small"` or
+an explicit `embedding_model` from free-ai when `RAG_EMBED_PROVIDER=free_ai`;
+explicit model selection fails closed under Workers AI fallback. With
+`RAG_EMBED_PROVIDER=free_ai`, default profile creation also validates that the
+configured default model is present and enabled in the live free-ai catalog
+before creating an index. `/v1/kb/domains` and first-touch custom input routes
+accept an explicit `embedding_model` from the live free-ai catalog, persist the
+canonical model/provider on the domain, and the hosted testing UI sends that
+selected model with domain save, upload, infer-upload, schema inference, source
+import, direct record/text ingest, and queued/inline domain ingest actions.
+Auto-created `/v1/kb/*` domain indexes use the stored domain model when present,
+otherwise the default base model, and persist the canonical model/provider. KB
+staging and scheduling
+entry points (`/v1/kb/files`, uploads, infer-upload, source import with
+auto-ingest, schema/file reprocess, source-set requeue, async text, and queued
+ingest) run the same readiness check before R2/D1 job mutation or
+Queue/Workflow enqueue, so stale embedding config does not create doomed files,
+jobs, or run messages. Inline record/text ingest also checks before staging raw
+input, and existing stored KB index models are revalidated against the live
+free-ai catalog before new work is scheduled. In the hosted testing UI, choosing an explicit model makes that model authoritative and omits
+`embedding_profile`, so the model's dimensions choose the compatible Vectorize
+binding. The Worker persists the selected embedding model/provider on the index
+so later ingests and queries cannot drift if defaults change. A selected or default free-ai model must be
+enabled in free-ai and its dimensions must match a configured Vectorize binding.
+The hosted testing UI only lists explicit model choices when
+`/v1/embedding-models` reports `catalog_source: "free_ai"` and model rows have
+`selectable: true`; if the live
+catalog is unavailable it falls back to profile defaults instead of offering
+static model guesses. `VECTORIZE`
+remains the default 1536-dim profile. `VECTORIZE_SMALL`, `VECTORIZE_1024`,
+`VECTORIZE_768`, and `VECTORIZE_384` are configured in the current Cloudflare
+release because deployed `free-ai` advertises enabled 384/768/1024/1536-dim
+embedding rows. Models are listed in the testing UI only when their row is live,
+enabled, and `selectable: true` with a compatible Vectorize binding. `pnpm run
+audit:vectorize-embedding-bindings -- --json --require-all` reports all current
+deployed free-ai dimensions configured. `pnpm run
+audit:vectorize-metadata-indexes -- --json --require-complete` is the read-only
+remote audit that confirms the required `tenant` and `index_id` metadata indexes
+exist on every configured Vectorize index. The audit output includes
+`remediation_commands` for missing metadata indexes on existing configured
+indexes. The read-only
+`release-plan:embedding-model -- --json` output mirrors the configured
+metadata-index command candidates under
+`configured_vectorize_metadata_index_commands` so approval can reference the
+exact commands before provisioning.
 
 The `/v1/kb/*` routes are the Cloudflare-native `knowledgebase` product state
 surface. They use the D1 `kb_*` metadata tables for tenant-scoped domains,
 R2-backed file upload/registration, corpus status, jobs, schemas, entities,
 relationships, traces, and eval reports. The Worker now replaces the Python
 runtime paths with TypeScript/Worker ingestion, parser, retrieval, and eval
-tooling. The full Cloudflare port is complete as of 2026-06-21: deployed cutover,
-live scanned-PDF OCR parity, and sibling `../rag-service` retirement are all
-proven and `pnpm run gaps:full-port` reports 0 remaining.
+tooling. The full Cloudflare port is live as of 2026-06-22: the current
+embedding-model release is deployed, D1 migrations `0005_index_embedding_model.sql`
+and `0006_kb_domain_embedding_model.sql` are applied, all deployed free-ai
+embedding dimensions have Vectorize bindings plus metadata indexes,
+`release-status:embedding-model`, `readiness:embedding-model`,
+`smoke:rag-crud:embedding-model`, and `readiness:full-port` report green, live
+scanned-PDF OCR parity is proven, sibling `../rag-service` retirement is proven,
+and `pnpm run gaps:full-port` reports 0 remaining.
 
 Schema inference accepts structured records, JSON/NDJSON/CSV-like input, HTML,
 digital PDF text with coordinate-derived table rows, XLSX rows, DOCX paragraph text, PPTX slide text, or
@@ -282,18 +423,21 @@ URL, and pass-rate gate. After `RAG_SERVICE_KEY` is available,
 `pnpm run eval:parse:nvda-scanned:live` runs the same one-case fail-closed gate
 against the deployed Worker. Use `pnpm run readiness:full-port` as the final
 release gate after `pnpm run deploy:dry-run` passes, the current Worker code is
-deployed, the live OCR eval is explicitly allowed, and sibling retirement is
-complete; it combines deployed health/auth checks, deployed legacy-alias smoke
-checks, the deploy fingerprint check, the live OCR eval, `pnpm run preflight`,
-the Python runtime retirement audit, the sibling `rag-service` retirement
-audit, and the Worker-local Node full-port gap gate.
+deployed, the live OCR eval is explicitly allowed, and sibling retirement
+remains complete; it combines deployed health/auth checks, deployed legacy-alias
+smoke checks, the deployed hosted testing UI check, the deploy fingerprint check,
+the live OCR eval, `pnpm run preflight`, the Python runtime retirement audit,
+the sibling `rag-service` retirement audit, and the Worker-local Node full-port
+gap gate.
 In full-port mode the live OCR eval is cost-guarded: it is skipped until the
 deployed root aliases and `deploy_fingerprint` prove the current Worker build,
 and still requires `RAG_ALLOW_LIVE_OCR=1` or `--allow-live-ocr` before spending
 Workers AI OCR.
-Use `pnpm run readiness:sibling-retirement` between the post-deploy/live-OCR
-proof and the actual sibling-folder deletion; it allows the sibling folder to
-still exist only when every other deletion prerequisite is already green.
+`readiness:sibling-retirement` was used between the post-deploy/live-OCR proof
+and the actual sibling-folder deletion. After retirement, use
+`pnpm run audit:sibling-rag-service -- --json` plus
+`pnpm run gaps:full-port -- --json` to prove the sibling remains gone and the
+gap matrix stays complete.
 `pnpm run gaps:full-port` prints the same Worker-local gap gate without needing
 the Python toolchain; the matrix is shared with the root CLI through
 `../full-port-gaps.json`.
@@ -418,7 +562,7 @@ wrangler d1 execute rag-db --remote --file d1-metadata.sql
 
 After exporting an index from SaaS Maker with
 `GET /v1/knowledge/indexes/:id/export`, smoke the exact pre-embedded migration
-path through RAG service:
+path through `knowledgebase`:
 
 ```bash
 RAG_BASE_URL=https://knowledgebase.<your-subdomain>.workers.dev \

@@ -105,9 +105,20 @@ export async function runLocalCutoverSmoke({
   const baseUrl = `http://${DEFAULT_HOST}:${selectedPort}`;
   const logs = [];
   const command = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
-  const child = spawn(command, ['exec', 'wrangler', 'dev', '--local', '--ip', DEFAULT_HOST, '--port', String(selectedPort)], {
+  const child = spawn(command, [
+    'exec',
+    'wrangler',
+    'dev',
+    '--local',
+    '--ip',
+    DEFAULT_HOST,
+    '--port',
+    String(selectedPort),
+    '--var',
+    'RAG_ALLOW_UNMIGRATED_LOCAL_D1:true',
+  ], {
     cwd: process.cwd(),
-    env: { ...process.env, NO_COLOR: '1' },
+    env: { ...process.env, NO_COLOR: '1', RAG_ALLOW_UNMIGRATED_LOCAL_D1: 'true' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   child.stdout.on('data', (chunk) => logs.push(String(chunk).trimEnd()));

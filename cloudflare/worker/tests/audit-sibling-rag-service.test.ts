@@ -185,9 +185,10 @@ describe('audit-sibling-rag-service', () => {
     expect(report.external_repos_scanned).toContain('reader');
   });
 
-  it('excludes knowledgebase, rag-service, and out-of-fleet sandboxes from default external scans', () => {
-    const { fleetRoot, repoRoot } = makeFleet();
-    for (const dir of ['knowledgebase', 'rag-service', 'local-ai', 'port-whisperer']) {
+  it('excludes the current repo, rag-service, and out-of-fleet sandboxes from default external scans', () => {
+    const { fleetRoot } = makeFleet();
+    const repoRoot = resolve(fleetRoot, 'knowledge-base');
+    for (const dir of ['knowledge-base', 'rag-service', 'local-ai', 'port-whisperer']) {
       mkdirSync(resolve(fleetRoot, dir), { recursive: true });
       writeFileSync(resolve(fleetRoot, dir, 'wrangler.jsonc'), JSON.stringify({
         services: [{ binding: 'RAG_SERVICE', service: 'rag-service' }],

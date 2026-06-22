@@ -118,34 +118,47 @@ make worker-gaps         # full-port blocker inventory
 make worker-ocr-dry-run  # local scanned-PDF OCR eval payload proof, no network/AI
 make worker-local-cutover-smoke # boot wrangler dev and prove aliases + fingerprint locally
 make worker-predeploy-local # check + preflight + OCR dry-run + local smoke + deploy dry-run
-make worker-sibling-retirement-readiness # read-only proof before deleting ../rag-service
 cd cloudflare/worker && pnpm run audit:legacy-route-parity
 cd cloudflare/worker && pnpm run audit:python-runtime-retirement -- --require-complete
+cd cloudflare/worker && pnpm run audit:sibling-rag-service -- --json --require-retired
 cd cloudflare/worker && pnpm run deploy:dry-run
 cd cloudflare/worker && pnpm run smoke:legacy-routes -- --base-url "$RAG_BASE_URL" --require-complete
+cd cloudflare/worker && RAG_SERVICE_KEY=<service-key> pnpm run release-status:embedding-model -- --json --check-vectorize-metadata-indexes --check-knowledgebase-embedding-models
+cd cloudflare/worker && RAG_SERVICE_KEY=<service-key> pnpm run readiness:embedding-model
+cd cloudflare/worker && RAG_SERVICE_KEY=<service-key> RAG_BASE_URL="$RAG_BASE_URL" pnpm run smoke:rag-crud:embedding-model
 cd cloudflare/worker && RAG_ALLOW_LIVE_OCR=1 RAG_SERVICE_KEY=<service-key> pnpm run readiness:full-port
 ```
 
 After deploying this port, the `/healthz` row in `smoke:legacy-routes` should
-show `deploy_fingerprint=knowledgebase-cloudflare-full-port-2026-06-21`;
+show `deploy_fingerprint=knowledgebase-cloudflare-embedding-models-2026-06-21`;
 `smoke:legacy-routes --require-complete` and `readiness:full-port` fail if the
 deployed Worker reports a different fingerprint.
 `readiness:full-port` cost-guards the live OCR eval: it skips Workers AI OCR
 until the deployed root aliases and fingerprint prove the current Worker build,
 and still requires `RAG_ALLOW_LIVE_OCR=1` or `--allow-live-ocr` before spending
-Workers AI OCR.
+Workers AI OCR. It also verifies the deployed `/` and `/ui` hosted testing
+surface includes the embedding-model selector and custom-input `/v1/kb/*`
+controls.
 Before deploying, `pnpm run smoke:local-cutover` starts `wrangler dev --local`
 on an ephemeral port and runs the same legacy alias + fingerprint smoke against
 the local Worker bundle.
 `pnpm run predeploy:local` wraps the local deploy-readiness sequence: Worker
 tests/typecheck, binding preflight, Python runtime retirement audit, no external
-fleet references to the old `rag-service`, the no-network NVDA scanned-PDF OCR
-eval payload dry-run, local cutover smoke, and Wrangler deploy dry-run.
-After the current Worker is deployed and live OCR passes, run
-`RAG_ALLOW_LIVE_OCR=1 RAG_SERVICE_KEY=<service-key> pnpm run readiness:sibling-retirement` before
-deleting `../rag-service`; it is read-only and fails unless deployed auth, OCR,
-legacy aliases, deploy fingerprint, local preflight, external references, and
-the gap matrix are ready for final sibling retirement.
+fleet references to the old `rag-service`, Linkchat/Starboard consumer
+knowledgebase RAG integration audit, local Linkchat/Starboard Cloudflare bundle
+builds, the local `../free-ai` embedding catalog contract audit, the upstream
+free-ai cost/type/test check, the Vectorize embedding binding selectability audit, the
+full-port gap matrix, the no-network NVDA scanned-PDF OCR eval payload dry-run,
+the read-only embedding-model release plan, local cutover smoke, and Wrangler
+deploy dry-run.
+The sibling `../rag-service` repo is already retired. Use
+`pnpm run audit:sibling-rag-service -- --json --require-retired` to prove it
+stays gone. The current embedding-model release is live: matching `../free-ai`
+embedding catalog deployed, all advertised Vectorize dimensions provisioned with
+metadata indexes, D1 migrations `0005_index_embedding_model.sql` and
+`0006_kb_domain_embedding_model.sql` applied, this Worker deployed, and the
+read-only selected-model readiness plus mutating
+`smoke:rag-crud:embedding-model` gates green.
 
 Open the Cloudflare Worker testing UI at `/ui` on the deployed Worker.
 

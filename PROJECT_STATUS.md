@@ -1,6 +1,6 @@
 # knowledgebase — PROJECT STATUS
 
-Last updated: 2026-06-21
+Last updated: 2026-06-22
 
 ## Why/What
 
@@ -10,15 +10,54 @@ Last updated: 2026-06-21
 
 **Out / parked:** Public multi-user hosting without auth/limits, connector marketplace, High Signal integration (phase-2), semantic p99 <300 ms on cold Workers AI misses without cache.
 
-**Migration complete (2026-06-21):** Full Cloudflare port is done — `gaps:full-port` reports 0 remaining. The current `cloudflare/worker` is deployed (version `418b60d7-5901-40e1-8948-a92d56cab351`) with the `knowledgebase-cloudflare-full-port-2026-06-21` fingerprint live, deployed legacy-route parity and live NVDA scanned-PDF OCR (pass_rate 1) proven via `readiness:full-port`, and the sibling `rag-service` repo deleted after `readiness:sibling-retirement` passed (source-only archive kept at `../rag-service-retired-2026-06-21.tgz`).
+**Migration complete live (2026-06-22):** `knowledgebase` is the only fleet RAG service and the current Cloudflare Worker is deployed at `https://knowledgebase.sarthakagrawal927.workers.dev` with fingerprint `knowledgebase-cloudflare-embedding-models-2026-06-21`. The deployed `free-ai` gateway now returns 6 enabled embedding models, all advertised dimensions (384/768/1024/1536) have matching Vectorize bindings and `tenant`/`index_id` metadata indexes, D1 migrations `0005_index_embedding_model.sql` and `0006_kb_domain_embedding_model.sql` are applied, and `RAG_SERVICE_KEYS_APPEND` contains the cutover key used by deployed Karte/Linkchat and Starboard. Live gates passed on 2026-06-22: `release-status:embedding-model -- --check-vectorize-metadata-indexes --check-knowledgebase-embedding-models` reports `ok: true`; `readiness:embedding-model` reports `ok: true`; `smoke:rag-crud:embedding-model` reports `ok: true` for create/ingest/query/delete plus `/v1/kb/ingest/text` custom input and `/v1/kb/search`; `readiness:full-port` with `RAG_ALLOW_LIVE_OCR=1` reports `ok: true`, hosted `/` and `/ui` checks green, and NVDA scanned-PDF OCR `pass_rate: 1`. The sibling `rag-service` repo remains deleted (source-only archive at `../rag-service-retired-2026-06-21.tgz`), and `audit:consumer-rag-integrations -- --require-complete` is green after deploying Karte and Starboard.
 
-**Deployed corpus is empty by design.** The cutover ships code + infra parity, not ingested data: the deployed D1 has `documents=0` / `chunks=0` and no per-domain entries in the `indexes` table across all tenants, so live RAG queries (`/v1/kb/query`) over demo domains return `domain index not found` until ingestion runs. This matches the documented empty-at-rollout design (knowledge tables empty, no backfill required before rollout; Starboard falls back to lexical-only). The `legal`/`sec` `kb_domains`/`kb_entities`/`kb_files` rows present in deployed D1 are a small partial metadata import, not a queryable corpus. To make demo queries answer, run domain ingestion (e.g. `migrate-raw-files.mjs --queue-ingest` or the `/v1/kb/files/:id/reprocess` route) from the R2 raw files — this spends Workers AI embedding calls and is an opt-in post-cutover step.
+**Deployed corpus remains opt-in.** The cutover ships code + infra parity plus
+consumer-ready indexes, not a full demo-corpus backfill. Live smokes create,
+query, and clean up temporary RAG data; Starboard has a dedicated deployed index
+for app sync; demo `legal`/`sec` query corpora still need an explicit ingestion
+run before those domains answer production questions. To make demo queries
+answer, run domain ingestion (e.g. `migrate-raw-files.mjs --queue-ingest` or the
+`/v1/kb/files/:id/reprocess` route) from the R2 raw files -- this spends
+Workers AI embedding calls and is an opt-in post-cutover step.
 
 ## Dependencies
 
 ### External
 
-- **Cloudflare bindings (Worker):** Workers AI embeddings, Vectorize (`rag-bge-768`, `rag-bge-small-384`), D1 `rag-db`, R2 `rag-raw-docs`.
+- **Cloudflare bindings (Worker):** free-ai/Workers AI embeddings, Vectorize (`rag-gemini-1536`, `rag-embedding-1024`, `rag-embedding-768`, `rag-embedding-384`), D1 `rag-db`, R2 `rag-raw-docs`.
+- **Embedding selection:** index creation can choose enabled `free-ai`
+  embedding models when a same-dimension Vectorize binding is configured.
+  With `RAG_EMBED_PROVIDER=free_ai`, both explicit `embedding_model` selection
+  and default profile creation fail closed unless the model is present and
+  enabled in the live `free-ai` catalog. `/v1/kb/domains` and first-touch custom
+  input routes can persist a selected free-ai embedding model/provider for the
+  hosted custom input workflow; later auto-created `/v1/kb/*` domain indexes use
+  the same validation and persist the canonical model/provider. KB file
+  registration/upload, infer-upload, source import with auto-ingest,
+  schema/file reprocess, source-set requeue, async text, inline record/text, and
+  queued KB ingest check this before staging raw input, mutating ingest jobs, or
+  enqueueing Queue/Workflow runs. Existing stored KB index models are also
+  revalidated against the live free-ai catalog before scheduling new work.
+  `preflight` fails if `RAG_EMBED_PROVIDER=free_ai` is missing the `FREE_AI`
+  service binding, a complete default model/provider/dimension config, or a
+  default embedding dimension that does not match the fixed-dimension
+  `VECTORIZE` index name. The checked-in and deployed Worker config now binds
+  every enabled dimension advertised by `free-ai` (384/768/1024/1536), so all
+  current catalog embedding rows are selectable. `release-status:embedding-model`
+  reports selected-model Vectorize readiness separately from deployed free-ai
+  dimension readiness; live dimension readiness includes every enabled embedding
+  dimension advertised by the deployed `free-ai` catalog. With
+  `--check-knowledgebase-embedding-models` plus
+  `RAG_SERVICE_KEY` it proves the deployed `/v1/embedding-models` endpoint is
+  backed by live free-ai rows with selectable provider/dimension/binding details
+  before live CRUD smoke. `audit:vectorize-embedding-bindings -- --require-all`
+  now reports all required dimensions configured and no blockers.
+  `audit:vectorize-metadata-indexes` is the read-only remote audit proving
+  `tenant` and `index_id` metadata indexes exist on every configured Vectorize
+  index, and
+  `release-status:embedding-model -- --check-vectorize-metadata-indexes` folds
+  that proof into the main read-only live status.
 - **Secrets:** `RAG_SERVICE_KEYS` JSON map (never commit). Fleet audit: `pnpm fleet:secret-audit -- --project knowledgebase` from saas-maker.
 - **AI Gateway cache:** implemented but not enabled (Wrangler OAuth blocked gateway creation).
 
@@ -26,7 +65,27 @@ Last updated: 2026-06-21
 
 - **SaaS Maker:** no active in-API RAG/knowledge backend; old knowledge routes, tables, and service bindings were removed on 2026-06-20.
 - **Linkchat:** wired via service binding; legacy SaaS Maker RAG fallback removed for profile-memory create/ingest/delete/search.
-- **Starboard:** wired via service binding; relevance search now uses `knowledgebase` RAG or lexical-only results, while Starboard's Turso vector table remains for non-RAG app features.
+- **Starboard:** wired via service binding; relevance search now uses
+  `knowledgebase` RAG or lexical-only results, `/api/stars/sync` ingests repo
+  documents through the same shared RAG client, and Starboard's Turso vector table
+  remains for non-RAG app features.
+- **Consumer proof split:** `audit:consumer-rag-integrations` is a local source
+  audit for Linkchat/Karte and Starboard. It now proves karte's profile-memory
+  create/ingest/delete/search payload contract and Starboard's user-scoped
+  semantic search plus repo text content and `user_id`/`repo_id`/`full_name`/`language`
+  ingest metadata contract. It also fails if either consumer keeps the old
+  `src/lib/rag-service.ts` client filename; the shared client module is
+  `src/lib/knowledgebase.ts`. It verifies both checked-out consumer repos still
+  expose a Cloudflare-backed `deploy:cf` script that runs the repo's Cloudflare
+  build pipeline before deploy. `predeploy:local` includes both this source
+  audit and local Cloudflare build verification for both consumers; the release
+  plan exposes them as targeted re-runs after consumer-only changes. Karte and
+  Starboard were deployed on 2026-06-22 with `RAG_SERVICE` bound to
+  `knowledgebase` and the cutover `RAG_SERVICE_KEY` secret configured. Public
+  app/auth-boundary smokes passed, and a Starboard-shaped direct knowledgebase
+  ingest/query/delete smoke passed against the deployed Starboard index. Full
+  in-app authenticated profile-memory and Starboard account sync smokes still
+  require a browser/API user session.
 - **High Signal:** phase-2 integration deferred (`docs/highsignal-integration.md`).
 - **Sibling `rag-service`:** retired. Deleted on 2026-06-21 after
   `readiness:sibling-retirement` passed (deployed parity, fingerprint, auth+OCR,
@@ -35,14 +94,17 @@ Last updated: 2026-06-21
   A source-only safety archive is kept at `../rag-service-retired-2026-06-21.tgz`.
   Do not recreate a separate `rag-service` Worker — all fleet RAG runtime lives in
   `cloudflare/worker`.
-- **Deployed Worker cutover:** complete. The current `cloudflare/worker` code is
-  deployed (version `418b60d7-5901-40e1-8948-a92d56cab351`); public
-  health/ready/metrics aliases return 200, protected retired FastAPI aliases
-  reject anonymous callers with 401, and the deployed `/healthz` payload exposes
-  `deploy_fingerprint=knowledgebase-cloudflare-full-port-2026-06-21`.
-  `readiness:full-port` passed deployed legacy-route parity, the fingerprint
-  check, authenticated checks, and the live NVDA scanned-PDF OCR eval
-  (`RAG_ALLOW_LIVE_OCR=1`, pass_rate 1) on the same Worker version.
+- **Deployed Worker cutover:** complete for the current embedding-model release.
+  The live Worker version `a5ae4310-9091-42c8-8d22-5c26d7d09312` exposes
+  `deploy_fingerprint=knowledgebase-cloudflare-embedding-models-2026-06-21`;
+  public health/ready/metrics aliases return 200 and protected retired FastAPI
+  aliases reject anonymous callers with 401. The matching `../free-ai` gateway
+  version `14f263b7-67cf-4f8c-a213-7d83197a7fdc` is deployed, D1 migrations
+  `0005_index_embedding_model.sql` and `0006_kb_domain_embedding_model.sql` are
+  applied, all deployed free-ai embedding dimensions have Vectorize bindings and
+  metadata indexes, read-only selected-model readiness is green, and
+  `smoke:rag-crud:embedding-model` proves generic index CRUD plus the
+  `/v1/kb/ingest/text` custom-input domain path and `/v1/kb/search`.
 - **Python runtime:** retired. The Worker full-port/preflight gates, UI,
   migration tooling, and local checks are TypeScript/Node-only; the old Python
   FastAPI server, Python UI, Docker Compose runtime, parser/query/eval package,
@@ -57,14 +119,21 @@ cd cloudflare/worker
 pnpm install
 pnpm dev                    # wrangler dev
 pnpm run deploy:dry-run      # bundle + binding validation without publishing
-pnpm run predeploy:local     # check + preflight + OCR dry-run + local smoke + dry-run
+pnpm run predeploy:local     # check + preflight + consumer audit/build + free-ai catalog+deploy audit + free-ai check + vectorize audit + gap matrix + OCR dry-run + release plan + local smoke + dry-run
 pnpm deploy
 pnpm check                  # typecheck + vitest
 pnpm run audit:python-runtime-retirement -- --require-complete
 pnpm run smoke:local-cutover # boot wrangler dev and prove aliases + fingerprint locally
 pnpm run readiness          # deployed health + anon /v1/* rejection
 pnpm run readiness:auth     # full auth smoke with RAG_SERVICE_KEY
-pnpm run readiness:sibling-retirement # read-only proof before deleting ../rag-service
+pnpm run release-plan:embedding-model -- --json # read-only checklist; includes local free-ai check plus configured Vectorize metadata-index command candidates before approval-required deploy/provision steps
+cd ../../../free-ai && pnpm run check # read-only upstream cost audit/typecheck/tests before any approved free-ai deploy
+RAG_SERVICE_KEY=<service-key> pnpm run release-status:embedding-model -- --json --check-vectorize-metadata-indexes --check-knowledgebase-embedding-models # read-only live status with blocker_commands; current deployed release reports ok:true
+pnpm run readiness:embedding-model # read-only live free-ai embedding catalog proof
+pnpm run smoke:rag-crud:embedding-model # mutating live selected-model CRUD proof
+pnpm run audit:vectorize-embedding-bindings -- --json # model selectability by Vectorize dimension
+pnpm run audit:vectorize-metadata-indexes -- --json --require-complete # read-only remote metadata-index proof after Vectorize provisioning
+pnpm run audit:sibling-rag-service -- --json --require-retired # prove sibling stays retired
 pnpm run smoke:legacy-routes -- --base-url "$RAG_BASE_URL" --require-complete
 pnpm run backfill:dry-run | benchmark:dry-run | smoke:export:dry-run | migrate:raw:dry-run | migrate:raw:objects:dry-run
 ```
@@ -72,7 +141,7 @@ pnpm run backfill:dry-run | benchmark:dry-run | smoke:export:dry-run | migrate:r
 **Worker `/v1/*` (service-key auth):** public `healthz`/`readyz`/`metrics`, indexes CRUD, ingest, ingest-vectors, documents delete, query, query-vector, `/v1/kb/projects`, `/v1/kb/projects/:project/status`, `/v1/kb/domains`, `/v1/kb/files` list/register/get/reprocess/delete, `/v1/kb/files/upload`, `/v1/kb/sources`, `/v1/kb/sources/import` for URL and EDGAR sources, `/v1/kb/status`, `/v1/kb/jobs`, `/v1/kb/ingest/jobs/:job_id`, `/v1/kb/parse-artifacts/:hash`, `/v1/kb/schemas`, infer/drafts/get/apply/discard/active/domain-reprocess, `/v1/kb/ingest/run`, `/v1/kb/ingest/record`, `/v1/kb/ingest/text`, `/v1/kb/entities`, entity find/detail/lineage/relationships, `/v1/kb/entities/search`, `/v1/kb/relationships`, `/v1/kb/search`, `/v1/kb/query`, `/v1/kb/query/stream`, `/v1/kb/sessions`, `/v1/kb/query/traces`, `/v1/kb/query/trace/:id/drilldown`, `/v1/kb/evals/search`, `/v1/kb/evals/query`, `/v1/kb/evals/reports`. Retired FastAPI aliases forward into the Worker handlers for `/search`, `/agent/search`, `/search/eval`, `/query`, `/query/stream`, `/query/traces`, `/query/trace/:id`, `/projects`, `/domains`, `/schemas`, `/files`, `/sources`, `/entities`, and `/ingest/*`. Hosted UI at `/` and `/ui`.
 
 ```
-Worker: Fleet consumer → Hono → Workers AI embed → Vectorize query → D1 chunk text
+Worker: Fleet consumer → Hono → free-ai/Workers AI embed → Vectorize query → D1 chunk text
         kb_* metadata on D1 for domains, schemas, files, jobs (migration 0003)
         staged R2 text/JSON/CSV-like files → domain Vectorize index → /v1/kb/search
         uploads create D1 ingest jobs; /v1/kb/ingest/run defaults to Workflow-backed Cloudflare Queue ingestion
@@ -104,13 +173,17 @@ Worker: Fleet consumer → Hono → Workers AI embed → Vectorize query → D1 
 
 ## Timeline
 
-- **D1 migrations:** core RAG tables, query cache, **`0003_knowledgebase_metadata.sql`** (`kb_*` projects/domains/schemas/files/jobs/chunks/sessions/traces).
+- **D1 migrations:** core RAG tables, query cache, **`0003_knowledgebase_metadata.sql`** (`kb_*` projects/domains/schemas/files/jobs/chunks/sessions/traces), **`0005_index_embedding_model.sql`** for per-index embedding model/provider metadata, and **`0006_kb_domain_embedding_model.sql`** for selected-model metadata on KB domains before auto-index creation.
 - **Eval maturity:** cross-domain 5×2 LLM eval matrix documented; methodology bugs caught and fixed (DuckDB route, env propagation, citation hygiene).
 - **Fleet cutover:** SaaS Maker, Linkchat, Starboard on service binding; production SaaS Maker knowledge tables empty — no backfill required before rollout.
 - **CI:** Worker-local `pnpm run predeploy:local` is the active local gate;
   it wraps typecheck/tests, binding preflight, Python retirement audit, local
-  no-external-`rag-service` reference guard, the no-network NVDA scanned-PDF OCR
-  eval payload dry-run, Wrangler alias/fingerprint smoke, and deploy dry-run.
+  no-external-`rag-service` reference guard, consumer source audit and
+  Cloudflare builds, free-ai catalog+deploy/vectorize audits, upstream free-ai
+  cost/type/test check, the full-port gap matrix, the no-network NVDA scanned-PDF OCR eval payload
+  dry-run, the read-only embedding-model release plan, deployed hosted UI
+  readiness in `readiness:full-port`, Wrangler alias/fingerprint smoke, and
+  deploy dry-run.
 
 ## Products
 
@@ -264,26 +337,15 @@ Worker: Fleet consumer → Hono → Workers AI embed → Vectorize query → D1 
 4. Deeper source-set management: cursors, stale counts, and bulk replace.
 5. Project templates (papers, company knowledge, notes, manuals, contracts, docs snapshots).
 6. Schema-diff and safe reprocess wizard in UI.
-7. Close the final Cloudflare full-port parity decision: scanned-PDF exact OCR
-   through accepted Workers AI vision, accepted Markdown Conversion quality, or
-   an explicit non-default fallback, run `pnpm run deploy:dry-run`, deploy the
-   current `cloudflare/worker` code, run `pnpm run smoke:legacy-routes --
-   --base-url "$RAG_BASE_URL" --require-complete`, then run
-   `RAG_ALLOW_LIVE_OCR=1 RAG_SERVICE_KEY=<service-key> pnpm run
-   readiness:full-port` from `cloudflare/worker` so deployed health/auth,
-   legacy aliases, OCR, preflight, sibling retirement, and gap gates all pass
-   together.
-8. Retire sibling `rag-service` only after the scanned-PDF OCR parity decision
-   is closed, deployed cutover is proven, and all bindings, smoke checks, docs,
-   and scripts point here. `cloudflare/full-port-gaps.json` tracks this as
-   `sibling_rag_service_retirement` and `deployed_worker_cutover` so the goal
-   cannot be marked complete while the folder still exists or the deployed
-   Worker is behind local parity; `pnpm run readiness:sibling-retirement` is
-   the read-only pre-delete gate that must pass before removing the sibling
-   folder, and `pnpm run audit:sibling-rag-service` from
-   `cloudflare/worker` is the machine-readable proof for sibling deletion.
-9. Finish hosting checklist: durable storage, backups, observability, usage limits, smoke tests.
-10. Enable AI Gateway cache when Wrangler OAuth unblocks gateway creation.
+7. Keep post-cutover regression gates current whenever Worker routes, parser/OCR
+   behavior, or fleet RAG consumers change: `pnpm run check`,
+   `pnpm run gaps:full-port -- --json`, `pnpm run audit:sibling-rag-service
+   -- --json`, and deployed `smoke:legacy-routes --require-complete`.
+8. Finish hosting checklist: durable storage, backups, observability, usage limits, smoke tests.
+9. Enable AI Gateway cache when Wrangler OAuth unblocks gateway creation.
+10. Complete consumer-side karte.cc/linkchat verification against the deployed
+   `knowledgebase` Worker once the current `/Users/sarthak/Desktop/fleet/karte`
+   RAG integration worktree is reviewed and approved for deploy.
 
 ### Deferred
 
@@ -305,13 +367,15 @@ Worker: Fleet consumer → Hono → Workers AI embed → Vectorize query → D1 
   direct D1 counts plus authenticated Worker route-level reads.
 - AI Gateway cache implemented but not enabled (Wrangler OAuth blocked gateway creation).
 - Cloudflare Vectorize is not Qdrant BM42; the accepted Worker replacement is D1 fuzzy sparse lexical + Vectorize dense RRF with optional Workers AI rerank.
-- Workers cannot host the old OCR/parser stack as-is; text/HTML/digital-PDF-table/XLSX/DOCX/PPTX parsing is now TypeScript-native, and opt-in vision OCR can be merged with Markdown Conversion. Exact scanned-PDF OCR parity still needs a Cloudflare vision-model acceptance test or an explicit non-default fallback decision.
+- Workers cannot host the old OCR/parser stack as-is; text/HTML/digital-PDF-table/XLSX/DOCX/PPTX parsing is now TypeScript-native, and opt-in vision OCR can be merged with Markdown Conversion. Exact scanned-PDF OCR parity is proven on the Cloudflare vision model chain by the deployed NVDA scanned-PDF gate.
 - Worker name: `knowledgebase` on Cloudflare; D1 id in `wrangler.jsonc`.
 - Consumers must set `RAG_SERVICE_KEY` + service binding or `RAG_SERVICE_URL` fallback.
 - `cloudflare/full-port-gaps.json` is the executable full-port gap matrix. Use
   `cd cloudflare/worker && pnpm run gaps:full-port` for the Node-only Worker
-  release gate. Current remaining items are `sibling_rag_service_retirement`,
-  `deployed_worker_cutover`, and `ocr_and_office_parsing`.
+  release gate. It currently reports 0 remaining local full-port gaps; the
+  production embedding-model release has completed free-ai deploy, D1 migration,
+  Worker deploy, Vectorize provisioning, and live smoke. Keep this gate as the
+  regression check for future changes.
 - `cloudflare/worker/scripts/preflight.mjs` is the Node-only Cloudflare binding,
   legacy-route-parity, and Python runtime retirement preflight for release
   readiness.

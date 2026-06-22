@@ -1,0 +1,58 @@
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { describe, expect, it } from 'vitest';
+
+const pkg = JSON.parse(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../package.json'), 'utf8')) as {
+  scripts?: Record<string, string>;
+};
+
+describe('package scripts', () => {
+  it('keeps a named local predeploy gate', () => {
+    expect(pkg.scripts?.['predeploy:local']).toBe(
+      'node scripts/predeploy-local.mjs',
+    );
+  });
+
+  it('keeps a named live embedding-model readiness gate', () => {
+    expect(pkg.scripts?.['readiness:embedding-model']).toBe(
+      'node scripts/deploy-readiness.mjs --require-auth --require-embedding-model gemini-embedding-001',
+    );
+  });
+
+  it('keeps a named mutating embedding-model RAG CRUD smoke gate', () => {
+    expect(pkg.scripts?.['smoke:rag-crud:embedding-model']).toBe(
+      'node scripts/smoke-rag-crud.mjs --embedding-model gemini-embedding-001 --include-kb-domain --require-complete',
+    );
+  });
+
+  it('keeps a named Vectorize binding availability audit for embedding selection', () => {
+    expect(pkg.scripts?.['audit:vectorize-embedding-bindings']).toBe(
+      'node scripts/audit-vectorize-embedding-bindings.mjs',
+    );
+  });
+
+  it('keeps a named read-only Vectorize metadata index audit for safe filters', () => {
+    expect(pkg.scripts?.['audit:vectorize-metadata-indexes']).toBe(
+      'node scripts/audit-vectorize-metadata-indexes.mjs',
+    );
+  });
+
+  it('keeps a named embedding-model production release plan', () => {
+    expect(pkg.scripts?.['release-plan:embedding-model']).toBe(
+      'node scripts/embedding-model-release-plan.mjs',
+    );
+  });
+
+  it('keeps a named local consumer Cloudflare build gate', () => {
+    expect(pkg.scripts?.['build:consumer-cloudflare']).toBe(
+      'node scripts/consumer-cloudflare-builds.mjs',
+    );
+  });
+
+  it('keeps a named read-only embedding-model production release status gate', () => {
+    expect(pkg.scripts?.['release-status:embedding-model']).toBe(
+      'node scripts/embedding-model-release-status.mjs',
+    );
+  });
+});

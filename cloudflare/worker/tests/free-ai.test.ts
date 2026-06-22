@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { freeAiChatRaw, freeAiEmbed } from '../src/free-ai';
+import { fetchFreeAiEmbeddingCatalog, freeAiChatRaw, freeAiEmbed } from '../src/free-ai';
 import type { Env } from '../src/types';
 
 function makeEnv(overrides: Partial<Env> = {}): Env {
@@ -61,11 +61,11 @@ afterEach(() => {
 });
 
 describe('freeAiEmbed', () => {
-  it('posts pinned provider/model + 1536 dims and returns 1536-dim vectors', async () => {
+  it('uses configured provider/model + 1536 dims when no caller model is supplied', async () => {
     const calls = captureFetch((req) =>
       jsonResponse({ data: (req.body.input as string[]).map((_, i) => ({ index: i, embedding: vec(1536) })) }),
     );
-    const out = await freeAiEmbed(makeEnv(), ['alpha', 'beta'], { model: '@cf/baai/bge-base-en-v1.5' });
+    const out = await freeAiEmbed(makeEnv(), ['alpha', 'beta']);
 
     expect(out).toHaveLength(2);
     expect(out[0]).toHaveLength(1536);
@@ -79,14 +79,16 @@ describe('freeAiEmbed', () => {
     expect(req.body.project_id).toBe('kb-test');
   });
 
-  it('ignores the caller CF model id and always uses the configured dimension', async () => {
+  it('honors known caller model ids with catalog provider and dimensions', async () => {
     const calls = captureFetch((req) =>
-      jsonResponse({ data: (req.body.input as string[]).map((_, i) => ({ index: i, embedding: vec(1536) })) }),
+      jsonResponse({ data: (req.body.input as string[]).map((_, i) => ({ index: i, embedding: vec(384) })) }),
     );
     const out = await freeAiEmbed(makeEnv(), ['x'], { model: '@cf/baai/bge-small-en-v1.5' });
-    expect(first(calls).body.dimensions).toBe(1536);
-    expect(first(calls).body.model).toBe('gemini-embedding-001');
-    expect(out[0]).toHaveLength(1536);
+    expect(first(calls).headers['x-gateway-force-provider']).toBe('workers_ai');
+    expect(first(calls).headers['x-gateway-force-model']).toBe('@cf/baai/bge-small-en-v1.5');
+    expect(first(calls).body.dimensions).toBe(384);
+    expect(first(calls).body.model).toBe('@cf/baai/bge-small-en-v1.5');
+    expect(out[0]).toHaveLength(384);
   });
 
   it('preserves input order using the returned index field', async () => {
@@ -158,6 +160,39 @@ describe('freeAiEmbed', () => {
     const calls = captureFetch(() => jsonResponse({ data: [] }));
     expect(await freeAiEmbed(makeEnv(), [], {})).toEqual([]);
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe('fetchFreeAiEmbeddingCatalog', () => {
+  it('requires live free-ai model rows to include embedding entries', async () => {
+    captureFetch(() => jsonResponse({ data: [{ id: 'gemini-2.5-flash', type: 'chat', provider: 'gemini' }] }));
+
+    await expect(fetchFreeAiEmbeddingCatalog(makeEnv())).rejects.toThrow(/no embedding models/);
+  });
+
+  it('returns embedding rows with dimensions and availability', async () => {
+    captureFetch(() =>
+      jsonResponse({
+        data: [{
+          id: 'gemini-embedding-001',
+          type: 'embedding',
+          provider: 'gemini',
+          dimensions: 1536,
+          enabled: true,
+          aliases: ['text-embedding-3-small'],
+        }],
+      }),
+    );
+
+    await expect(fetchFreeAiEmbeddingCatalog(makeEnv())).resolves.toEqual([
+      expect.objectContaining({
+        id: 'gemini-embedding-001',
+        provider: 'gemini',
+        dimensions: 1536,
+        enabled: true,
+        aliases: ['text-embedding-3-small'],
+      }),
+    ]);
   });
 });
 

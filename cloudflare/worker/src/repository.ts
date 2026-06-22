@@ -5,6 +5,9 @@ export interface CreateIndexInput {
   tenant: string;
   name: string;
   externalId: string | null;
+  dimensions: number;
+  embeddingModel?: string | null | undefined;
+  embeddingProvider?: string | null | undefined;
 }
 
 export interface CreateDocumentInput {

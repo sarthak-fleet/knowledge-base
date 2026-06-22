@@ -15,6 +15,26 @@ const DEFAULT_SYNTH_MODEL = 'gemini-2.5-flash';
 const DEFAULT_PROJECT_ID = 'knowledgebase';
 const DEFAULT_DIMENSIONS = 1536;
 const EMBED_BATCH_SIZE = 100;
+type SemanticProfile = 'base' | 'small';
+
+export interface FreeAiEmbeddingModel {
+  id: string;
+  provider: string;
+  dimensions: number;
+  enabled?: boolean | undefined;
+  priority?: number | undefined;
+  supports_dimensions?: boolean | undefined;
+  aliases?: string[];
+}
+
+const FREE_AI_EMBEDDING_MODELS: FreeAiEmbeddingModel[] = [
+  { id: 'gemini-embedding-001', provider: 'gemini', dimensions: 1536, aliases: ['text-embedding-3-small', 'text-embedding-3-large', 'text-embedding-004'] },
+  { id: 'voyage-3.5-lite', provider: 'voyage_ai', dimensions: 1024 },
+  { id: 'voyage-3-lite', provider: 'voyage_ai', dimensions: 1024 },
+  { id: '@cf/baai/bge-large-en-v1.5', provider: 'workers_ai', dimensions: 1024 },
+  { id: '@cf/baai/bge-base-en-v1.5', provider: 'workers_ai', dimensions: 768 },
+  { id: '@cf/baai/bge-small-en-v1.5', provider: 'workers_ai', dimensions: 384 },
+];
 
 export interface FreeAiChatBody {
   messages: Array<{ role: string; content: string }>;
@@ -43,16 +63,117 @@ function projectId(env: Env): string {
   return env.FREE_AI_PROJECT_ID?.trim() || DEFAULT_PROJECT_ID;
 }
 
+function catalogModel(model: string): FreeAiEmbeddingModel | null {
+  const normalized = model.trim();
+  return FREE_AI_EMBEDDING_MODELS.find((item) => item.id === normalized || item.aliases?.includes(normalized)) ?? null;
+}
+
+function configuredModel(env: Env, profile: SemanticProfile): string {
+  if (profile === 'small') return env.FREE_AI_EMBED_MODEL_SMALL?.trim() || '@cf/baai/bge-small-en-v1.5';
+  return env.FREE_AI_EMBED_MODEL?.trim() || DEFAULT_EMBED_MODEL;
+}
+
+function configuredProvider(env: Env, profile: SemanticProfile, model: string): string {
+  const explicit = profile === 'small' ? env.FREE_AI_EMBED_PROVIDER_SMALL?.trim() : env.FREE_AI_EMBED_PROVIDER?.trim();
+  if (explicit && model === configuredModel(env, profile)) return explicit;
+  return catalogModel(model)?.provider || explicit || DEFAULT_EMBED_PROVIDER;
+}
+
+function configuredDimensions(env: Env, profile: SemanticProfile, model: string): number {
+  const raw = profile === 'small' ? env.FREE_AI_EMBED_DIMENSIONS_SMALL : env.FREE_AI_EMBED_DIMENSIONS;
+  const configured = Number(raw);
+  if (model === configuredModel(env, profile) && Number.isFinite(configured) && configured > 0) {
+    return Math.trunc(configured);
+  }
+  return catalogModel(model)?.dimensions ?? DEFAULT_DIMENSIONS;
+}
+
+export function freeAiEmbeddingModel(env: Env, profile: SemanticProfile): string {
+  return configuredModel(env, profile);
+}
+
+export function freeAiEmbeddingDimensions(env: Env, profile: SemanticProfile): number {
+  return configuredDimensions(env, profile, configuredModel(env, profile));
+}
+
+export function freeAiEmbeddingCatalog(env: Env): Array<FreeAiEmbeddingModel & { configured_profile: SemanticProfile | null; compatible_profile: string | null }> {
+  const baseModel = configuredModel(env, 'base');
+  const smallModel = configuredModel(env, 'small');
+  const baseDimensions = freeAiEmbeddingDimensions(env, 'base');
+  const smallDimensions = freeAiEmbeddingDimensions(env, 'small');
+  return FREE_AI_EMBEDDING_MODELS.map((item) => ({
+    ...item,
+    configured_profile: item.id === baseModel ? 'base' : item.id === smallModel ? 'small' : null,
+    compatible_profile: item.dimensions === baseDimensions ? 'base' : item.dimensions === smallDimensions ? 'small' : null,
+  }));
+}
+
 function authHeaders(env: Env): Record<string, string> {
   const key = env.FREE_AI_API_KEY?.trim();
   if (!key) throw new Error('FREE_AI_API_KEY is not configured');
   return { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' };
 }
 
+function optionalAuthHeaders(env: Env): Record<string, string> {
+  const key = env.FREE_AI_API_KEY?.trim();
+  return key ? { Authorization: `Bearer ${key}`, Accept: 'application/json' } : { Accept: 'application/json' };
+}
+
 // Use the service binding when available (required for same-zone worker calls),
 // otherwise fall back to a plain fetch (local dev / tests).
 function gatewayFetch(env: Env, url: string, init: RequestInit): Promise<Response> {
   return env.FREE_AI ? env.FREE_AI.fetch(url, init) : fetch(url, init);
+}
+
+function parseFreeAiModelRows(payload: unknown): FreeAiEmbeddingModel[] {
+  const rows = payload && typeof payload === 'object' ? (payload as { data?: unknown }).data : null;
+  if (!Array.isArray(rows)) return [];
+  return rows.flatMap((row) => {
+    if (!row || typeof row !== 'object') return [];
+    const item = row as {
+      id?: unknown;
+      type?: unknown;
+      provider?: unknown;
+      dimensions?: unknown;
+      enabled?: unknown;
+      priority?: unknown;
+      supports_dimensions?: unknown;
+      aliases?: unknown;
+    };
+    if (item.type !== 'embedding') return [];
+    if (typeof item.id !== 'string' || typeof item.provider !== 'string') return [];
+    if (typeof item.dimensions !== 'number' || !Number.isFinite(item.dimensions) || item.dimensions <= 0) return [];
+    return [{
+      id: item.id,
+      provider: item.provider,
+      dimensions: Math.trunc(item.dimensions),
+      enabled: item.enabled !== false,
+      priority: typeof item.priority === 'number' && Number.isFinite(item.priority) ? item.priority : undefined,
+      supports_dimensions: item.supports_dimensions === true,
+      aliases: Array.isArray(item.aliases) ? item.aliases.filter((alias): alias is string => typeof alias === 'string') : [],
+    }];
+  });
+}
+
+export async function fetchFreeAiEmbeddingCatalog(env: Env): Promise<FreeAiEmbeddingModel[]> {
+  const res = await gatewayFetch(env, `${baseUrl(env)}/models`, {
+    method: 'GET',
+    headers: optionalAuthHeaders(env),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    throw new Error(`free-ai model catalog failed ${res.status}: ${detail.slice(0, 200)}`);
+  }
+  const dynamic = parseFreeAiModelRows(await res.json());
+  if (dynamic.length === 0) {
+    throw new Error('free-ai model catalog returned no embedding models');
+  }
+  return dynamic;
+}
+
+export function findFreeAiEmbeddingModel(catalog: FreeAiEmbeddingModel[], model: string): FreeAiEmbeddingModel | null {
+  const normalized = model.trim();
+  return catalog.find((item) => item.id === normalized || item.aliases?.includes(normalized)) ?? null;
 }
 
 // Free upstream providers (Gemini/Voyage) rate-limit under burst. Retry 429/503
@@ -73,14 +194,6 @@ async function gatewayFetchRetry(env: Env, url: string, init: RequestInit): Prom
   return res;
 }
 
-// The free-ai path uses a single embedding model whose output dimension matches
-// the bound Vectorize index (default 1536 for gemini-embedding-001). The caller's
-// CF model id is ignored; the configured dimension is authoritative and validated.
-function expectedDimensions(env: Env): number {
-  const configured = Number(env.FREE_AI_EMBED_DIMENSIONS ?? DEFAULT_DIMENSIONS);
-  return Number.isFinite(configured) && configured > 0 ? Math.trunc(configured) : DEFAULT_DIMENSIONS;
-}
-
 function extractVector(row: unknown): number[] | null {
   if (Array.isArray(row) && row.every((value) => typeof value === 'number')) {
     return row as number[];
@@ -95,19 +208,21 @@ function extractVector(row: unknown): number[] | null {
 }
 
 // Drop-in replacement for embedTexts (same signature) that calls the free-ai
-// gateway. The provider/model are pinned via force headers so the gateway
-// cannot silently fall back to a different-dimension embedding model and
-// corrupt the index; the response dimension is validated and fails closed.
+// gateway. The provider/model are pinned via force headers so the gateway cannot
+// silently fall back to a different-dimension embedding model and corrupt the
+// index; the response dimension is validated and fails closed.
 export async function freeAiEmbed(
   env: Env,
   texts: string[],
-  options: { model?: string } = {},
+  options: { model?: string; provider?: string | undefined; dimensions?: number | undefined } = {},
 ): Promise<number[][]> {
   if (texts.length === 0) return [];
-  void options.model; // CF model id is irrelevant on the free-ai path
-  const model = env.FREE_AI_EMBED_MODEL?.trim() || DEFAULT_EMBED_MODEL;
-  const provider = env.FREE_AI_EMBED_PROVIDER?.trim() || DEFAULT_EMBED_PROVIDER;
-  const dimensions = expectedDimensions(env);
+  const profile: SemanticProfile = options.model === configuredModel(env, 'small') ? 'small' : 'base';
+  const model = options.model?.trim() || configuredModel(env, profile);
+  const provider = options.provider?.trim() || configuredProvider(env, profile, model);
+  const dimensions = options.dimensions && Number.isFinite(options.dimensions) && options.dimensions > 0
+    ? Math.trunc(options.dimensions)
+    : configuredDimensions(env, profile, model);
   const url = `${baseUrl(env)}/embeddings`;
   const pid = projectId(env);
   const vectors: number[][] = [];

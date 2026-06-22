@@ -20,6 +20,34 @@ export const LOCAL_PREDEPLOY_STEPS = [
     command: ['pnpm', 'run', 'audit:no-external-rag-service-references', '--', '--json'],
   },
   {
+    name: 'consumer-rag-integrations',
+    command: ['pnpm', 'run', 'audit:consumer-rag-integrations', '--', '--json', '--require-complete'],
+  },
+  {
+    name: 'consumer-cloudflare-builds',
+    command: ['pnpm', 'run', 'build:consumer-cloudflare', '--', '--json'],
+  },
+  {
+    name: 'free-ai-embedding-contract',
+    command: ['pnpm', 'run', 'audit:free-ai-embedding-contract', '--', '--json', '--require-complete'],
+  },
+  {
+    name: 'free-ai-local-check',
+    command: ['pnpm', '--dir', '../../../free-ai', 'run', 'check'],
+  },
+  {
+    name: 'vectorize-embedding-bindings',
+    command: ['pnpm', 'run', 'audit:vectorize-embedding-bindings', '--', '--json'],
+  },
+  {
+    name: 'full-port-gaps',
+    command: ['pnpm', 'run', 'gaps:full-port', '--', '--json', '--require-complete'],
+  },
+  {
+    name: 'embedding-release-plan',
+    command: ['pnpm', 'run', 'release-plan:embedding-model', '--', '--json'],
+  },
+  {
     name: 'nvda-scanned-ocr-dry-run',
     command: ['pnpm', 'run', 'eval:parse:nvda-scanned:dry-run'],
   },
@@ -42,6 +70,13 @@ Runs the local predeploy gate for the Cloudflare cutover:
   - pnpm run preflight -- --json
   - pnpm run audit:python-runtime-retirement -- --json --require-complete
   - pnpm run audit:no-external-rag-service-references -- --json
+  - pnpm run audit:consumer-rag-integrations -- --json --require-complete
+  - pnpm run build:consumer-cloudflare -- --json
+  - pnpm run audit:free-ai-embedding-contract -- --json --require-complete
+  - pnpm --dir ../../../free-ai run check
+  - pnpm run audit:vectorize-embedding-bindings -- --json
+  - pnpm run gaps:full-port -- --json --require-complete
+  - pnpm run release-plan:embedding-model -- --json
   - pnpm run eval:parse:nvda-scanned:dry-run
   - pnpm run smoke:local-cutover -- --json
   - pnpm run deploy:dry-run`);
@@ -65,12 +100,26 @@ function defaultRunCommand(command, { cwd = process.cwd() } = {}) {
       env: { ...process.env, NO_COLOR: '1' },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+    let settled = false;
     const stdout = [];
     const stderr = [];
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
     child.stdout.on('data', (chunk) => stdout.push(String(chunk)));
     child.stderr.on('data', (chunk) => stderr.push(String(chunk)));
+    child.once('error', (error) => {
+      finish({
+        exit_code: null,
+        signal: 'spawn_error',
+        stdout: stdout.join('').trim(),
+        stderr: [stderr.join('').trim(), error.message].filter(Boolean).join('\n'),
+      });
+    });
     child.once('exit', (code, signal) => {
-      resolve({
+      finish({
         exit_code: typeof code === 'number' ? code : null,
         signal: signal ?? null,
         stdout: stdout.join('').trim(),

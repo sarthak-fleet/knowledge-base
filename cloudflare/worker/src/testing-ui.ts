@@ -165,6 +165,18 @@ export const TESTING_UI_HTML = `<!doctype html>
       <section class="span-4 stack">
         <h2>Index</h2>
         <label>Index name <input id="indexName" value="Test Index"></label>
+        <label>Embedding profile
+          <select id="embeddingProfile">
+            <option value="base">base</option>
+            <option value="small">small</option>
+          </select>
+        </label>
+        <label>Embedding model
+          <select id="embeddingModel">
+            <option value="">profile default</option>
+          </select>
+        </label>
+        <button class="secondary" id="loadEmbeddingModels">Load Embedding Models</button>
         <button id="createIndex">Create Index</button>
         <label>Index id <input id="indexId"></label>
         <label>Raw text <textarea id="rawText">Paste text to ingest into Vectorize.</textarea></label>
@@ -310,6 +322,14 @@ export const TESTING_UI_HTML = `<!doctype html>
         answer_model: $('answerModel').value.trim() || undefined,
       };
     }
+    function embeddingSelection() {
+      const embeddingModel = $('embeddingModel').value.trim();
+      return embeddingModel ? { embedding_model: embeddingModel } : {};
+    }
+    function applyEmbeddingSelectionForm(form) {
+      const embeddingModel = $('embeddingModel').value.trim();
+      if (embeddingModel) form.set('embedding_model', embeddingModel);
+    }
     function listInput(id) {
       return $(id).value.split(/[\n,]/).map((item) => item.trim()).filter(Boolean);
     }
@@ -352,7 +372,11 @@ export const TESTING_UI_HTML = `<!doctype html>
       await call('/v1/kb/domains', {
         method: 'POST',
         headers: headers(),
-        body: JSON.stringify({ name: $('domain').value.trim(), description: $('description').value.trim() }),
+        body: JSON.stringify({
+          name: $('domain').value.trim(),
+          description: $('description').value.trim(),
+          ...embeddingSelection(),
+        }),
       });
     };
     $('uploadFile').onclick = async () => {
@@ -361,6 +385,7 @@ export const TESTING_UI_HTML = `<!doctype html>
       const form = new FormData();
       form.set('domain', $('domain').value.trim());
       form.set('file', file);
+      applyEmbeddingSelectionForm(form);
       if ($('markdownConversion').value) form.set('markdown_conversion', $('markdownConversion').value);
       if ($('visionOcrModel').value.trim()) form.set('vision_ocr_model', $('visionOcrModel').value.trim());
       await call('/v1/kb/files/upload', {
@@ -375,6 +400,7 @@ export const TESTING_UI_HTML = `<!doctype html>
       const form = new FormData();
       form.set('domain', $('domain').value.trim());
       form.set('file', file);
+      applyEmbeddingSelectionForm(form);
       if ($('markdownConversion').value) form.set('markdown_conversion', $('markdownConversion').value);
       if ($('visionOcrModel').value.trim()) form.set('vision_ocr_model', $('visionOcrModel').value.trim());
       const body = await call('/v1/kb/schemas/infer-upload', {
@@ -426,7 +452,7 @@ export const TESTING_UI_HTML = `<!doctype html>
       const body = await call('/v1/kb/schemas/infer', {
         method: 'POST',
         headers: headers(),
-        body: JSON.stringify({ domain: $('domain').value.trim(), input }),
+        body: JSON.stringify({ domain: $('domain').value.trim(), input, ...embeddingSelection() }),
       });
       setLastSchema(body.spec);
     };
@@ -448,6 +474,7 @@ export const TESTING_UI_HTML = `<!doctype html>
           domain: $('domain').value.trim(),
           type: $('recordType').value.trim(),
           data,
+          ...embeddingSelection(),
         }),
       });
     };
@@ -460,6 +487,7 @@ export const TESTING_UI_HTML = `<!doctype html>
           type: $('recordType').value.trim() || undefined,
           title: $('domainTextTitle').value.trim() || undefined,
           text: $('domainText').value,
+          ...embeddingSelection(),
         }),
       });
     };
@@ -470,6 +498,7 @@ export const TESTING_UI_HTML = `<!doctype html>
         body: JSON.stringify({
           domain: $('domain').value.trim(),
           async: false,
+          ...embeddingSelection(),
           markdown_conversion: $('markdownConversion').value || undefined,
           vision_ocr_model: $('visionOcrModel').value.trim() || undefined,
         }),
@@ -482,6 +511,7 @@ export const TESTING_UI_HTML = `<!doctype html>
         body: JSON.stringify({
           domain: $('domain').value.trim(),
           async: true,
+          ...embeddingSelection(),
           markdown_conversion: $('markdownConversion').value || undefined,
           vision_ocr_model: $('visionOcrModel').value.trim() || undefined,
         }),
@@ -503,6 +533,7 @@ export const TESTING_UI_HTML = `<!doctype html>
           domain: $('domain').value.trim(),
           source,
           auto_ingest: $('sourceAutoIngest').checked,
+          ...embeddingSelection(),
           config: source === 'edgar'
             ? {
                 tickers: listInput('sourceTickers'),
@@ -534,13 +565,27 @@ export const TESTING_UI_HTML = `<!doctype html>
       await sourceAction(false);
     };
     $('createIndex').onclick = async () => {
+      const embeddingModel = $('embeddingModel').value.trim();
+      const payload = { name: $('indexName').value.trim() };
+      if (embeddingModel) payload.embedding_model = embeddingModel;
+      else payload.embedding_profile = $('embeddingProfile').value;
       const body = await call('/v1/indexes', {
         method: 'POST',
         headers: headers(),
-        body: JSON.stringify({ name: $('indexName').value.trim() }),
+        body: JSON.stringify(payload),
       });
       activeIndexId = body.id;
       $('indexId').value = body.id;
+    };
+    $('loadEmbeddingModels').onclick = async () => {
+      const body = await call('/v1/embedding-models', { headers: headers() });
+      const models = Array.isArray(body.free_ai_models) ? body.free_ai_models : [];
+      const select = $('embeddingModel');
+      select.replaceChildren(new Option('profile default', ''));
+      if (body.catalog_source !== 'free_ai') return;
+      for (const model of models.filter((item) => item && item.selectable === true)) {
+        select.append(new Option(model.id + ' (' + (model.provider || '') + ', ' + (model.dimensions || '') + 'd, ' + (model.vectorize_binding || model.compatible_profile) + ')', model.id));
+      }
     };
     $('ingestText').onclick = async () => {
       const id = $('indexId').value.trim() || activeIndexId;

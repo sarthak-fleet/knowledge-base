@@ -13,7 +13,7 @@ const DEFAULT_BASE_URL = 'https://knowledgebase.sarthakagrawal927.workers.dev';
 const NVDA_SCANNED_HASH = 'a56062aa2ee3c2eb6e1128e440e4ab683641e2ef4ccfa7e955538676a02c4c39';
 const NVDA_SCANNED_FILENAME = 'NVDA_riskfactors_sample_scanned.pdf';
 const NVDA_VISION_MODEL_CHAIN = '@cf/meta/llama-3.2-11b-vision-instruct,@cf/meta/llama-4-scout-17b-16e-instruct';
-export const EXPECTED_DEPLOY_FINGERPRINT = 'knowledgebase-cloudflare-full-port-2026-06-21';
+export const EXPECTED_DEPLOY_FINGERPRINT = 'knowledgebase-cloudflare-embedding-models-2026-06-21';
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 
 function usage() {
@@ -24,6 +24,9 @@ Options:
   --key <service-key>       Service key for authenticated checks. Defaults to RAG_SERVICE_KEY.
   --export-input <path>     SaaS Maker export JSON to smoke through ingest-vectors.
   --require-auth            Fail if no service key is available.
+  --require-embedding-model <id>
+                            Read-only authenticated check that /v1/embedding-models is backed by live free-ai rows and exposes this enabled model.
+                            Defaults to RAG_REQUIRED_EMBEDDING_MODEL.
   --require-nvda-ocr        Fail unless the deployed NVDA scanned-PDF OCR eval passes.
   --allow-live-ocr          Allow the live OCR eval to call Workers AI. Can also be set with RAG_ALLOW_LIVE_OCR=1.
   --require-full-port       Fail unless local bindings and the full-port gap gate are complete.
@@ -32,7 +35,7 @@ Options:
   --json                    Print JSON only.
 
 Default checks do not require secrets:
-  - GET /v1/healthz returns ok, D1, and Vectorize true
+  - GET /v1/healthz returns ok, D1, required D1 schema, Vectorize, and R2 true
   - GET /v1/indexes without a key is rejected with 401
 
 Full-port checks use Worker-local Node gates:
@@ -48,6 +51,7 @@ function parseArgs(argv) {
     key: process.env.RAG_SERVICE_KEY || '',
     exportInput: '',
     requireAuth: false,
+    requireEmbeddingModel: process.env.RAG_REQUIRED_EMBEDDING_MODEL || '',
     requireNvdaOcr: false,
     allowLiveOcr: process.env.RAG_ALLOW_LIVE_OCR === '1',
     requireFullPort: false,
@@ -84,6 +88,7 @@ function parseArgs(argv) {
     if (arg === '--base-url') out.baseUrl = value;
     else if (arg === '--key') out.key = value;
     else if (arg === '--export-input') out.exportInput = value;
+    else if (arg === '--require-embedding-model') out.requireEmbeddingModel = value;
     else if (arg === '--expected-deploy-fingerprint') out.expectedDeployFingerprint = value;
     else throw new Error(`unknown argument: ${arg}`);
   }
@@ -104,6 +109,16 @@ async function requestStatus(url, { method = 'GET' } = {}) {
   const contentType = res.headers.get('content-type') ?? '';
   const payload = contentType.includes('application/json') ? await res.json().catch(() => ({})) : {};
   return { status: res.status, ok: res.ok, payload };
+}
+
+async function requestText(url, { method = 'GET' } = {}) {
+  const res = await fetch(url, { method });
+  return {
+    status: res.status,
+    ok: res.ok,
+    content_type: res.headers.get('content-type') ?? '',
+    text: await res.text().catch(() => ''),
+  };
 }
 
 function check(name, ok, detail = {}) {
@@ -219,15 +234,72 @@ export async function runDeployedLegacyRouteSmoke({ baseUrl, expectedDeployFinge
   };
 }
 
+export async function runDeployedTestingUiSmoke({ baseUrl }) {
+  const requiredMarkers = [
+    'Knowledgebase Cloudflare',
+    'id="embeddingModel"',
+    'function applyEmbeddingSelectionForm(form)',
+    '/v1/kb/domains',
+    '/v1/kb/ingest/text',
+    '/v1/kb/search',
+  ];
+  const routes = ['/', '/ui'];
+  const checks = [];
+  for (const path of routes) {
+    try {
+      const result = await requestText(`${baseUrl}${path}`);
+      const missing_markers = requiredMarkers.filter((marker) => !result.text.includes(marker));
+      checks.push({
+        path,
+        status: result.status,
+        content_type: result.content_type,
+        missing_markers,
+        ok: result.ok
+          && result.status === 200
+          && result.content_type.includes('text/html')
+          && missing_markers.length === 0,
+      });
+    } catch (error) {
+      checks.push({
+        path,
+        status: null,
+        content_type: '',
+        missing_markers: requiredMarkers,
+        ok: false,
+        error: String(error instanceof Error ? error.message : error),
+      });
+    }
+  }
+  const failed = checks.filter((item) => !item.ok);
+  return {
+    ok: failed.length === 0,
+    checked: checks.length,
+    failed,
+    checks,
+  };
+}
+
 export async function runDeployReadiness(options) {
   const checks = [];
   const expectedDeployFingerprint = options.expectedDeployFingerprint || EXPECTED_DEPLOY_FINGERPRINT;
 
   const health = await requestJson(`${options.baseUrl}/v1/healthz`);
-  checks.push(check('public-health', health.ok && health.payload?.ok === true && health.payload?.d1 === true && health.payload?.vectorize === true, {
+  const healthDeployFingerprint = typeof health.payload?.deploy_fingerprint === 'string' ? health.payload.deploy_fingerprint : null;
+  checks.push(check('public-health', health.ok
+    && health.payload?.ok === true
+    && health.payload?.d1 === true
+    && health.payload?.d1_schema === true
+    && health.payload?.vectorize === true
+    && health.payload?.r2 === true, {
     status: health.status,
     payload: health.payload,
-    deploy_fingerprint: typeof health.payload?.deploy_fingerprint === 'string' ? health.payload.deploy_fingerprint : null,
+    deploy_fingerprint: healthDeployFingerprint,
+    d1_schema: typeof health.payload?.d1_schema === 'boolean' ? health.payload.d1_schema : null,
+    r2: typeof health.payload?.r2 === 'boolean' ? health.payload.r2 : null,
+  }));
+  checks.push(check('deployed-worker-fingerprint', healthDeployFingerprint === expectedDeployFingerprint, {
+    deploy_fingerprint: healthDeployFingerprint,
+    expected_deploy_fingerprint: expectedDeployFingerprint,
   }));
 
   const protectedProbe = await requestJson(`${options.baseUrl}/v1/indexes`);
@@ -240,12 +312,46 @@ export async function runDeployReadiness(options) {
       skipped: true,
       reason: 'RAG_SERVICE_KEY or --key is required for authenticated checks',
     }));
+    if (options.requireEmbeddingModel) {
+      checks.push(check('embedding-model-catalog', false, {
+        skipped: true,
+        reason: 'RAG_SERVICE_KEY or --key is required for the embedding model catalog check',
+        embedding_model: options.requireEmbeddingModel,
+      }));
+    }
   } else {
     const indexes = await requestJson(`${options.baseUrl}/v1/indexes`, { key: options.key });
     checks.push(check('authenticated-index-list', indexes.ok && Array.isArray(indexes.payload?.data), {
       status: indexes.status,
       count: Array.isArray(indexes.payload?.data) ? indexes.payload.data.length : null,
     }));
+
+    if (options.requireEmbeddingModel) {
+      const models = await requestJson(`${options.baseUrl}/v1/embedding-models`, { key: options.key });
+      const availableModels = Array.isArray(models.payload?.free_ai_models) ? models.payload.free_ai_models : [];
+      const selected = availableModels.find((item) =>
+        item?.id === options.requireEmbeddingModel || item?.aliases?.includes?.(options.requireEmbeddingModel),
+      ) ?? null;
+      checks.push(check(
+        'embedding-model-catalog',
+        models.ok
+          && models.payload?.catalog_source === 'free_ai'
+          && selected?.enabled !== false
+          && Boolean(selected)
+          && Boolean(selected?.compatible_profile)
+          && Boolean(selected?.vectorize_binding),
+        {
+          status: models.status,
+          embedding_model: options.requireEmbeddingModel,
+          catalog_source: typeof models.payload?.catalog_source === 'string' ? models.payload.catalog_source : null,
+          catalog_error: typeof models.payload?.catalog_error === 'string' ? models.payload.catalog_error : null,
+          provider: typeof selected?.provider === 'string' ? selected.provider : null,
+          dimensions: typeof selected?.dimensions === 'number' ? selected.dimensions : null,
+          compatible_profile: typeof selected?.compatible_profile === 'string' ? selected.compatible_profile : null,
+          vectorize_binding: typeof selected?.vectorize_binding === 'string' ? selected.vectorize_binding : null,
+        },
+      ));
+    }
 
     if (options.exportInput) {
       const input = await readFile(options.exportInput, 'utf8');
@@ -289,6 +395,19 @@ export async function runDeployReadiness(options) {
       },
     ));
     deployedCurrentForOcr = legacyRoutes.ok && legacyRoutes.deploy_fingerprint === expectedDeployFingerprint;
+
+    if (deployedCurrentForOcr) {
+      const testingUi = await (options.testingUiRunner ?? runDeployedTestingUiSmoke)({ baseUrl: options.baseUrl });
+      checks.push(check('deployed-testing-ui', testingUi.ok, {
+        checked: testingUi.checked,
+        failed: Array.isArray(testingUi.failed) ? testingUi.failed : [],
+      }));
+    } else {
+      checks.push(check('deployed-testing-ui', false, {
+        skipped: true,
+        reason: 'deployed legacy aliases and deploy fingerprint must pass before checking the hosted testing UI',
+      }));
+    }
   }
 
   if (options.requireNvdaOcr) {

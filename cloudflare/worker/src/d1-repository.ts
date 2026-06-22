@@ -45,10 +45,18 @@ export class D1Repository implements Repository {
   async createIndex(input: CreateIndexInput): Promise<IndexRecord> {
     await this.db
       .prepare(
-        `INSERT INTO indexes (id, tenant, name, external_id, dimensions, metric)
-         VALUES (?, ?, ?, ?, 768, 'cosine')`,
+        `INSERT INTO indexes (id, tenant, name, external_id, dimensions, embedding_model, embedding_provider, metric)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'cosine')`,
       )
-      .bind(input.id, input.tenant, input.name, input.externalId)
+      .bind(
+        input.id,
+        input.tenant,
+        input.name,
+        input.externalId,
+        input.dimensions,
+        input.embeddingModel ?? null,
+        input.embeddingProvider ?? null,
+      )
       .run();
     const created = await this.getIndex(input.tenant, input.id);
     if (!created) throw new Error('failed to create index');
@@ -59,6 +67,7 @@ export class D1Repository implements Repository {
     const result = await this.db
       .prepare(
         `SELECT id, tenant, name, external_id, dimensions, metric, created_at
+              , embedding_model, embedding_provider
            FROM indexes
           WHERE tenant = ?
           ORDER BY created_at DESC`,
@@ -72,6 +81,7 @@ export class D1Repository implements Repository {
     return await this.db
       .prepare(
         `SELECT id, tenant, name, external_id, dimensions, metric, created_at
+              , embedding_model, embedding_provider
            FROM indexes
           WHERE tenant = ? AND id = ?`,
       )
@@ -83,6 +93,7 @@ export class D1Repository implements Repository {
     return await this.db
       .prepare(
         `SELECT id, tenant, name, external_id, dimensions, metric, created_at
+              , embedding_model, embedding_provider
            FROM indexes
           WHERE tenant = ? AND external_id = ?
           ORDER BY created_at DESC

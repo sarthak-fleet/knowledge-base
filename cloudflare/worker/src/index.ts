@@ -6,7 +6,18 @@ import { chunkText } from './chunk';
 import { D1Repository } from './d1-repository';
 import { parseUploadBytesWithCloudflare } from './document-parser';
 import { embedTexts } from './embeddings';
-import { freeAiChatRaw, freeAiEmbed, freeAiSynthEnabled, freeAiSynthModel } from './free-ai';
+import {
+  freeAiChatRaw,
+  freeAiEmbed,
+  fetchFreeAiEmbeddingCatalog,
+  findFreeAiEmbeddingModel,
+  freeAiEmbeddingCatalog,
+  freeAiEmbeddingDimensions,
+  freeAiEmbeddingModel,
+  freeAiSynthEnabled,
+  freeAiSynthModel,
+  type FreeAiEmbeddingModel,
+} from './free-ai';
 import {
   D1MetadataRepository,
   parseFileRegistrationBody,
@@ -21,7 +32,7 @@ import {
 import type { CreateChunkInput, Repository } from './repository';
 import { inferSchema, recordsFromUnknown, type DomainSchema } from './schema-inference';
 import { TESTING_UI_HTML } from './testing-ui';
-import type { ChunkRecord, CitationRecord, Env, JsonRecord, KbIngestQueueMessage, SearchResult, VectorizeVector } from './types';
+import type { ChunkRecord, CitationRecord, Env, IndexRecord, JsonRecord, KbIngestQueueMessage, SearchResult, VectorizeBinding, VectorizeVector } from './types';
 
 const MAX_DOC_SIZE = 1_000_000;
 const MAX_TOP_K = 50;
@@ -33,10 +44,12 @@ const MAX_EVAL_CASES = 100;
 const CORRECTIVE_SEMANTIC_MIN_SCORE = 0.35;
 const DEFAULT_BASE_EMBEDDING_MODEL = '@cf/baai/bge-base-en-v1.5';
 const DEFAULT_SMALL_EMBEDDING_MODEL = '@cf/baai/bge-small-en-v1.5';
+const DEFAULT_BASE_EMBEDDING_DIMENSIONS = 768;
+const DEFAULT_SMALL_EMBEDDING_DIMENSIONS = 384;
 const DEFAULT_RERANKER_MODEL = '@cf/baai/bge-reranker-base';
 const DEFAULT_ANSWER_MODEL = '@cf/meta/llama-3.1-8b-instruct';
 const WORKER_VERSION = '0.1.0';
-const WORKER_DEPLOY_FINGERPRINT = 'knowledgebase-cloudflare-full-port-2026-06-21';
+const WORKER_DEPLOY_FINGERPRINT = 'knowledgebase-cloudflare-embedding-models-2026-06-21';
 const LEXICAL_SCORING_VERSION = 'bm25_fuzzy_sparse_v2';
 const MAX_RERANK_CONTEXT_CHARS = 1200;
 const STOP_WORDS = new Set([
@@ -62,6 +75,7 @@ type TimingValue = number | string | boolean;
 type RagTiming = Record<string, TimingValue>;
 type CacheStatus = 'hit' | 'miss';
 type SemanticModel = 'base' | 'small';
+type VectorizeProfileKey = SemanticModel | `dim_${number}`;
 type RerankModel = 'keyword' | 'workers_ai';
 type AnswerMode = 'extractive' | 'workers_ai';
 type QueryPlanVariantKind = 'rewrite' | 'decompose';
@@ -121,21 +135,34 @@ export class KbIngestWorkflow extends WorkflowEntrypoint<Env, KbIngestQueueMessa
 interface AppOptions {
   makeRepository?: (env: Env) => Repository;
   makeMetadataRepository?: (env: Env) => MetadataRepository;
-  embed?: typeof embedTexts;
+  embed?: (env: Env, texts: string[], options?: EmbeddingCallOptions) => Promise<number[][]>;
   queryCache?: TtlCache<QueryPayload>;
   embeddingCache?: TtlCache<number[]>;
   indexCache?: TtlCache<boolean>;
+  indexRecordCache?: TtlCache<IndexRecord>;
   lexicalChunkCache?: TtlCache<ChunkRecord[]>;
+}
+
+interface EmbeddingCallOptions {
+  model?: string;
+  provider?: string | undefined;
+  dimensions?: number;
 }
 
 interface CreateIndexBody {
   name?: string;
   external_id?: string;
+  semantic_model?: SemanticModel;
+  embedding_profile?: SemanticModel;
+  embedding_model?: string;
+  embedding_provider?: string;
 }
 
 interface UpsertDomainBody {
   name?: string;
   description?: string;
+  embedding_model?: string;
+  embedding_provider?: string;
 }
 
 interface InferSchemaBody {
@@ -145,6 +172,8 @@ interface InferSchemaBody {
   sample_texts?: string[];
   input?: unknown;
   save_draft?: boolean;
+  embedding_model?: string;
+  embedding_provider?: string;
 }
 
 interface IngestBody {
@@ -260,6 +289,8 @@ interface KbIngestRunBody {
   file_ids?: string[];
   async?: boolean;
   run_id?: string;
+  embedding_model?: string;
+  embedding_provider?: string;
   markdown_conversion?: string;
   vision_ocr_model?: string;
   chunking?: {
@@ -273,6 +304,8 @@ interface KbRecordIngestBody {
   kind?: string;
   type?: string;
   data?: unknown;
+  embedding_model?: string;
+  embedding_provider?: string;
 }
 
 interface KbTextIngestBody {
@@ -282,12 +315,16 @@ interface KbTextIngestBody {
   title?: string;
   text?: string;
   async?: boolean;
+  embedding_model?: string;
+  embedding_provider?: string;
   chunking?: KbIngestRunBody['chunking'];
 }
 
 interface SourceImportBody {
   domain?: string;
   source?: string;
+  embedding_model?: string;
+  embedding_provider?: string;
   config?: {
     urls?: string[];
     timeout_s?: number;
@@ -707,17 +744,255 @@ function vectorNamespace(tenant: string, indexId: string): string {
   return `${tenant}:${indexId}`;
 }
 
-function semanticModelFromBody(body: QueryBody): SemanticModel {
-  return body.semantic_model === 'small' ? 'small' : 'base';
+function explicitSemanticModelFromBody(body: QueryBody): SemanticModel | null {
+  if (body.semantic_model === 'small') return 'small';
+  if (body.semantic_model === 'base') return 'base';
+  return null;
 }
 
 function embeddingModel(env: Env, model: SemanticModel): string {
+  if (env.RAG_EMBED_PROVIDER === 'free_ai') return freeAiEmbeddingModel(env, model);
   if (model === 'small') return env.EMBEDDING_MODEL_SMALL || DEFAULT_SMALL_EMBEDDING_MODEL;
   return env.EMBEDDING_MODEL || DEFAULT_BASE_EMBEDDING_MODEL;
 }
 
-function vectorizeBinding(env: Env, model: SemanticModel) {
-  return model === 'small' && env.VECTORIZE_SMALL ? env.VECTORIZE_SMALL : env.VECTORIZE;
+function embeddingDimensions(env: Env, model: SemanticModel): number {
+  if (env.RAG_EMBED_PROVIDER === 'free_ai') return freeAiEmbeddingDimensions(env, model);
+  return model === 'small' ? DEFAULT_SMALL_EMBEDDING_DIMENSIONS : DEFAULT_BASE_EMBEDDING_DIMENSIONS;
+}
+
+interface ResolvedEmbeddingProfile {
+  semanticModel: SemanticModel;
+  vectorizeProfile: VectorizeProfileKey;
+  vectorizeBinding: string;
+  model: string;
+  provider?: string | undefined;
+  dimensions: number;
+}
+
+type EmbeddingModelCatalogRow = FreeAiEmbeddingModel & {
+  configured_profile: SemanticModel | null;
+  compatible_profile: string | null;
+  vectorize_binding: string | null;
+  selectable: boolean;
+};
+
+interface ConfiguredVectorizeProfile {
+  key: VectorizeProfileKey;
+  semanticModel: SemanticModel;
+  dimensions: number;
+  binding: VectorizeBinding;
+  bindingName: string;
+  model?: string | undefined;
+}
+
+function configuredVectorizeProfiles(env: Env): ConfiguredVectorizeProfile[] {
+  const profiles: ConfiguredVectorizeProfile[] = [];
+  const add = (profile: ConfiguredVectorizeProfile) => {
+    if (!Number.isFinite(profile.dimensions) || profile.dimensions <= 0) return;
+    if (profiles.some((item) => item.dimensions === profile.dimensions)) return;
+    profiles.push(profile);
+  };
+
+  add({
+    key: 'base',
+    semanticModel: 'base',
+    dimensions: embeddingDimensions(env, 'base'),
+    binding: env.VECTORIZE,
+    bindingName: 'VECTORIZE',
+    model: embeddingModel(env, 'base'),
+  });
+
+  if (env.VECTORIZE_SMALL) {
+    add({
+      key: 'small',
+      semanticModel: 'small',
+      dimensions: embeddingDimensions(env, 'small'),
+      binding: env.VECTORIZE_SMALL,
+      bindingName: 'VECTORIZE_SMALL',
+      model: embeddingModel(env, 'small'),
+    });
+  }
+
+  if (env.VECTORIZE_1024) {
+    add({
+      key: 'dim_1024',
+      semanticModel: 'base',
+      dimensions: 1024,
+      binding: env.VECTORIZE_1024,
+      bindingName: 'VECTORIZE_1024',
+    });
+  }
+
+  if (env.VECTORIZE_768) {
+    add({
+      key: 'dim_768',
+      semanticModel: 'base',
+      dimensions: 768,
+      binding: env.VECTORIZE_768,
+      bindingName: 'VECTORIZE_768',
+    });
+  }
+
+  if (env.VECTORIZE_384) {
+    add({
+      key: 'dim_384',
+      semanticModel: 'small',
+      dimensions: 384,
+      binding: env.VECTORIZE_384,
+      bindingName: 'VECTORIZE_384',
+    });
+  }
+
+  return profiles;
+}
+
+function vectorizeProfileForSemanticModel(env: Env, model: SemanticModel): ConfiguredVectorizeProfile {
+  const profile = configuredVectorizeProfiles(env).find((item) => item.key === model);
+  if (!profile) throw new Error(`${model} embedding profile is not configured`);
+  return profile;
+}
+
+function vectorizeProfileForDimensions(env: Env, dimensions: number): ConfiguredVectorizeProfile | null {
+  return configuredVectorizeProfiles(env).find((item) => item.dimensions === dimensions) ?? null;
+}
+
+function vectorizeProfileForIndex(env: Env, index: IndexRecord, body: QueryBody = {}): ConfiguredVectorizeProfile {
+  const explicit = explicitSemanticModelFromBody(body);
+  if (explicit) return vectorizeProfileForSemanticModel(env, explicit);
+  const profile = vectorizeProfileForDimensions(env, index.dimensions);
+  if (!profile) throw new Error(`embedding dimensions ${index.dimensions} do not match a configured Vectorize binding`);
+  return profile;
+}
+
+function embeddingProfileForIndex(
+  env: Env,
+  index: IndexRecord,
+  vectorizeProfile: ConfiguredVectorizeProfile,
+): ResolvedEmbeddingProfile {
+  const storedModel = index.embedding_model?.trim();
+  const useStoredModel = Boolean(storedModel) && index.dimensions === vectorizeProfile.dimensions;
+  if (!useStoredModel && vectorizeProfile.key !== vectorizeProfile.semanticModel) {
+    throw new Error(`index ${index.id} is missing a stored embedding model for ${index.dimensions} dimensions`);
+  }
+  const model = useStoredModel ? storedModel! : embeddingModel(env, vectorizeProfile.semanticModel);
+  const provider = useStoredModel ? index.embedding_provider?.trim() || undefined : undefined;
+  return {
+    semanticModel: vectorizeProfile.semanticModel,
+    vectorizeProfile: vectorizeProfile.key,
+    vectorizeBinding: vectorizeProfile.bindingName,
+    model,
+    provider,
+    dimensions: useStoredModel ? index.dimensions : vectorizeProfile.dimensions,
+  };
+}
+
+function embeddingOptionsForProfile(profile: ResolvedEmbeddingProfile): EmbeddingCallOptions {
+  return {
+    model: profile.model,
+    provider: profile.provider,
+    dimensions: profile.dimensions,
+  };
+}
+
+function vectorDimensionError(label: string, vector: number[], expectedDimensions: number): string | null {
+  if (!vector.every((value) => Number.isFinite(value))) {
+    return `${label} must contain only finite numbers`;
+  }
+  if (vector.length !== expectedDimensions) {
+    return `${label} dimensions ${vector.length} do not match expected dimensions ${expectedDimensions}`;
+  }
+  return null;
+}
+
+function isEmbeddingReadinessError(error: unknown): error is Error {
+  if (!(error instanceof Error)) return false;
+  return error.message.includes('embedding model')
+    || error.message.includes('embedding dimensions')
+    || error.message.includes('embedding profile is not configured')
+    || error.message.includes('free-ai model catalog');
+}
+
+async function resolveCreateEmbeddingProfile(env: Env, body: CreateIndexBody): Promise<ResolvedEmbeddingProfile> {
+  const requestedModel = body.embedding_model?.trim();
+  const requestedProvider = body.embedding_provider?.trim();
+  const explicitProfile = body.embedding_profile === 'small' || body.semantic_model === 'small'
+    ? 'small'
+    : body.embedding_profile === 'base' || body.semantic_model === 'base'
+      ? 'base'
+      : null;
+
+  if (requestedModel && env.RAG_EMBED_PROVIDER !== 'free_ai') {
+    throw new Error('embedding_model selection requires RAG_EMBED_PROVIDER=free_ai');
+  }
+
+  if (!requestedModel) {
+    const semanticModel = explicitProfile ?? 'base';
+    if (env.RAG_EMBED_PROVIDER === 'free_ai') {
+      const configured = embeddingModel(env, semanticModel);
+      const catalog = await fetchFreeAiEmbeddingCatalog(env);
+      const selected = findFreeAiEmbeddingModel(catalog, configured);
+      if (!selected) {
+        throw new Error(`configured ${semanticModel} embedding model is not available in free-ai: ${configured}`);
+      }
+      if (selected.enabled === false) {
+        throw new Error(`configured ${semanticModel} embedding model is disabled in free-ai: ${configured}`);
+      }
+      const vectorizeProfile = vectorizeProfileForDimensions(env, selected.dimensions);
+      if (!vectorizeProfile) {
+        throw new Error(`embedding model dimensions ${selected.dimensions} do not match a configured Vectorize binding`);
+      }
+      if (semanticModel !== vectorizeProfile.semanticModel) {
+        throw new Error(`configured ${semanticModel} embedding model ${selected.id} is not compatible with ${semanticModel} profile`);
+      }
+      return {
+        semanticModel,
+        vectorizeProfile: vectorizeProfile.key,
+        vectorizeBinding: vectorizeProfile.bindingName,
+        model: selected.id,
+        provider: selected.provider,
+        dimensions: selected.dimensions,
+      };
+    }
+    const vectorizeProfile = vectorizeProfileForSemanticModel(env, semanticModel);
+    return {
+      semanticModel,
+      vectorizeProfile: vectorizeProfile.key,
+      vectorizeBinding: vectorizeProfile.bindingName,
+      model: embeddingModel(env, semanticModel),
+      provider: env.RAG_EMBED_PROVIDER === 'free_ai' ? undefined : 'workers_ai',
+      dimensions: vectorizeProfile.dimensions,
+    };
+  }
+
+  const catalog = await fetchFreeAiEmbeddingCatalog(env);
+  const selected = findFreeAiEmbeddingModel(catalog, requestedModel);
+  if (!selected) {
+    throw new Error(`embedding model is not available in free-ai: ${requestedModel}`);
+  }
+  if (selected.enabled === false) {
+    throw new Error(`embedding model is disabled in free-ai: ${requestedModel}`);
+  }
+  if (requestedProvider && selected.provider !== requestedProvider) {
+    throw new Error(`embedding provider mismatch for ${requestedModel}: expected ${selected.provider}`);
+  }
+
+  const vectorizeProfile = vectorizeProfileForDimensions(env, selected.dimensions);
+  if (!vectorizeProfile) {
+    throw new Error(`embedding model dimensions ${selected.dimensions} do not match a configured Vectorize binding`);
+  }
+  if (explicitProfile && explicitProfile !== vectorizeProfile.semanticModel) {
+    throw new Error(`embedding model ${selected.id} is not compatible with ${explicitProfile} profile`);
+  }
+
+  return {
+    semanticModel: vectorizeProfile.semanticModel,
+    vectorizeProfile: vectorizeProfile.key,
+    vectorizeBinding: vectorizeProfile.bindingName,
+    model: selected.id,
+    provider: selected.provider,
+    dimensions: selected.dimensions,
+  };
 }
 
 function userVectorFilter(filter: unknown): JsonRecord | undefined {
@@ -1096,7 +1371,7 @@ function aiTextResponse(response: unknown): string {
 // Embedding provider seam: route through the free-ai gateway when configured,
 // otherwise use Cloudflare Workers AI. Matches the embedTexts signature so it
 // drops into the createApp `embed` dependency.
-function defaultEmbed(env: Env, texts: string[], options: { model?: string } = {}): Promise<number[][]> {
+function defaultEmbed(env: Env, texts: string[], options: EmbeddingCallOptions = {}): Promise<number[][]> {
   return env.RAG_EMBED_PROVIDER === 'free_ai'
     ? freeAiEmbed(env, texts, options)
     : embedTexts(env, texts, options);
@@ -2015,10 +2290,12 @@ function withTimingHeaders(
 type WorkerHealthPayload = {
   ok: boolean;
   d1: boolean;
+  d1_schema: boolean;
   vectorize: boolean;
   r2: boolean;
   version: string;
   deploy_fingerprint: string;
+  d1_schema_check_skipped?: boolean;
   error?: string;
 };
 
@@ -2028,24 +2305,49 @@ function deployFingerprint(env: Env): string {
 
 async function workerHealth(env: Env): Promise<WorkerHealthPayload> {
   const fingerprint = deployFingerprint(env);
+  const base = {
+    vectorize: Boolean(env.VECTORIZE),
+    r2: Boolean(env.RAW_DOCS),
+    version: WORKER_VERSION,
+    deploy_fingerprint: fingerprint,
+  };
   try {
     await env.DB.prepare('SELECT 1 AS ok').first();
-    return {
-      ok: true,
-      d1: true,
-      vectorize: Boolean(env.VECTORIZE),
-      r2: Boolean(env.RAW_DOCS),
-      version: WORKER_VERSION,
-      deploy_fingerprint: fingerprint,
-    };
   } catch (error) {
     return {
       ok: false,
       d1: false,
-      vectorize: Boolean(env.VECTORIZE),
-      r2: Boolean(env.RAW_DOCS),
-      version: WORKER_VERSION,
-      deploy_fingerprint: fingerprint,
+      d1_schema: false,
+      ...base,
+      error: String(error),
+    };
+  }
+
+  try {
+    await env.DB.prepare('SELECT embedding_model, embedding_provider FROM indexes LIMIT 0').first();
+    await env.DB.prepare('SELECT embedding_model, embedding_provider FROM kb_domains LIMIT 0').first();
+    return {
+      ok: true,
+      d1: true,
+      d1_schema: true,
+      ...base,
+    };
+  } catch (error) {
+    if (env.RAG_ALLOW_UNMIGRATED_LOCAL_D1 === 'true') {
+      return {
+        ok: true,
+        d1: true,
+        d1_schema: false,
+        d1_schema_check_skipped: true,
+        ...base,
+        error: String(error),
+      };
+    }
+    return {
+      ok: false,
+      d1: true,
+      d1_schema: false,
+      ...base,
       error: String(error),
     };
   }
@@ -2054,7 +2356,9 @@ async function workerHealth(env: Env): Promise<WorkerHealthPayload> {
 function readyzPayload(health: WorkerHealthPayload): JsonRecord {
   return {
     status: health.ok && health.vectorize && health.r2 ? 'ok' : 'degraded',
-    db: health.error ? { ok: false, error: health.error.slice(0, 200) } : { ok: health.d1 },
+    db: health.error && !health.d1_schema_check_skipped
+      ? { ok: false, schema_ok: health.d1_schema, error: health.error.slice(0, 200) }
+      : { ok: health.d1, schema_ok: health.d1_schema, schema_check_skipped: health.d1_schema_check_skipped === true },
     vector: { ok: health.vectorize, backend: 'vectorize' },
     object: { ok: health.r2, backend: 'r2' },
     worker: { version: health.version, deploy_fingerprint: health.deploy_fingerprint },
@@ -2073,6 +2377,9 @@ function metricsText(health: WorkerHealthPayload): string {
     '# HELP kb_worker_ready Cloudflare Worker dependency readiness.',
     '# TYPE kb_worker_ready gauge',
     `kb_worker_ready ${health.ok && health.vectorize && health.r2 ? 1 : 0}`,
+    '# HELP kb_d1_schema_ready D1 schema readiness for required Worker migrations.',
+    '# TYPE kb_d1_schema_ready gauge',
+    `kb_d1_schema_ready ${health.d1_schema ? 1 : 0}`,
     '# HELP kb_queries_total Total queries served by this Worker isolate.',
     '# TYPE kb_queries_total counter',
     'kb_queries_total 0',
@@ -2148,11 +2455,36 @@ function timingStages(timing: RagTiming, payload: KbAnswerPayload): JsonRecord[]
   return stages;
 }
 
-async function deleteVectors(env: Env, ids: string[], model: SemanticModel = 'base'): Promise<void> {
+async function deleteVectorsFromProfile(profile: ConfiguredVectorizeProfile, ids: string[]): Promise<void> {
   if (ids.length === 0) return;
-  const binding = vectorizeBinding(env, model);
   for (let start = 0; start < ids.length; start += 1000) {
-    await binding.deleteByIds(ids.slice(start, start + 1000));
+    await profile.binding.deleteByIds(ids.slice(start, start + 1000));
+  }
+}
+
+async function deleteVectorsFromAllProfiles(env: Env, ids: string[]): Promise<void> {
+  const seen = new Set<string>();
+  for (const profile of configuredVectorizeProfiles(env)) {
+    if (seen.has(profile.bindingName)) continue;
+    seen.add(profile.bindingName);
+    await deleteVectorsFromProfile(profile, ids);
+  }
+}
+
+async function deleteVectorsForIndex(env: Env, index: IndexRecord, ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const profiles: ConfiguredVectorizeProfile[] = [];
+  const primary = vectorizeProfileForDimensions(env, index.dimensions);
+  if (primary) profiles.push(primary);
+  if (index.dimensions === embeddingDimensions(env, 'base')) {
+    const small = configuredVectorizeProfiles(env).find((profile) => profile.key === 'small');
+    if (small) profiles.push(small);
+  }
+  const seen = new Set<string>();
+  for (const profile of profiles) {
+    if (seen.has(profile.bindingName)) continue;
+    seen.add(profile.bindingName);
+    await deleteVectorsFromProfile(profile, ids);
   }
 }
 
@@ -2164,6 +2496,7 @@ export function createApp(options: AppOptions = {}) {
   const queryCache = options.queryCache ?? new TtlCache<QueryPayload>(parseCacheOptions({}));
   const embeddingCache = options.embeddingCache ?? new TtlCache<number[]>(parseCacheOptions({}));
   const indexCache = options.indexCache ?? new TtlCache<boolean>(parseCacheOptions({}));
+  const indexRecordCache = options.indexRecordCache ?? new TtlCache<IndexRecord>(parseCacheOptions({}));
   const lexicalChunkCache = options.lexicalChunkCache ?? new TtlCache<ChunkRecord[]>(parseCacheOptions({}));
 
   function rememberIndex(env: Env, tenant: string, indexId: string): void {
@@ -2171,11 +2504,28 @@ export function createApp(options: AppOptions = {}) {
     indexCache.set(buildCacheKey({ tenant, indexId }), true);
   }
 
+  function rememberIndexRecord(env: Env, index: IndexRecord): void {
+    rememberIndex(env, index.tenant, index.id);
+    indexRecordCache.configure(parseCacheOptions(env));
+    indexRecordCache.set(buildCacheKey({ tenant: index.tenant, indexId: index.id }), index);
+  }
+
+  async function getIndexRecord(env: Env, repo: Repository, tenant: string, indexId: string): Promise<IndexRecord | null> {
+    indexRecordCache.configure(parseCacheOptions(env));
+    const key = buildCacheKey({ tenant, indexId });
+    const cached = indexRecordCache.get(key);
+    if (cached) return cached;
+    const index = await repo.getIndex(tenant, indexId);
+    if (!index) return null;
+    rememberIndexRecord(env, index);
+    return index;
+  }
+
   async function indexExists(env: Env, repo: Repository, tenant: string, indexId: string): Promise<boolean> {
     indexCache.configure(parseCacheOptions(env));
     const key = buildCacheKey({ tenant, indexId });
     if (indexCache.get(key)) return true;
-    const index = await repo.getIndex(tenant, indexId);
+    const index = await getIndexRecord(env, repo, tenant, indexId);
     if (!index) return false;
     indexCache.set(key, true);
     return true;
@@ -2185,28 +2535,27 @@ export function createApp(options: AppOptions = {}) {
     env: Env,
     tenant: string,
     text: string,
-    model: SemanticModel,
+    profile: ResolvedEmbeddingProfile,
     timing?: RagTiming,
   ): Promise<number[]> {
     const started = performance.now();
     embeddingCache.configure(parseCacheOptions(env));
-    const modelId = embeddingModel(env, model);
-    const key = buildCacheKey({ model: modelId, tenant, text });
+    const key = buildCacheKey({ model: profile.model, provider: profile.provider ?? null, dimensions: profile.dimensions, tenant, text });
     const cached = embeddingCache.get(key);
     if (cached) {
       if (timing) {
         timing.embedding_cache = 'hit';
-        timing.embedding_model = model;
+        timing.embedding_model = profile.semanticModel;
         timing.embed_ms = elapsedMs(started);
       }
       return cached;
     }
-    const [vector] = await embed(env, [text], { model: modelId });
+    const [vector] = await embed(env, [text], embeddingOptionsForProfile(profile));
     if (!vector) throw new Error('Embedding response was empty');
     embeddingCache.set(key, vector);
     if (timing) {
       timing.embedding_cache = 'miss';
-      timing.embedding_model = model;
+      timing.embedding_model = profile.semanticModel;
       timing.embed_ms = elapsedMs(started);
     }
     return vector;
@@ -2364,8 +2713,7 @@ export function createApp(options: AppOptions = {}) {
     const metadataRepo = makeMetadataRepository(env);
     const vectorIds = await metadataRepo.listKbChunkVectorIds(tenant, files.map((file) => file.id));
     if (vectorIds.length > 0) {
-      await deleteVectors(env, vectorIds);
-      if (env.VECTORIZE_SMALL) await deleteVectors(env, vectorIds, 'small');
+      await deleteVectorsFromAllProfiles(env, vectorIds);
     }
     if (env.RAW_DOCS) {
       for (const file of files) {
@@ -2456,19 +2804,32 @@ export function createApp(options: AppOptions = {}) {
     const started = performance.now();
     const timing: RagTiming = { route: 'query' };
     const tenant = c.get('tenant');
+    const indexId = c.req.param('id');
+    if (!indexId) throw new Error('Index not found');
+    const repo = makeRepository(c.env);
+    const indexStarted = performance.now();
+    const index = await getIndexRecord(c.env, repo, tenant, indexId);
+    if (!index) throw new Error('Index not found');
+    timing.index_ms = elapsedMs(indexStarted);
+    const vectorizeProfile = vectorizeProfileForIndex(c.env, index, body);
+    const embeddingProfile = embeddingProfileForIndex(c.env, index, vectorizeProfile);
     const normalizedQuery = normalizeSemanticQuery(query);
-    const semanticModel = semanticModelFromBody(body);
     const queryPlan = buildQueryPlan(query, body);
     const cacheKey = buildCacheKey({
       tenant,
-      indexId: c.req.param('id'),
+      indexId,
       query: normalizedQuery,
       queryPlan: queryPlan.variants,
       topK: clampTopK(body.top_k),
       filter: jsonRecord(body.filter),
       minScore: typeof body.min_score === 'number' ? body.min_score : null,
       mode: body.mode ?? 'auto',
-      semanticModel,
+      semanticModel: embeddingProfile.semanticModel,
+      vectorizeProfile: embeddingProfile.vectorizeProfile,
+      vectorizeBinding: embeddingProfile.vectorizeBinding,
+      embeddingModel: embeddingProfile.model,
+      embeddingProvider: embeddingProfile.provider ?? null,
+      embeddingDimensions: embeddingProfile.dimensions,
       rerank: body.rerank ?? null,
       rerankModel: body.rerank_model ?? null,
       mmr: body.mmr ?? null,
@@ -2476,8 +2837,6 @@ export function createApp(options: AppOptions = {}) {
       queryDecompose: body.query_decompose ?? null,
       lexicalScoring: LEXICAL_SCORING_VERSION,
     });
-    const indexId = c.req.param('id');
-    if (!indexId) throw new Error('Index not found');
     queryCache.configure(parseCacheOptions(c.env));
     const cached = queryCache.get(cacheKey);
     if (cached) {
@@ -2514,12 +2873,12 @@ export function createApp(options: AppOptions = {}) {
       timing.total_ms = elapsedMs(started);
       return { payload: sharedCached, cache: 'hit', timing };
     }
-    const vector = await embedOne(c.env, tenant, normalizedQuery, semanticModel, timing);
+    const vector = await embedOne(c.env, tenant, normalizedQuery, embeddingProfile, timing);
     const widenedTopK = Math.min(MAX_TOP_K, clampTopK(body.top_k) * 2);
     const semanticBody = body.mode === 'hybrid'
       ? { ...body, top_k: widenedTopK }
       : body;
-    const semantic = await queryByVector(c, vector, semanticBody, timing);
+    const semantic = await queryByVector(c, vector, semanticBody, timing, vectorizeProfile);
     const fused = body.mode === 'hybrid'
       ? fuseHybridResults(lexical, semantic, widenedTopK)
       : semantic;
@@ -2552,17 +2911,168 @@ export function createApp(options: AppOptions = {}) {
     return { payload, cache: 'miss', timing };
   }
 
-  async function ensureKbIndex(repo: Repository, tenant: string, domain: string): Promise<string> {
+  async function kbDomainCreateIndexBody(env: Env, tenant: string, domain: string): Promise<CreateIndexBody> {
+    const metadataRepo = makeMetadataRepository(env);
+    const domainRecord = (await metadataRepo.listDomains(tenant)).find((row) => row.name === domain);
+    const storedModel = domainRecord?.embedding_model?.trim();
+    if (storedModel) {
+      return {
+        embedding_model: storedModel,
+        ...(domainRecord?.embedding_provider?.trim() ? { embedding_provider: domainRecord.embedding_provider.trim() } : {}),
+      };
+    }
+    return { embedding_profile: 'base' };
+  }
+
+  async function resolveKbDomainEmbeddingSelection(
+    env: Env,
+    tenant: string,
+    domain: string,
+    input: { embedding_model?: string; embedding_provider?: string },
+  ): Promise<{ model: string; provider: string | null } | null> {
+    const requestedModel = input.embedding_model?.trim();
+    const requestedProvider = input.embedding_provider?.trim();
+    if (requestedProvider && !requestedModel) {
+      throw new Error('embedding_provider requires embedding_model');
+    }
+    if (!requestedModel) return null;
+    const profile = await resolveCreateEmbeddingProfile(env, {
+      embedding_model: requestedModel,
+      ...(requestedProvider ? { embedding_provider: requestedProvider } : {}),
+    });
+    const existingIndex = await makeRepository(env).getIndexByExternalId(tenant, kbIndexExternalId(domain));
+    if (existingIndex) {
+      if (!existingIndex.embedding_model) {
+        throw new Error(`domain index ${existingIndex.id} is missing a stored embedding model; recreate the domain index before changing embedding_model`);
+      }
+      if (existingIndex.embedding_model !== profile.model) {
+        throw new Error(`domain index already uses embedding model ${existingIndex.embedding_model}; delete and recreate the domain index before selecting ${profile.model}`);
+      }
+      const existingProvider = existingIndex.embedding_provider ?? null;
+      const selectedProvider = profile.provider ?? null;
+      if (existingProvider !== selectedProvider) {
+        throw new Error(`domain index already uses embedding provider ${existingProvider ?? 'unknown'}; delete and recreate the domain index before selecting ${selectedProvider ?? 'unknown'}`);
+      }
+      if (existingIndex.dimensions !== profile.dimensions) {
+        throw new Error(`domain index dimensions ${existingIndex.dimensions} do not match selected embedding dimensions ${profile.dimensions}`);
+      }
+    }
+    return { model: profile.model, provider: profile.provider ?? null };
+  }
+
+  async function persistKbDomainEmbeddingSelection(
+    env: Env,
+    tenant: string,
+    domain: string,
+    input: { embedding_model?: string; embedding_provider?: string },
+  ): Promise<void> {
+    const embedding = await resolveKbDomainEmbeddingSelection(env, tenant, domain, input);
+    if (!embedding) return;
+    const metadataRepo = makeMetadataRepository(env);
+    const existingDomain = (await metadataRepo.listDomains(tenant)).find((row) => row.name === domain);
+    await metadataRepo.upsertDomain(tenant, domain, existingDomain?.description ?? '', embedding);
+  }
+
+  async function applyKbDomainEmbeddingSelection(
+    c: AppContext,
+    tenant: string,
+    domain: string,
+    input: { embedding_model?: string; embedding_provider?: string },
+  ): Promise<Response | null> {
+    try {
+      await persistKbDomainEmbeddingSelection(c.env, tenant, domain, input);
+      return null;
+    } catch (error) {
+      if (error instanceof Error) return c.json({ error: error.message }, 400);
+      throw error;
+    }
+  }
+
+  function formEmbeddingSelection(body: Record<string, unknown>): { embedding_model?: string; embedding_provider?: string } {
+    return {
+      ...(typeof body.embedding_model === 'string' ? { embedding_model: body.embedding_model } : {}),
+      ...(typeof body.embedding_provider === 'string' ? { embedding_provider: body.embedding_provider } : {}),
+    };
+  }
+
+  async function ensureKbIndex(env: Env, repo: Repository, tenant: string, domain: string): Promise<string> {
     const externalId = kbIndexExternalId(domain);
     const existing = await repo.getIndexByExternalId(tenant, externalId);
-    if (existing) return existing.id;
+    if (existing) {
+      rememberIndexRecord(env, existing);
+      return existing.id;
+    }
+    const profile = await resolveCreateEmbeddingProfile(env, await kbDomainCreateIndexBody(env, tenant, domain));
     const created = await repo.createIndex({
       id: crypto.randomUUID(),
       tenant,
       name: `Knowledgebase ${domain}`,
       externalId,
+      dimensions: profile.dimensions,
+      embeddingModel: profile.model,
+      embeddingProvider: profile.provider ?? null,
     });
+    rememberIndexRecord(env, created);
     return created.id;
+  }
+
+  async function validateKbIndexReadiness(env: Env, repo: Repository, tenant: string, domain: string): Promise<void> {
+    const existing = await repo.getIndexByExternalId(tenant, kbIndexExternalId(domain));
+    if (existing) {
+      const vectorizeProfile = vectorizeProfileForIndex(env, existing);
+      const profile = embeddingProfileForIndex(env, existing, vectorizeProfile);
+      if (env.RAG_EMBED_PROVIDER === 'free_ai') {
+        const body: CreateIndexBody = {
+          embedding_profile: profile.semanticModel,
+          embedding_model: profile.model,
+        };
+        if (profile.provider) body.embedding_provider = profile.provider;
+        const resolved = await resolveCreateEmbeddingProfile(env, body);
+        if (resolved.dimensions !== existing.dimensions) {
+          throw new Error(`embedding model dimensions ${resolved.dimensions} do not match existing index dimensions ${existing.dimensions}`);
+        }
+      }
+      return;
+    }
+    await resolveCreateEmbeddingProfile(env, await kbDomainCreateIndexBody(env, tenant, domain));
+  }
+
+  async function validateKbSchedulingReadiness(c: AppContext, tenant: string, domain: string): Promise<Response | null> {
+    try {
+      if (c.env.RAG_EMBED_PROVIDER === 'free_ai') {
+        await validateKbIndexReadiness(c.env, makeRepository(c.env), tenant, domain);
+      } else {
+        await resolveCreateEmbeddingProfile(c.env, { embedding_profile: 'base' });
+      }
+      return null;
+    } catch (error) {
+      if (isEmbeddingReadinessError(error)) return c.json({ error: error.message }, 400);
+      throw error;
+    }
+  }
+
+  async function upsertChunkVectors(
+    env: Env,
+    tenant: string,
+    indexId: string,
+    chunkRows: CreateChunkInput[],
+    vectors: number[][],
+    profile: ConfiguredVectorizeProfile,
+  ): Promise<void> {
+    const rows: VectorizeVector[] = chunkRows.map((chunk, i) => ({
+      id: chunk.id,
+      values: vectors[i] ?? [],
+      namespace: vectorNamespace(tenant, indexId),
+      metadata: vectorMetadata(
+        tenant,
+        indexId,
+        chunk.documentId,
+        chunk.chunkIndex,
+        chunk.content,
+        chunk.metadata,
+      ),
+    }));
+    if (rows.length > 0) await profile.binding.upsert(rows);
   }
 
   async function ingestDocumentsToIndex(
@@ -2574,6 +3084,13 @@ export function createApp(options: AppOptions = {}) {
     chunking?: KbIngestRunBody['chunking'],
   ): Promise<{ document_id: string; chunks: CreateChunkInput[] }[]> {
     const out: { document_id: string; chunks: CreateChunkInput[] }[] = [];
+    const index = await getIndexRecord(env, repo, tenant, indexId);
+    if (!index) throw new Error('Index not found');
+    const vectorizeProfile = vectorizeProfileForIndex(env, index);
+    const embeddingProfile = embeddingProfileForIndex(env, index, vectorizeProfile);
+    const smallProfile = embeddingProfile.vectorizeProfile === 'base'
+      ? configuredVectorizeProfiles(env).find((profile) => profile.key === 'small')
+      : undefined;
     for (const input of documents) {
       const content = input.content.trim();
       if (!content) continue;
@@ -2587,8 +3104,8 @@ export function createApp(options: AppOptions = {}) {
         metadata: input.metadata,
       });
       const chunkContents = chunkText(content, chunking);
-      const vectors = await embed(env, chunkContents, { model: embeddingModel(env, 'base') });
-      const smallVectors = env.VECTORIZE_SMALL
+      const vectors = await embed(env, chunkContents, embeddingOptionsForProfile(embeddingProfile));
+      const smallVectors = smallProfile
         ? await embed(env, chunkContents, { model: embeddingModel(env, 'small') })
         : [];
       const chunkRows: CreateChunkInput[] = chunkContents.map((chunk, i) => ({
@@ -2601,35 +3118,9 @@ export function createApp(options: AppOptions = {}) {
         metadata: input.metadata,
       }));
       await repo.insertChunks(chunkRows);
-      const vectorRows: VectorizeVector[] = chunkRows.map((chunk, i) => ({
-        id: chunk.id,
-        values: vectors[i] ?? [],
-        namespace: vectorNamespace(tenant, indexId),
-        metadata: vectorMetadata(
-          tenant,
-          indexId,
-          document.id,
-          chunk.chunkIndex,
-          chunk.content,
-          chunk.metadata,
-        ),
-      }));
-      if (vectorRows.length > 0) await env.VECTORIZE.upsert(vectorRows);
-      if (env.VECTORIZE_SMALL && smallVectors.length > 0) {
-        const smallRows: VectorizeVector[] = chunkRows.map((chunk, i) => ({
-          id: chunk.id,
-          values: smallVectors[i] ?? [],
-          namespace: vectorNamespace(tenant, indexId),
-          metadata: vectorMetadata(
-            tenant,
-            indexId,
-            document.id,
-            chunk.chunkIndex,
-            chunk.content,
-            chunk.metadata,
-          ),
-        }));
-        await env.VECTORIZE_SMALL.upsert(smallRows);
+      await upsertChunkVectors(env, tenant, indexId, chunkRows, vectors, vectorizeProfile);
+      if (smallProfile && smallVectors.length > 0) {
+        await upsertChunkVectors(env, tenant, indexId, chunkRows, smallVectors, smallProfile);
       }
       out.push({ document_id: document.id, chunks: chunkRows });
     }
@@ -2717,20 +3208,85 @@ export function createApp(options: AppOptions = {}) {
     const body = (await c.req.json().catch(() => ({}))) as CreateIndexBody;
     const name = body.name?.trim();
     if (!name) return c.json({ error: 'name is required' }, 400);
+    let profile: ResolvedEmbeddingProfile;
+    try {
+      profile = await resolveCreateEmbeddingProfile(c.env, body);
+    } catch (error) {
+      if (error instanceof Error) return c.json({ error: error.message }, 400);
+      throw error;
+    }
     const repo = makeRepository(c.env);
     const index = await repo.createIndex({
       id: crypto.randomUUID(),
       tenant,
       name,
       externalId: body.external_id ?? null,
+      dimensions: profile.dimensions,
+      embeddingModel: profile.model,
+      embeddingProvider: profile.provider ?? null,
     });
-    rememberIndex(c.env, tenant, index.id);
+    rememberIndexRecord(c.env, index);
     return c.json(index, 201);
   });
 
   app.get('/v1/indexes', async (c) => {
     const repo = makeRepository(c.env);
     return c.json({ data: await repo.listIndexes(c.get('tenant')) });
+  });
+
+  app.get('/v1/embedding-models', async (c) => {
+    const provider = c.env.RAG_EMBED_PROVIDER === 'free_ai' ? 'free_ai' : 'workers_ai';
+    const vectorizeProfiles = configuredVectorizeProfiles(c.env);
+    let freeAiModels: EmbeddingModelCatalogRow[] = provider === 'free_ai'
+      ? freeAiEmbeddingCatalog(c.env).map((item) => ({ ...item, vectorize_binding: null, selectable: false }))
+      : [];
+    let catalogSource: 'free_ai' | 'static' | 'none' = provider === 'free_ai' ? 'static' : 'none';
+    let catalogError: string | null = null;
+    if (provider === 'free_ai') {
+      try {
+        freeAiModels = (await fetchFreeAiEmbeddingCatalog(c.env)).map((item) => {
+          const compatibleProfile = vectorizeProfiles.find((profile) => profile.dimensions === item.dimensions) ?? null;
+          return {
+            ...item,
+            configured_profile: item.id === embeddingModel(c.env, 'base') ? 'base' as const : item.id === embeddingModel(c.env, 'small') ? 'small' as const : null,
+            compatible_profile: compatibleProfile?.key ?? null,
+            vectorize_binding: compatibleProfile?.bindingName ?? null,
+            selectable: item.enabled !== false && Boolean(compatibleProfile?.bindingName),
+          };
+        });
+        catalogSource = 'free_ai';
+      } catch (error) {
+        catalogError = error instanceof Error ? error.message : 'free-ai model catalog failed';
+      }
+    }
+    return c.json({
+      provider,
+      catalog_source: catalogSource,
+      catalog_error: catalogError,
+      profiles: {
+        base: {
+          semantic_model: 'base',
+          model: embeddingModel(c.env, 'base'),
+          dimensions: embeddingDimensions(c.env, 'base'),
+          vectorize_binding: 'VECTORIZE',
+        },
+        small: {
+          semantic_model: 'small',
+          model: embeddingModel(c.env, 'small'),
+          dimensions: embeddingDimensions(c.env, 'small'),
+          vectorize_binding: c.env.VECTORIZE_SMALL ? 'VECTORIZE_SMALL' : null,
+          available: Boolean(c.env.VECTORIZE_SMALL),
+        },
+      },
+      vectorize_profiles: vectorizeProfiles.map((profile) => ({
+        key: profile.key,
+        semantic_model: profile.semanticModel,
+        dimensions: profile.dimensions,
+        vectorize_binding: profile.bindingName,
+        model: profile.model ?? null,
+      })),
+      free_ai_models: freeAiModels,
+    });
   });
 
   app.get('/v1/kb/domains', async (c) => {
@@ -2742,8 +3298,21 @@ export function createApp(options: AppOptions = {}) {
     const body = (await c.req.json().catch(() => ({}))) as UpsertDomainBody;
     const name = body.name?.trim();
     if (!name) return c.json({ error: 'name is required' }, 400);
+    const requestedModel = body.embedding_model?.trim();
+    const requestedProvider = body.embedding_provider?.trim();
+    let embedding: { model?: string | null; provider?: string | null } = {};
+    try {
+      const selected = await resolveKbDomainEmbeddingSelection(c.env, c.get('tenant'), name, {
+        ...(requestedModel ? { embedding_model: requestedModel } : {}),
+        ...(requestedProvider ? { embedding_provider: requestedProvider } : {}),
+      });
+      if (selected) embedding = selected;
+    } catch (error) {
+      if (error instanceof Error) return c.json({ error: error.message }, 400);
+      throw error;
+    }
     const repo = makeMetadataRepository(c.env);
-    const domain = await repo.upsertDomain(c.get('tenant'), name, body.description?.trim() ?? '');
+    const domain = await repo.upsertDomain(c.get('tenant'), name, body.description?.trim() ?? '', embedding);
     return c.json(domain, 201);
   });
 
@@ -2771,6 +3340,8 @@ export function createApp(options: AppOptions = {}) {
       (schema) => schema.domain === domain && schema.is_active === 1,
     );
     if (!activeSchema) return c.json({ error: 'active schema not found' }, 404);
+    const readiness = await validateKbSchedulingReadiness(c, tenant, domain);
+    if (readiness) return readiness;
     const selectedIds = new Set((body.file_ids ?? []).filter(Boolean));
     const files = selectedIds.size > 0
       ? (await Promise.all([...selectedIds].map((id) => repo.getFile(tenant, id))))
@@ -2825,6 +3396,8 @@ export function createApp(options: AppOptions = {}) {
     const body = (await c.req.json().catch(() => ({}))) as InferSchemaBody;
     const domain = body.domain?.trim();
     if (!domain) return c.json({ error: 'domain is required' }, 400);
+    const embeddingSelection = await applyKbDomainEmbeddingSelection(c, c.get('tenant'), domain, body);
+    if (embeddingSelection) return embeddingSelection;
     const records = [
       ...(Array.isArray(body.records) ? body.records : []),
       ...recordsFromUnknown(body.input),
@@ -2872,6 +3445,11 @@ export function createApp(options: AppOptions = {}) {
     if (!domain) return c.json({ error: 'domain is required' }, 400);
     if (!(uploaded instanceof File)) return c.json({ error: 'file is required' }, 400);
     if (uploaded.size === 0) return c.json({ error: 'empty file' }, 400);
+    const tenant = c.get('tenant');
+    const embeddingSelection = await applyKbDomainEmbeddingSelection(c, tenant, domain, formEmbeddingSelection(body));
+    if (embeddingSelection) return embeddingSelection;
+    const readiness = await validateKbSchedulingReadiness(c, tenant, domain);
+    if (readiness) return readiness;
 
     const bytes = await uploaded.arrayBuffer();
     const contentHash = await sha256Hex(bytes);
@@ -2880,7 +3458,7 @@ export function createApp(options: AppOptions = {}) {
       httpMetadata: { contentType: uploaded.type || 'application/octet-stream' },
       customMetadata: {
         filename: uploaded.name || 'file',
-        project: c.get('tenant'),
+        project: tenant,
         domain,
         content_hash: contentHash,
       },
@@ -2888,7 +3466,7 @@ export function createApp(options: AppOptions = {}) {
     const repo = makeMetadataRepository(c.env);
     const file = await repo.registerFile({
       id: crypto.randomUUID(),
-      project: c.get('tenant'),
+      project: tenant,
       domain,
       filename: uploaded.name || 'file',
       mime: uploaded.type || null,
@@ -2897,7 +3475,7 @@ export function createApp(options: AppOptions = {}) {
       objectKey,
     });
     await repo.upsertIngestJob({
-      project: c.get('tenant'),
+      project: tenant,
       domain,
       fileId: file.id,
       status: 'queued',
@@ -2932,7 +3510,7 @@ export function createApp(options: AppOptions = {}) {
       stagedFileIds: [file.id],
     });
     return c.json({
-      project: c.get('tenant'),
+      project: tenant,
       domain: spec.domain,
       name: spec.name,
       spec,
@@ -2983,12 +3561,17 @@ export function createApp(options: AppOptions = {}) {
   });
 
   app.post('/v1/kb/files', async (c) => {
-    const body = parseFileRegistrationBody(await c.req.json().catch(() => ({})));
+    const rawBody = await c.req.json().catch(() => ({}));
+    const body = parseFileRegistrationBody(rawBody);
     if (!body.domain) return c.json({ error: 'domain is required' }, 400);
     if (!body.filename) return c.json({ error: 'filename is required' }, 400);
     if (!body.contentHash) return c.json({ error: 'content_hash is required' }, 400);
     if (!body.objectKey) return c.json({ error: 'object_key is required' }, 400);
     if (!Number.isFinite(body.bytes) || body.bytes < 0) return c.json({ error: 'bytes must be non-negative' }, 400);
+    const embeddingSelection = await applyKbDomainEmbeddingSelection(c, c.get('tenant'), body.domain, rawBody as { embedding_model?: string; embedding_provider?: string });
+    if (embeddingSelection) return embeddingSelection;
+    const readiness = await validateKbSchedulingReadiness(c, c.get('tenant'), body.domain);
+    if (readiness) return readiness;
     const repo = makeMetadataRepository(c.env);
     const file = await repo.registerFile({
       id: crypto.randomUUID(),
@@ -3017,6 +3600,8 @@ export function createApp(options: AppOptions = {}) {
     const repo = makeMetadataRepository(c.env);
     const file = await repo.getFile(tenant, c.req.param('file_id'));
     if (!file) return c.json({ error: 'file not found' }, 404);
+    const readiness = await validateKbSchedulingReadiness(c, tenant, file.domain);
+    if (readiness) return readiness;
     const activeSchema = (await repo.listSchemas(tenant)).find(
       (schema) => schema.domain === file.domain && schema.is_active === 1,
     );
@@ -3054,6 +3639,11 @@ export function createApp(options: AppOptions = {}) {
     if (!domain) return c.json({ error: 'domain is required' }, 400);
     if (!(uploaded instanceof File)) return c.json({ error: 'file is required' }, 400);
     if (uploaded.size === 0) return c.json({ error: 'empty file' }, 400);
+    const tenant = c.get('tenant');
+    const embeddingSelection = await applyKbDomainEmbeddingSelection(c, tenant, domain, formEmbeddingSelection(body));
+    if (embeddingSelection) return embeddingSelection;
+    const readiness = await validateKbSchedulingReadiness(c, tenant, domain);
+    if (readiness) return readiness;
 
     const bytes = await uploaded.arrayBuffer();
     const contentHash = await sha256Hex(bytes);
@@ -3064,7 +3654,7 @@ export function createApp(options: AppOptions = {}) {
       httpMetadata: { contentType: uploaded.type || 'application/octet-stream' },
       customMetadata: {
         filename,
-        project: c.get('tenant'),
+        project: tenant,
         domain,
         content_hash: contentHash,
       },
@@ -3073,7 +3663,7 @@ export function createApp(options: AppOptions = {}) {
     const repo = makeMetadataRepository(c.env);
     const file = await repo.registerFile({
       id: crypto.randomUUID(),
-      project: c.get('tenant'),
+      project: tenant,
       domain,
       filename,
       mime: uploaded.type || null,
@@ -3082,7 +3672,7 @@ export function createApp(options: AppOptions = {}) {
       objectKey,
     });
     await repo.upsertIngestJob({
-      project: c.get('tenant'),
+      project: tenant,
       domain,
       fileId: file.id,
       status: 'queued',
@@ -3130,6 +3720,12 @@ export function createApp(options: AppOptions = {}) {
         supported_sources: ['url', 'edgar'],
         upload_route: '/v1/kb/files/upload',
       }, 400);
+    }
+    const embeddingSelection = await applyKbDomainEmbeddingSelection(c, tenant, domain, body);
+    if (embeddingSelection) return embeddingSelection;
+    if (body.auto_ingest !== false) {
+      const readiness = await validateKbSchedulingReadiness(c, tenant, domain);
+      if (readiness) return readiness;
     }
     const metadataRepo = makeMetadataRepository(c.env);
     const activeSchema = (await metadataRepo.listSchemas(tenant)).find(
@@ -3346,6 +3942,8 @@ export function createApp(options: AppOptions = {}) {
       });
     }
     if (action.startsWith('requeue_')) {
+      const readiness = await validateKbSchedulingReadiness(c, tenant, domain);
+      if (readiness) return readiness;
       const activeSchema = (await metadataRepo.listSchemas(tenant)).find(
         (schema) => schema.domain === domain && schema.is_active === 1,
       );
@@ -3391,12 +3989,18 @@ export function createApp(options: AppOptions = {}) {
       .map(jsonRecord)
       .filter((record) => Object.keys(record).length > 0);
     if (records.length === 0) return c.json({ error: 'data must contain at least one record' }, 400);
+    const embeddingSelection = await applyKbDomainEmbeddingSelection(c, tenant, domain, body);
+    if (embeddingSelection) return embeddingSelection;
     const metadataRepo = makeMetadataRepository(c.env);
     let activeSchema = (await metadataRepo.listSchemas(tenant)).find(
       (schema) => schema.domain === domain && schema.is_active === 1,
     );
     let schemaAutoCreated = false;
+    let readinessValidated = false;
     if (!activeSchema) {
+      const readiness = await validateKbSchedulingReadiness(c, tenant, domain);
+      if (readiness) return readiness;
+      readinessValidated = true;
       const inferred = inferSchema({ domain, records, name: 'auto-direct-record' });
       const inferredPrimary = inferred.entities[0]?.name;
       const spec = requestedEntityType && inferredPrimary
@@ -3421,6 +4025,10 @@ export function createApp(options: AppOptions = {}) {
     if (!entityType) return c.json({ error: 'schema has no entity types' }, 422);
     if (!activeSchema.spec.entities.some((entity) => entity.name === entityType)) {
       return c.json({ error: `schema does not declare entity type '${entityType}'` }, 422);
+    }
+    if (!readinessValidated) {
+      const readiness = await validateKbSchedulingReadiness(c, tenant, domain);
+      if (readiness) return readiness;
     }
     const payload = JSON.stringify({ project: tenant, domain, type: entityType, data: records }, null, 2);
     const bytes = new TextEncoder().encode(payload);
@@ -3495,8 +4103,15 @@ export function createApp(options: AppOptions = {}) {
       pageCount: 1,
     });
     const ragRepo = makeRepository(c.env);
-    const indexId = await ensureKbIndex(ragRepo, tenant, domain);
-    const ingested = await ingestDocumentsToIndex(c.env, ragRepo, tenant, indexId, docs);
+    let indexId: string;
+    let ingested: { document_id: string; chunks: CreateChunkInput[] }[];
+    try {
+      indexId = await ensureKbIndex(c.env, ragRepo, tenant, domain);
+      ingested = await ingestDocumentsToIndex(c.env, ragRepo, tenant, indexId, docs);
+    } catch (error) {
+      if (isEmbeddingReadinessError(error)) return c.json({ error: error.message }, 400);
+      throw error;
+    }
     await metadataRepo.insertKbChunks(ingested.flatMap((entry) =>
       entry.chunks.map((chunk) => ({
         id: crypto.randomUUID(),
@@ -3547,6 +4162,10 @@ export function createApp(options: AppOptions = {}) {
     const text = body.text?.trim();
     if (!domain) return c.json({ error: 'domain is required' }, 400);
     if (!text) return c.json({ error: 'text must be non-empty' }, 400);
+    const embeddingSelection = await applyKbDomainEmbeddingSelection(c, tenant, domain, body);
+    if (embeddingSelection) return embeddingSelection;
+    const readiness = await validateKbSchedulingReadiness(c, tenant, domain);
+    if (readiness) return readiness;
     const metadataRepo = makeMetadataRepository(c.env);
     const activeSchema = (await metadataRepo.listSchemas(tenant)).find(
       (schema) => schema.domain === domain && schema.is_active === 1,
@@ -3586,7 +4205,13 @@ export function createApp(options: AppOptions = {}) {
         async: false,
       };
       if (body.chunking) ingestBody.chunking = body.chunking;
-      const ingested = await runKbIngest(c.env, tenant, ingestBody, 'direct-text');
+      let ingested: Awaited<ReturnType<typeof runKbIngest>>;
+      try {
+        ingested = await runKbIngest(c.env, tenant, ingestBody, 'direct-text');
+      } catch (error) {
+        if (isEmbeddingReadinessError(error)) return c.json({ error: error.message }, 400);
+        throw error;
+      }
       return c.json({
         ...ingested,
         kind: domain,
@@ -3663,7 +4288,7 @@ export function createApp(options: AppOptions = {}) {
     const repo = makeRepository(env);
     const metadataRepo = makeMetadataRepository(env);
     const runId = body.run_id?.trim() || null;
-    const indexId = await ensureKbIndex(repo, tenant, domain);
+    const indexId = await ensureKbIndex(env, repo, tenant, domain);
     const activeSchema = (await metadataRepo.listSchemas(tenant)).find(
       (schema) => schema.domain === domain && schema.is_active === 1,
     );
@@ -3803,16 +4428,25 @@ export function createApp(options: AppOptions = {}) {
 	  app.post('/v1/kb/ingest/run', async (c) => {
 	    const body = (await c.req.json().catch(() => ({}))) as KbIngestRunBody;
     const queueIsPrimary = body.async !== false;
-	    if (queueIsPrimary && c.env.INGEST_QUEUE) {
-		      const domain = body.domain?.trim();
-		      if (!domain) return c.json({ error: 'domain is required' }, 400);
-		      const runId = body.run_id?.trim() || crypto.randomUUID();
-	      const message: KbIngestQueueMessage = {
-	        kind: 'kb_ingest',
-	        project: c.get('tenant'),
-	        domain,
-	        run_id: runId,
-		      };
+		    if (queueIsPrimary && c.env.INGEST_QUEUE) {
+			      const domain = body.domain?.trim();
+			      if (!domain) return c.json({ error: 'domain is required' }, 400);
+      const tenant = c.get('tenant');
+      const embeddingSelection = await applyKbDomainEmbeddingSelection(c, tenant, domain, body);
+      if (embeddingSelection) return embeddingSelection;
+      try {
+        await validateKbIndexReadiness(c.env, makeRepository(c.env), tenant, domain);
+      } catch (error) {
+        if (isEmbeddingReadinessError(error)) return c.json({ error: error.message }, 400);
+        throw error;
+      }
+			      const runId = body.run_id?.trim() || crypto.randomUUID();
+		      const message: KbIngestQueueMessage = {
+		        kind: 'kb_ingest',
+		        project: tenant,
+		        domain,
+		        run_id: runId,
+			      };
       if (body.file_ids !== undefined) message.file_ids = body.file_ids;
       if (body.markdown_conversion !== undefined) message.markdown_conversion = body.markdown_conversion;
       if (body.vision_ocr_model !== undefined) message.vision_ocr_model = body.vision_ocr_model;
@@ -3836,29 +4470,29 @@ export function createApp(options: AppOptions = {}) {
           backlog_bytes: response.metadata.metrics.backlogBytes,
         };
       }
-      const metadataRepo = makeMetadataRepository(c.env);
-      const activeSchema = (await metadataRepo.listSchemas(c.get('tenant'))).find(
-        (schema) => schema.domain === domain && schema.is_active === 1,
-      );
-      const files = body.file_ids?.length
-        ? (await Promise.all(body.file_ids.map((id) => metadataRepo.getFile(c.get('tenant'), id)))).filter((file): file is NonNullable<typeof file> => Boolean(file))
-        : await metadataRepo.listFiles(c.get('tenant'), domain, ['pending']);
-      const jobs = [];
-      for (const file of files) {
-        jobs.push(await metadataRepo.upsertIngestJob({
-          project: c.get('tenant'),
-          domain,
-          fileId: file.id,
+	      const metadataRepo = makeMetadataRepository(c.env);
+	      const activeSchema = (await metadataRepo.listSchemas(tenant)).find(
+	        (schema) => schema.domain === domain && schema.is_active === 1,
+	      );
+	      const files = body.file_ids?.length
+	        ? (await Promise.all(body.file_ids.map((id) => metadataRepo.getFile(tenant, id)))).filter((file): file is NonNullable<typeof file> => Boolean(file))
+	        : await metadataRepo.listFiles(tenant, domain, ['pending']);
+	      const jobs = [];
+	      for (const file of files) {
+	        jobs.push(await metadataRepo.upsertIngestJob({
+	          project: tenant,
+	          domain,
+	          fileId: file.id,
 		          schemaId: activeSchema?.id ?? null,
 		          status: 'queued',
 		          stage: 'parse',
 		          queueMessageId: workflowInstanceId ? 'cloudflare-workflow' : 'cloudflare-queue',
 		          workflowId: runId,
 		        }));
-	      }
-	      return c.json({
-		        project: c.get('tenant'),
-		        domain,
+		      }
+		      return c.json({
+			        project: tenant,
+			        domain,
 		        run_id: runId,
 		        ingestion_mode: 'queued',
 		        orchestration: workflowInstanceId ? 'workflow' : 'queue',
@@ -3869,6 +4503,11 @@ export function createApp(options: AppOptions = {}) {
 	      }, 202);
 	    }
     if (body.async === true && !c.env.INGEST_QUEUE) return c.json({ error: 'INGEST_QUEUE is not configured' }, 500);
+    const inlineDomain = body.domain?.trim();
+    if (inlineDomain) {
+      const embeddingSelection = await applyKbDomainEmbeddingSelection(c, c.get('tenant'), inlineDomain, body);
+      if (embeddingSelection) return embeddingSelection;
+    }
     try {
 	      const runBody = {
 	        ...body,
@@ -3883,6 +4522,7 @@ export function createApp(options: AppOptions = {}) {
       const message = error instanceof Error ? error.message : String(error);
       if (message === 'RAW_DOCS R2 bucket is not configured') return c.json({ error: message }, 500);
       if (message === 'domain is required') return c.json({ error: message }, 400);
+      if (isEmbeddingReadinessError(error)) return c.json({ error: message }, 400);
       throw error;
     }
   });
@@ -4400,11 +5040,11 @@ export function createApp(options: AppOptions = {}) {
     const index = await repo.getIndex(tenant, indexId);
     if (!index) return c.json({ error: 'Not found' }, 404);
     const chunkIds = await repo.getChunkIdsForIndex(tenant, indexId);
-    await deleteVectors(c.env, chunkIds);
-    if (c.env.VECTORIZE_SMALL) await deleteVectors(c.env, chunkIds, 'small');
+    await deleteVectorsForIndex(c.env, index, chunkIds);
     await repo.deleteIndex(tenant, indexId);
     queryCache.clear();
     indexCache.clear();
+    indexRecordCache.clear();
     clearLexicalChunkCache(tenant, indexId);
     await clearSharedQueryCache(c.env, tenant, indexId);
     return c.json({ ok: true });
@@ -4419,8 +5059,21 @@ export function createApp(options: AppOptions = {}) {
       return c.json({ error: 'documents array is required' }, 400);
     }
     const repo = makeRepository(c.env);
-    const index = await repo.getIndex(tenant, indexId);
+    const index = await getIndexRecord(c.env, repo, tenant, indexId);
     if (!index) return c.json({ error: 'Index not found' }, 404);
+    let vectorizeProfile: ConfiguredVectorizeProfile;
+    try {
+      vectorizeProfile = vectorizeProfileForIndex(c.env, index);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('embedding profile is not configured')) {
+        return c.json({ error: error.message }, 400);
+      }
+      throw error;
+    }
+    const embeddingProfile = embeddingProfileForIndex(c.env, index, vectorizeProfile);
+    const smallProfile = embeddingProfile.vectorizeProfile === 'base'
+      ? configuredVectorizeProfiles(c.env).find((profile) => profile.key === 'small')
+      : undefined;
 
     const out: Array<{ document_id: string; chunks_created: number }> = [];
     for (const input of documents) {
@@ -4437,8 +5090,8 @@ export function createApp(options: AppOptions = {}) {
         metadata: jsonRecord(input.metadata),
       });
       const chunkContents = chunkText(content, body.chunking);
-      const vectors = await embed(c.env, chunkContents, { model: embeddingModel(c.env, 'base') });
-      const smallVectors = c.env.VECTORIZE_SMALL
+      const vectors = await embed(c.env, chunkContents, embeddingOptionsForProfile(embeddingProfile));
+      const smallVectors = smallProfile
         ? await embed(c.env, chunkContents, { model: embeddingModel(c.env, 'small') })
         : [];
       const chunkRows: CreateChunkInput[] = chunkContents.map((chunk, i) => ({
@@ -4451,35 +5104,9 @@ export function createApp(options: AppOptions = {}) {
         metadata: jsonRecord(input.metadata),
       }));
       await repo.insertChunks(chunkRows);
-      const vectorRows: VectorizeVector[] = chunkRows.map((chunk, i) => ({
-        id: chunk.id,
-        values: vectors[i] ?? [],
-        namespace: vectorNamespace(tenant, indexId),
-        metadata: vectorMetadata(
-          tenant,
-          indexId,
-          document.id,
-          chunk.chunkIndex,
-          chunk.content,
-          chunk.metadata,
-        ),
-      }));
-      if (vectorRows.length > 0) await c.env.VECTORIZE.upsert(vectorRows);
-      if (c.env.VECTORIZE_SMALL && smallVectors.length > 0) {
-        const smallRows: VectorizeVector[] = chunkRows.map((chunk, i) => ({
-          id: chunk.id,
-          values: smallVectors[i] ?? [],
-          namespace: vectorNamespace(tenant, indexId),
-          metadata: vectorMetadata(
-            tenant,
-            indexId,
-            document.id,
-            chunk.chunkIndex,
-            chunk.content,
-            chunk.metadata,
-          ),
-        }));
-        await c.env.VECTORIZE_SMALL.upsert(smallRows);
+      await upsertChunkVectors(c.env, tenant, indexId, chunkRows, vectors, vectorizeProfile);
+      if (smallProfile && smallVectors.length > 0) {
+        await upsertChunkVectors(c.env, tenant, indexId, chunkRows, smallVectors, smallProfile);
       }
       queryCache.clear();
       clearLexicalChunkCache(tenant, indexId);
@@ -4512,6 +5139,10 @@ export function createApp(options: AppOptions = {}) {
     const repo = makeRepository(c.env);
     const index = await repo.getIndex(tenant, indexId);
     if (!index) return c.json({ error: 'Index not found' }, 404);
+    const vectorizeProfile = vectorizeProfileForDimensions(c.env, index.dimensions);
+    if (!vectorizeProfile) {
+      return c.json({ error: `embedding dimensions ${index.dimensions} do not match a configured Vectorize binding` }, 400);
+    }
 
     const docsToCreate = new Map<string, { content: string; externalId: string | null }>();
     const chunkRows: CreateChunkInput[] = [];
@@ -4523,6 +5154,8 @@ export function createApp(options: AppOptions = {}) {
       if (!Array.isArray(input.embedding) || input.embedding.length === 0) {
         return c.json({ error: 'embedding is required' }, 400);
       }
+      const dimensionError = vectorDimensionError('embedding', input.embedding, vectorizeProfile.dimensions);
+      if (dimensionError) return c.json({ error: dimensionError }, 400);
       const chunkId = input.id;
       const documentId = input.document_id;
       const content = input.content;
@@ -4571,7 +5204,7 @@ export function createApp(options: AppOptions = {}) {
       });
     }
     await repo.insertChunks(chunkRows);
-    await c.env.VECTORIZE.upsert(vectorRows);
+    await vectorizeProfile.binding.upsert(vectorRows);
     queryCache.clear();
     clearLexicalChunkCache(tenant, indexId);
     await clearSharedQueryCache(c.env, tenant, indexId);
@@ -4584,9 +5217,10 @@ export function createApp(options: AppOptions = {}) {
     const repo = makeRepository(c.env);
     const doc = await repo.getDocument(tenant, docId);
     if (!doc) return c.json({ error: 'Not found' }, 404);
+    const index = await getIndexRecord(c.env, repo, tenant, doc.index_id);
     const chunkIds = await repo.getChunkIdsForDocument(tenant, docId);
-    await deleteVectors(c.env, chunkIds);
-    if (c.env.VECTORIZE_SMALL) await deleteVectors(c.env, chunkIds, 'small');
+    if (index) await deleteVectorsForIndex(c.env, index, chunkIds);
+    else await deleteVectorsFromAllProfiles(c.env, chunkIds);
     await repo.deleteDocument(tenant, docId);
     queryCache.clear();
     indexCache.clear();
@@ -4600,14 +5234,22 @@ export function createApp(options: AppOptions = {}) {
     vector: number[],
     body: QueryBody,
     timing?: RagTiming,
+    resolvedVectorizeProfile?: ConfiguredVectorizeProfile,
   ): Promise<QueryPayload> {
     const tenant = c.get('tenant');
     const indexId = c.req.param('id');
     if (!indexId) throw new Error('Index not found');
     const repo = makeRepository(c.env);
     const topK = clampTopK(body.top_k);
-    const semanticModel = semanticModelFromBody(body);
-    const binding = vectorizeBinding(c.env, semanticModel);
+    let vectorizeProfile = resolvedVectorizeProfile;
+    if (!vectorizeProfile) {
+      const indexStarted = performance.now();
+      const index = await getIndexRecord(c.env, repo, tenant, indexId);
+      if (!index) throw new Error('Index not found');
+      if (timing) timing.index_ms = elapsedMs(indexStarted);
+      vectorizeProfile = vectorizeProfileForIndex(c.env, index, body);
+    }
+    const binding = vectorizeProfile.binding;
     const filter = userVectorFilter(body.filter);
     const vectorizeStarted = performance.now();
     let query = await binding.query(vector, {
@@ -4618,7 +5260,7 @@ export function createApp(options: AppOptions = {}) {
       returnValues: false,
     });
     let vectorizePath = 'namespace';
-    if (query.matches.length === 0 && semanticModel === 'base') {
+    if (query.matches.length === 0 && vectorizeProfile.key === 'base') {
       query = await binding.query(vector, {
         topK,
         filter: { ...jsonRecord(body.filter), tenant, index_id: indexId },
@@ -4630,7 +5272,9 @@ export function createApp(options: AppOptions = {}) {
     if (timing) timing.vectorize_ms = elapsedMs(vectorizeStarted);
     if (timing) {
       timing.vectorize_path = vectorizePath;
-      timing.semantic_model = semanticModel;
+      timing.semantic_model = vectorizeProfile.semanticModel;
+      timing.vectorize_profile = vectorizeProfile.key;
+      timing.vectorize_binding = vectorizeProfile.bindingName;
     }
     const minScore = typeof body.min_score === 'number' ? body.min_score : -Infinity;
     const matches = query.matches.filter((match) => match.score >= minScore);
@@ -4755,6 +5399,9 @@ export function createApp(options: AppOptions = {}) {
     } catch (error) {
       if (error instanceof Error && error.message === 'Index not found') {
         return c.json({ error: 'Index not found' }, 404);
+      }
+      if (error instanceof Error && error.message === 'small embedding profile is not configured') {
+        return c.json({ error: error.message }, 400);
       }
       throw error;
     }
@@ -5207,25 +5854,45 @@ export function createApp(options: AppOptions = {}) {
       return c.json({ error: 'vector is required' }, 400);
     }
     const tenant = c.get('tenant');
+    const indexId = c.req.param('id');
+    const repo = makeRepository(c.env);
+    let vectorizeProfile: ConfiguredVectorizeProfile;
+    try {
+      const index = await getIndexRecord(c.env, repo, tenant, indexId);
+      if (!index) return c.json({ error: 'Index not found' }, 404);
+      vectorizeProfile = vectorizeProfileForIndex(c.env, index, body);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('embedding profile is not configured')) {
+        return c.json({ error: error.message }, 400);
+      }
+      throw error;
+    }
+    const dimensionError = vectorDimensionError('vector', body.vector, vectorizeProfile.dimensions);
+    if (dimensionError) return c.json({ error: dimensionError }, 400);
     const cacheKey = buildCacheKey({
       tenant,
-      indexId: c.req.param('id'),
+      indexId,
       vector: body.vector,
       topK: clampTopK(body.top_k),
       filter: jsonRecord(body.filter),
       minScore: typeof body.min_score === 'number' ? body.min_score : null,
-      semanticModel: semanticModelFromBody(body),
+      semanticModel: vectorizeProfile.semanticModel,
+      vectorizeProfile: vectorizeProfile.key,
+      vectorizeBinding: vectorizeProfile.bindingName,
     });
     queryCache.configure(parseCacheOptions(c.env));
     const cached = queryCache.get(cacheKey);
     if (cached) return c.json(cached, 200, withTimingHeaders(timing, 'hit', started));
     try {
-      const payload = await queryByVector(c, body.vector, body, timing);
+      const payload = await queryByVector(c, body.vector, body, timing, vectorizeProfile);
       if (payload.data.length > 0) queryCache.set(cacheKey, payload);
       return c.json(payload, 200, withTimingHeaders(timing, 'miss', started));
     } catch (error) {
       if (error instanceof Error && error.message === 'Index not found') {
         return c.json({ error: 'Index not found' }, 404);
+      }
+      if (error instanceof Error && error.message.includes('embedding profile is not configured')) {
+        return c.json({ error: error.message }, 400);
       }
       throw error;
     }

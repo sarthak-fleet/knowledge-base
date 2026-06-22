@@ -104,7 +104,9 @@ class MemoryRepository implements Repository {
       tenant: input.tenant,
       name: input.name,
       external_id: input.externalId,
-      dimensions: 768,
+      dimensions: input.dimensions,
+      embedding_model: input.embeddingModel ?? null,
+      embedding_provider: input.embeddingProvider ?? null,
       metric: 'cosine',
       created_at: new Date(0).toISOString(),
     };
@@ -269,7 +271,12 @@ class MemoryMetadataRepository implements MetadataRepository {
     }));
   }
 
-  async upsertDomain(project: string, name: string, description = ''): Promise<DomainRecord> {
+  async upsertDomain(
+    project: string,
+    name: string,
+    description = '',
+    embedding: { model?: string | null; provider?: string | null } = {},
+  ): Promise<DomainRecord> {
     await this.upsertProject(project);
     const key = `${project}:${name}`;
     const existing = this.domains.get(key);
@@ -277,6 +284,8 @@ class MemoryMetadataRepository implements MetadataRepository {
       project,
       name,
       description,
+      embedding_model: embedding.model?.trim() || existing?.embedding_model || null,
+      embedding_provider: embedding.provider?.trim() || existing?.embedding_provider || null,
       created_at: existing?.created_at ?? new Date(0).toISOString(),
       updated_at: new Date(0).toISOString(),
     };
@@ -1063,8 +1072,18 @@ class FakeQueryCacheD1 {
   }
 }
 
+const TEST_BASE_VECTOR_DIMENSIONS = 768;
+
 function vectorFor(text: string): number[] {
-  return [text.length, text.includes('alpha') ? 1 : 0, text.includes('beta') ? 1 : 0];
+  const vector = vectorOf(TEST_BASE_VECTOR_DIMENSIONS);
+  vector[0] = text.length;
+  vector[1] = text.includes('alpha') ? 1 : 0;
+  vector[2] = text.includes('beta') ? 1 : 0;
+  return vector;
+}
+
+function vectorOf(length: number, seed = 1): number[] {
+  return Array.from({ length }, (_, i) => (i === 0 ? seed : 0));
 }
 
 class FakeQueue implements Queue<KbIngestQueueMessage> {
@@ -1172,6 +1191,31 @@ function makeEnv(vectorize: FakeVectorize, db: D1Database = {
   };
 }
 
+function configureStaleFreeAiDefault(env: Env): void {
+  env.RAG_EMBED_PROVIDER = 'free_ai';
+  env.FREE_AI_EMBED_MODEL = 'gemini-embedding-001';
+  env.FREE_AI_EMBED_PROVIDER = 'gemini';
+  env.FREE_AI_EMBED_DIMENSIONS = '1536';
+  env.FREE_AI_API_KEY = 'test-free-ai-key';
+  env.FREE_AI = {
+    fetch: async (url: string | Request) => {
+      const href = typeof url === 'string' ? url : url.url;
+      if (href.endsWith('/v1/models')) {
+        return Response.json({
+          data: [{
+            id: 'voyage-3.5-lite',
+            type: 'embedding',
+            provider: 'voyage_ai',
+            dimensions: 1024,
+            enabled: true,
+          }],
+        });
+      }
+      return new Response('not found', { status: 404 });
+    },
+  } as unknown as Fetcher;
+}
+
 class FakeR2Bucket {
   objects = new Map<string, ArrayBuffer | string | ReadableStream>();
   puts: Array<{
@@ -1231,6 +1275,906 @@ describe('knowledgebase RAG Worker app', () => {
     expect((await res.json()) as { data: IndexRecord[] }).toEqual({ data: [] });
   });
 
+  it('lists embedding profiles and creates indexes with configured free-ai dimensions', async () => {
+    const repo = new MemoryRepository();
+    const app = createApp({ makeRepository: () => repo });
+    const env = makeEnv(new FakeVectorize());
+    env.RAG_EMBED_PROVIDER = 'free_ai';
+    env.FREE_AI_EMBED_MODEL = 'gemini-embedding-001';
+    env.FREE_AI_EMBED_PROVIDER = 'gemini';
+    env.FREE_AI_EMBED_DIMENSIONS = '1536';
+    env.FREE_AI_API_KEY = 'test-free-ai-key';
+    env.FREE_AI = {
+      fetch: async (url: string | Request) => {
+        const href = typeof url === 'string' ? url : url.url;
+        if (href.endsWith('/v1/models')) {
+          return Response.json({
+            data: [
+              {
+                id: 'gemini-embedding-001',
+                type: 'embedding',
+                provider: 'gemini',
+                dimensions: 1536,
+                enabled: true,
+              },
+            ],
+          });
+        }
+        return new Response('not found', { status: 404 });
+      },
+    } as unknown as Fetcher;
+
+    const models = await app.request('/v1/embedding-models', { headers: { Authorization: 'Bearer key-a' } }, env);
+    const created = await app.request('/v1/indexes', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer key-a' },
+      body: JSON.stringify({ name: 'Gemini Index' }),
+    }, env);
+
+    expect(models.status).toBe(200);
+    expect(await models.json()).toMatchObject({
+      provider: 'free_ai',
+      catalog_source: 'free_ai',
+      profiles: {
+        base: {
+          model: 'gemini-embedding-001',
+          dimensions: 1536,
+          vectorize_binding: 'VECTORIZE',
+        },
+      },
+      free_ai_models: expect.arrayContaining([
+        expect.objectContaining({
+          id: 'gemini-embedding-001',
+          provider: 'gemini',
+          dimensions: 1536,
+          selectable: true,
+        }),
+      ]),
+    });
+    expect(created.status).toBe(201);
+    expect(await created.json()).toMatchObject({
+      name: 'Gemini Index',
+      dimensions: 1536,
+      embedding_model: 'gemini-embedding-001',
+      embedding_provider: 'gemini',
+    });
+  });
+
+  it('rejects default free-ai index creation when the configured model is not live in free-ai', async () => {
+    const repo = new MemoryRepository();
+    const app = createApp({ makeRepository: () => repo });
+    const env = makeEnv(new FakeVectorize());
+    env.RAG_EMBED_PROVIDER = 'free_ai';
+    env.FREE_AI_EMBED_MODEL = 'gemini-embedding-001';
+    env.FREE_AI_EMBED_PROVIDER = 'gemini';
+    env.FREE_AI_EMBED_DIMENSIONS = '1536';
+    env.FREE_AI_API_KEY = 'test-free-ai-key';
+    env.FREE_AI = {
+      fetch: async (url: string | Request) => {
+        const href = typeof url === 'string' ? url : url.url;
+        if (href.endsWith('/v1/models')) {
+          return Response.json({
+            data: [
+              {
+                id: 'voyage-3.5-lite',
+                type: 'embedding',
+                provider: 'voyage_ai',
+                dimensions: 1024,
+                enabled: true,
+              },
+            ],
+          });
+        }
+        return new Response('not found', { status: 404 });
+      },
+    } as unknown as Fetcher;
+
+    const created = await app.request('/v1/indexes', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer key-a' },
+      body: JSON.stringify({ name: 'Unavailable Default Model' }),
+    }, env);
+
+    expect(created.status).toBe(400);
+    expect(await created.json()).toMatchObject({
+      error: 'configured base embedding model is not available in free-ai: gemini-embedding-001',
+    });
+  });
+
+  it('auto-creates knowledgebase domain indexes with live free-ai model/provider metadata', async () => {
+    const metadata = new MemoryMetadataRepository();
+    const ragRepo = new MemoryRepository();
+    const rawDocs = new FakeR2Bucket();
+    const vectorize = new FakeVectorize();
+    const embeddingCalls: Array<{ headers: Record<string, string>; body: { model?: string; dimensions?: number; input?: string[] } }> = [];
+    const app = createApp({
+      makeRepository: () => ragRepo,
+      makeMetadataRepository: () => metadata,
+    });
+    const env = makeEnv(
+      vectorize,
+      undefined as unknown as D1Database,
+      undefined,
+      rawDocs as unknown as R2Bucket,
+    );
+    env.RAG_EMBED_PROVIDER = 'free_ai';
+    env.FREE_AI_EMBED_MODEL = 'gemini-embedding-001';
+    env.FREE_AI_EMBED_PROVIDER = 'gemini';
+    env.FREE_AI_EMBED_DIMENSIONS = '1536';
+    env.FREE_AI_API_KEY = 'test-free-ai-key';
+    env.FREE_AI = {
+      fetch: async (url: string | Request, init?: RequestInit) => {
+        const href = typeof url === 'string' ? url : url.url;
+        if (href.endsWith('/v1/models')) {
+          return Response.json({
+            data: [{
+              id: 'gemini-embedding-001',
+              type: 'embedding',
+              provider: 'gemini',
+              dimensions: 1536,
+              enabled: true,
+            }],
+          });
+        }
+        if (href.endsWith('/v1/embeddings')) {
+          const headers = Object.fromEntries(new Headers(init?.headers).entries());
+          const body = JSON.parse(String(init?.body ?? '{}')) as { model?: string; dimensions?: number; input?: string[] };
+          embeddingCalls.push({ headers, body });
+          return Response.json({
+            data: (body.input ?? []).map((_, i) => ({ index: i, embedding: vectorOf(1536, i + 1) })),
+          });
+        }
+        return new Response('not found', { status: 404 });
+      },
+    } as unknown as Fetcher;
+
+    const ingested = await app.request('/v1/kb/ingest/text', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer key-a', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        domain: 'freeai-notes',
+        title: 'free-ai-note',
+        text: 'Knowledgebase domain auto-indexing should pin free-ai metadata.',
+      }),
+    }, env);
+
+    const index = [...ragRepo.indexes.values()].find((row) => row.external_id === 'kb:freeai-notes');
+    expect(ingested.status).toBe(201);
+    expect(index).toMatchObject({
+      dimensions: 1536,
+      embedding_model: 'gemini-embedding-001',
+      embedding_provider: 'gemini',
+    });
+    expect(embeddingCalls[0]).toMatchObject({
+      headers: {
+        'x-gateway-force-model': 'gemini-embedding-001',
+        'x-gateway-force-provider': 'gemini',
+      },
+      body: {
+        model: 'gemini-embedding-001',
+        dimensions: 1536,
+      },
+    });
+    expect(vectorize.vectors.size).toBeGreaterThan(0);
+  });
+
+  it('persists selected free-ai embedding models on knowledgebase domains before custom input ingestion', async () => {
+    const metadata = new MemoryMetadataRepository();
+    const ragRepo = new MemoryRepository();
+    const rawDocs = new FakeR2Bucket();
+    const vectorize = new FakeVectorize();
+    const embeddingCalls: Array<{ headers: Record<string, string>; body: { model?: string; dimensions?: number; input?: string[] } }> = [];
+    const app = createApp({
+      makeRepository: () => ragRepo,
+      makeMetadataRepository: () => metadata,
+    });
+    const env = makeEnv(
+      vectorize,
+      undefined as unknown as D1Database,
+      undefined,
+      rawDocs as unknown as R2Bucket,
+    );
+    env.RAG_EMBED_PROVIDER = 'free_ai';
+    env.FREE_AI_EMBED_MODEL = 'gemini-embedding-001';
+    env.FREE_AI_EMBED_PROVIDER = 'gemini';
+    env.FREE_AI_EMBED_DIMENSIONS = '1536';
+    env.FREE_AI_API_KEY = 'test-free-ai-key';
+    env.FREE_AI = {
+      fetch: async (url: string | Request, init?: RequestInit) => {
+        const href = typeof url === 'string' ? url : url.url;
+        if (href.endsWith('/v1/models')) {
+          return Response.json({
+            data: [
+              {
+                id: 'gemini-embedding-001',
+                type: 'embedding',
+                provider: 'gemini',
+                dimensions: 1536,
+                enabled: true,
+                aliases: ['text-embedding-3-small'],
+              },
+              {
+                id: 'other-gemini-embedding',
+                type: 'embedding',
+                provider: 'gemini',
+                dimensions: 1536,
+                enabled: true,
+              },
+            ],
+          });
+        }
+        if (href.endsWith('/v1/embeddings')) {
+          const headers = Object.fromEntries(new Headers(init?.headers).entries());
+          const body = JSON.parse(String(init?.body ?? '{}')) as { model?: string; dimensions?: number; input?: string[] };
+          embeddingCalls.push({ headers, body });
+          return Response.json({
+            data: (body.input ?? []).map((_, i) => ({ index: i, embedding: vectorOf(1536, i + 1) })),
+          });
+        }
+        return new Response('not found', { status: 404 });
+      },
+    } as unknown as Fetcher;
+
+    const savedDomain = await app.request('/v1/kb/domains', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer key-a', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'selected-domain',
+        description: 'custom input with selected embeddings',
+        embedding_model: 'text-embedding-3-small',
+      }),
+    }, env);
+    const ingested = await app.request('/v1/kb/ingest/text', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer key-a', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        domain: 'selected-domain',
+        title: 'selected note',
+        text: 'Custom input should inherit the domain embedding model.',
+      }),
+    }, env);
+
+    const domain = await savedDomain.json() as DomainRecord;
+    const index = [...ragRepo.indexes.values()].find((row) => row.external_id === 'kb:selected-domain');
+    expect(savedDomain.status).toBe(201);
+    expect(domain).toMatchObject({
+      name: 'selected-domain',
+      embedding_model: 'gemini-embedding-001',
+      embedding_provider: 'gemini',
+    });
+    expect(ingested.status).toBe(201);
+    expect(index).toMatchObject({
+      dimensions: 1536,
+      embedding_model: 'gemini-embedding-001',
+      embedding_provider: 'gemini',
+    });
+    expect(embeddingCalls[0]).toMatchObject({
+      headers: {
+        'x-gateway-force-model': 'gemini-embedding-001',
+        'x-gateway-force-provider': 'gemini',
+      },
+      body: {
+        model: 'gemini-embedding-001',
+        dimensions: 1536,
+      },
+    });
+  });
+
+  it('persists a same-request selected free-ai model before direct text ingestion', async () => {
+    const metadata = new MemoryMetadataRepository();
+    const ragRepo = new MemoryRepository();
+    const rawDocs = new FakeR2Bucket();
+    const vectorize = new FakeVectorize();
+    const app = createApp({
+      makeRepository: () => ragRepo,
+      makeMetadataRepository: () => metadata,
+    });
+    const env = makeEnv(
+      vectorize,
+      undefined as unknown as D1Database,
+      undefined,
+      rawDocs as unknown as R2Bucket,
+    );
+    env.RAG_EMBED_PROVIDER = 'free_ai';
+    env.FREE_AI_EMBED_MODEL = 'gemini-embedding-001';
+    env.FREE_AI_EMBED_PROVIDER = 'gemini';
+    env.FREE_AI_EMBED_DIMENSIONS = '1536';
+    env.FREE_AI_API_KEY = 'test-free-ai-key';
+    env.FREE_AI = {
+      fetch: async (url: string | Request, init?: RequestInit) => {
+        const href = typeof url === 'string' ? url : url.url;
+        if (href.endsWith('/v1/models')) {
+          return Response.json({
+            data: [{
+              id: 'gemini-embedding-001',
+              type: 'embedding',
+              provider: 'gemini',
+              dimensions: 1536,
+              enabled: true,
+              aliases: ['text-embedding-3-small'],
+            }, {
+              id: 'other-gemini-embedding',
+              type: 'embedding',
+              provider: 'gemini',
+              dimensions: 1536,
+              enabled: true,
+            }],
+          });
+        }
+        if (href.endsWith('/v1/embeddings')) {
+          const body = JSON.parse(String(init?.body ?? '{}')) as { input?: string[] };
+          return Response.json({
+            data: (body.input ?? []).map((_, i) => ({ index: i, embedding: vectorOf(1536, i + 1) })),
+          });
+        }
+        return new Response('not found', { status: 404 });
+      },
+    } as unknown as Fetcher;
+
+    const ingested = await app.request('/v1/kb/ingest/text', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer key-a', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        domain: 'one-shot-selected-domain',
+        title: 'selected note',
+        text: 'Custom input should be able to choose embeddings in one request.',
+        embedding_model: 'text-embedding-3-small',
+      }),
+    }, env);
+    const switched = await app.request('/v1/kb/ingest/text', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer key-a', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        domain: 'one-shot-selected-domain',
+        title: 'switch note',
+        text: 'This should not silently switch the existing domain index.',
+        embedding_model: 'other-gemini-embedding',
+      }),
+    }, env);
+
+    const index = [...ragRepo.indexes.values()].find((row) => row.external_id === 'kb:one-shot-selected-domain');
+    const domain = (await metadata.listDomains('tenant-a')).find((row) => row.name === 'one-shot-selected-domain');
+    expect(ingested.status).toBe(201);
+    expect(domain).toMatchObject({
+      embedding_model: 'gemini-embedding-001',
+      embedding_provider: 'gemini',
+    });
+    expect(index).toMatchObject({
+      embedding_model: 'gemini-embedding-001',
+      embedding_provider: 'gemini',
+      dimensions: 1536,
+    });
+    expect(switched.status).toBe(400);
+    expect(await switched.json()).toMatchObject({
+      error: 'domain index already uses embedding model gemini-embedding-001; delete and recreate the domain index before selecting other-gemini-embedding',
+    });
+  });
+
+  it('rejects inline knowledgebase ingestion when the configured free-ai default model is not live', async () => {
+    const metadata = new MemoryMetadataRepository();
+    const ragRepo = new MemoryRepository();
+    const rawDocs = new FakeR2Bucket();
+    const vectorize = new FakeVectorize();
+    const app = createApp({
+      makeRepository: () => ragRepo,
+      makeMetadataRepository: () => metadata,
+    });
+    const env = makeEnv(
+      vectorize,
+      undefined as unknown as D1Database,
+      undefined,
+      rawDocs as unknown as R2Bucket,
+    );
+    env.RAG_EMBED_PROVIDER = 'free_ai';
+    env.FREE_AI_EMBED_MODEL = 'gemini-embedding-001';
+    env.FREE_AI_EMBED_PROVIDER = 'gemini';
+    env.FREE_AI_EMBED_DIMENSIONS = '1536';
+    env.FREE_AI_API_KEY = 'test-free-ai-key';
+    env.FREE_AI = {
+      fetch: async (url: string | Request) => {
+        const href = typeof url === 'string' ? url : url.url;
+        if (href.endsWith('/v1/models')) {
+          return Response.json({
+            data: [{
+              id: 'voyage-3.5-lite',
+              type: 'embedding',
+              provider: 'voyage_ai',
+              dimensions: 1024,
+              enabled: true,
+            }],
+          });
+        }
+        return new Response('not found', { status: 404 });
+      },
+    } as unknown as Fetcher;
+
+    const ingested = await app.request('/v1/kb/ingest/text', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer key-a', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        domain: 'stale-freeai',
+        title: 'stale-free-ai',
+        text: 'This should not create an index against a stale free-ai catalog.',
+      }),
+    }, env);
+
+    expect(ingested.status).toBe(400);
+    expect(await ingested.json()).toMatchObject({
+      error: 'configured base embedding model is not available in free-ai: gemini-embedding-001',
+    });
+    expect(ragRepo.indexes.size).toBe(0);
+    expect(vectorize.vectors.size).toBe(0);
+  });
+
+  it('rejects explicit embedding model selection when free-ai is not the embedding provider', async () => {
+    const repo = new MemoryRepository();
+    const app = createApp({ makeRepository: () => repo });
+    const env = makeEnv(new FakeVectorize());
+    env.RAG_EMBED_PROVIDER = 'workers_ai';
+
+    const created = await app.request('/v1/indexes', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer key-a' },
+      body: JSON.stringify({ name: 'Ignored Model Index', embedding_model: 'gemini-embedding-001' }),
+    }, env);
+
+    expect(created.status).toBe(400);
+    expect(await created.json()).toMatchObject({
+      error: 'embedding_model selection requires RAG_EMBED_PROVIDER=free_ai',
+    });
+  });
+
+  it('creates indexes with a selected available free-ai embedding alias and pins canonical ingest calls', async () => {
+    const repo = new MemoryRepository();
+    const app = createApp({ makeRepository: () => repo });
+    const env = makeEnv(new FakeVectorize());
+    const embeddingCalls: Array<{ headers: Record<string, string>; body: { model?: string; dimensions?: number; input?: string[] } }> = [];
+    env.RAG_EMBED_PROVIDER = 'free_ai';
+    env.FREE_AI_EMBED_MODEL = 'gemini-embedding-001';
+    env.FREE_AI_EMBED_PROVIDER = 'gemini';
+    env.FREE_AI_EMBED_DIMENSIONS = '1536';
+    env.FREE_AI_API_KEY = 'test-free-ai-key';
+    env.FREE_AI = {
+      fetch: async (url: string | Request, init?: RequestInit) => {
+        const href = typeof url === 'string' ? url : url.url;
+        if (href.endsWith('/v1/models')) {
+          return Response.json({
+            data: [
+              {
+                id: 'gemini-embedding-001',
+                type: 'embedding',
+                provider: 'gemini',
+                dimensions: 1536,
+                enabled: true,
+                supports_dimensions: true,
+                aliases: ['text-embedding-3-small'],
+              },
+            ],
+          });
+        }
+        if (href.endsWith('/v1/embeddings')) {
+          const headers = Object.fromEntries(new Headers(init?.headers).entries());
+          const body = JSON.parse(String(init?.body ?? '{}')) as { model?: string; dimensions?: number; input?: string[] };
+          embeddingCalls.push({ headers, body });
+          return Response.json({
+            data: (body.input ?? []).map((_, i) => ({ index: i, embedding: vectorOf(1536, i + 1) })),
+          });
+        }
+        return new Response('not found', { status: 404 });
+      },
+    } as unknown as Fetcher;
+
+    const models = await app.request('/v1/embedding-models', { headers: { Authorization: 'Bearer key-a' } }, env);
+    const created = await app.request('/v1/indexes', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer key-a' },
+      body: JSON.stringify({ name: 'Selected Model Index', embedding_model: 'text-embedding-3-small' }),
+    }, env);
+    const index = await created.json() as IndexRecord;
+    const ingested = await app.request(`/v1/indexes/${index.id}/ingest`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer key-a' },
+      body: JSON.stringify({ documents: [{ content: 'alpha selected embedding content' }] }),
+    }, env);
+
+    expect(models.status).toBe(200);
+    expect(await models.json()).toMatchObject({
+      catalog_source: 'free_ai',
+      free_ai_models: [expect.objectContaining({
+        id: 'gemini-embedding-001',
+        enabled: true,
+        dimensions: 1536,
+        selectable: true,
+      })],
+    });
+    expect(created.status).toBe(201);
+    expect(index).toMatchObject({
+      dimensions: 1536,
+      embedding_model: 'gemini-embedding-001',
+      embedding_provider: 'gemini',
+    });
+    expect(ingested.status).toBe(201);
+    expect(embeddingCalls[0]).toMatchObject({
+      headers: {
+        'x-gateway-force-model': 'gemini-embedding-001',
+        'x-gateway-force-provider': 'gemini',
+      },
+      body: {
+        model: 'gemini-embedding-001',
+        dimensions: 1536,
+      },
+    });
+  });
+
+  it('rejects explicit embedding models that are only present in the static fallback catalog', async () => {
+    const repo = new MemoryRepository();
+    const app = createApp({ makeRepository: () => repo });
+    const env = makeEnv(new FakeVectorize());
+    env.VECTORIZE_1024 = new FakeVectorize();
+    env.RAG_EMBED_PROVIDER = 'free_ai';
+    env.FREE_AI_EMBED_MODEL = 'gemini-embedding-001';
+    env.FREE_AI_EMBED_PROVIDER = 'gemini';
+    env.FREE_AI_EMBED_DIMENSIONS = '1536';
+    env.FREE_AI_API_KEY = 'test-free-ai-key';
+    env.FREE_AI = {
+      fetch: async (url: string | Request) => {
+        const href = typeof url === 'string' ? url : url.url;
+        if (href.endsWith('/v1/models')) {
+          return Response.json({
+            data: [
+              {
+                id: 'gemini-embedding-001',
+                type: 'embedding',
+                provider: 'gemini',
+                dimensions: 1536,
+                enabled: true,
+              },
+            ],
+          });
+        }
+        return new Response('not found', { status: 404 });
+      },
+    } as unknown as Fetcher;
+
+    const created = await app.request('/v1/indexes', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer key-a' },
+      body: JSON.stringify({ name: 'Static Voyage Index', embedding_model: 'voyage-3.5-lite' }),
+    }, env);
+
+    expect(created.status).toBe(400);
+    expect(await created.json()).toMatchObject({
+      error: 'embedding model is not available in free-ai: voyage-3.5-lite',
+    });
+  });
+
+  it('exposes free-ai embedding availability but rejects disabled or unbound dimensions', async () => {
+    const repo = new MemoryRepository();
+    const app = createApp({ makeRepository: () => repo });
+    const env = makeEnv(new FakeVectorize());
+    env.RAG_EMBED_PROVIDER = 'free_ai';
+    env.FREE_AI_EMBED_MODEL = 'gemini-embedding-001';
+    env.FREE_AI_EMBED_PROVIDER = 'gemini';
+    env.FREE_AI_EMBED_DIMENSIONS = '1536';
+    env.FREE_AI_API_KEY = 'test-free-ai-key';
+    env.FREE_AI = {
+      fetch: async (url: string | Request) => {
+        const href = typeof url === 'string' ? url : url.url;
+        if (href.endsWith('/v1/models')) {
+          return Response.json({
+            data: [
+              {
+                id: 'gemini-embedding-001',
+                type: 'embedding',
+                provider: 'gemini',
+                dimensions: 1536,
+                enabled: false,
+              },
+              {
+                id: '@cf/baai/bge-base-en-v1.5',
+                type: 'embedding',
+                provider: 'workers_ai',
+                dimensions: 768,
+                enabled: true,
+              },
+            ],
+          });
+        }
+        return new Response('not found', { status: 404 });
+      },
+    } as unknown as Fetcher;
+
+    const models = await app.request('/v1/embedding-models', { headers: { Authorization: 'Bearer key-a' } }, env);
+    const disabled = await app.request('/v1/indexes', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer key-a' },
+      body: JSON.stringify({ name: 'Disabled Gemini', embedding_model: 'gemini-embedding-001' }),
+    }, env);
+    const unbound = await app.request('/v1/indexes', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer key-a' },
+      body: JSON.stringify({ name: 'Unbound BGE', embedding_model: '@cf/baai/bge-base-en-v1.5' }),
+    }, env);
+
+    expect(models.status).toBe(200);
+    expect(await models.json()).toMatchObject({
+      free_ai_models: [
+        expect.objectContaining({
+          id: 'gemini-embedding-001',
+          enabled: false,
+          compatible_profile: 'base',
+          vectorize_binding: 'VECTORIZE',
+          selectable: false,
+        }),
+        expect.objectContaining({
+          id: '@cf/baai/bge-base-en-v1.5',
+          enabled: true,
+          compatible_profile: null,
+          vectorize_binding: null,
+          selectable: false,
+        }),
+      ],
+    });
+    expect(disabled.status).toBe(400);
+    expect(await disabled.json()).toMatchObject({ error: 'embedding model is disabled in free-ai: gemini-embedding-001' });
+    expect(unbound.status).toBe(400);
+    expect(await unbound.json()).toMatchObject({
+      error: 'embedding model dimensions 768 do not match a configured Vectorize binding',
+    });
+  });
+
+  it('routes selected 1024-dimension free-ai models to a matching Vectorize binding', async () => {
+    const repo = new MemoryRepository();
+    const app = createApp({ makeRepository: () => repo });
+    const vectorize = new FakeVectorize();
+    const vectorize1024 = new FakeVectorize();
+    const env = makeEnv(vectorize);
+    env.VECTORIZE_1024 = vectorize1024;
+    env.RAG_EMBED_PROVIDER = 'free_ai';
+    env.FREE_AI_EMBED_MODEL = 'gemini-embedding-001';
+    env.FREE_AI_EMBED_PROVIDER = 'gemini';
+    env.FREE_AI_EMBED_DIMENSIONS = '1536';
+    env.FREE_AI_API_KEY = 'test-free-ai-key';
+    env.FREE_AI = {
+      fetch: async (url: string | Request, init?: RequestInit) => {
+        const href = typeof url === 'string' ? url : url.url;
+        if (href.endsWith('/v1/models')) {
+          return Response.json({
+            data: [
+              {
+                id: 'voyage-3.5-lite',
+                type: 'embedding',
+                provider: 'voyage_ai',
+                dimensions: 1024,
+                enabled: true,
+              },
+            ],
+          });
+        }
+        if (href.endsWith('/v1/embeddings')) {
+          const body = JSON.parse(String(init?.body ?? '{}')) as { input?: string[] };
+          return Response.json({
+            data: (body.input ?? []).map((_, i) => ({ index: i, embedding: vectorOf(1024, i + 1) })),
+          });
+        }
+        return new Response('not found', { status: 404 });
+      },
+    } as unknown as Fetcher;
+
+    const models = await app.request('/v1/embedding-models', { headers: { Authorization: 'Bearer key-a' } }, env);
+    const created = await app.request('/v1/indexes', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer key-a' },
+      body: JSON.stringify({ name: 'Voyage Index', embedding_model: 'voyage-3.5-lite' }),
+    }, env);
+    const index = await created.json() as IndexRecord;
+    const ingested = await app.request(`/v1/indexes/${index.id}/ingest`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer key-a' },
+      body: JSON.stringify({ documents: [{ content: 'alpha voyage embedding content' }] }),
+    }, env);
+    const queried = await app.request(`/v1/indexes/${index.id}/query`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer key-a' },
+      body: JSON.stringify({ query: 'alpha', mode: 'semantic' }),
+    }, env);
+
+    expect(models.status).toBe(200);
+    expect(await models.json()).toMatchObject({
+      vectorize_profiles: expect.arrayContaining([
+        expect.objectContaining({ key: 'dim_1024', dimensions: 1024, vectorize_binding: 'VECTORIZE_1024' }),
+      ]),
+      free_ai_models: [
+        expect.objectContaining({
+          id: 'voyage-3.5-lite',
+          compatible_profile: 'dim_1024',
+          vectorize_binding: 'VECTORIZE_1024',
+          selectable: true,
+        }),
+      ],
+    });
+    expect(created.status).toBe(201);
+    expect(index).toMatchObject({
+      dimensions: 1024,
+      embedding_model: 'voyage-3.5-lite',
+      embedding_provider: 'voyage_ai',
+    });
+    expect(ingested.status).toBe(201);
+    expect(queried.status).toBe(200);
+    expect(vectorize.vectors.size).toBe(0);
+    expect(vectorize.queries).toHaveLength(0);
+    expect(vectorize1024.vectors.size).toBeGreaterThan(0);
+    expect(vectorize1024.queries).toHaveLength(1);
+  });
+
+  it('routes selected 384-dimension free-ai models without requiring an explicit small profile', async () => {
+    const repo = new MemoryRepository();
+    const app = createApp({ makeRepository: () => repo });
+    const vectorize = new FakeVectorize();
+    const vectorize384 = new FakeVectorize();
+    const env = makeEnv(vectorize);
+    const embeddingCalls: Array<{ headers: Record<string, string>; body: { model?: string; dimensions?: number; input?: string[] } }> = [];
+    env.VECTORIZE_384 = vectorize384;
+    env.RAG_EMBED_PROVIDER = 'free_ai';
+    env.FREE_AI_EMBED_MODEL = 'gemini-embedding-001';
+    env.FREE_AI_EMBED_PROVIDER = 'gemini';
+    env.FREE_AI_EMBED_DIMENSIONS = '1536';
+    env.FREE_AI_API_KEY = 'test-free-ai-key';
+    env.FREE_AI = {
+      fetch: async (url: string | Request, init?: RequestInit) => {
+        const href = typeof url === 'string' ? url : url.url;
+        if (href.endsWith('/v1/models')) {
+          return Response.json({
+            data: [
+              {
+                id: '@cf/baai/bge-small-en-v1.5',
+                type: 'embedding',
+                provider: 'workers_ai',
+                dimensions: 384,
+                enabled: true,
+              },
+            ],
+          });
+        }
+        if (href.endsWith('/v1/embeddings')) {
+          const headers = Object.fromEntries(new Headers(init?.headers).entries());
+          const body = JSON.parse(String(init?.body ?? '{}')) as { model?: string; dimensions?: number; input?: string[] };
+          embeddingCalls.push({ headers, body });
+          return Response.json({
+            data: (body.input ?? []).map((_, i) => ({ index: i, embedding: vectorOf(384, i + 1) })),
+          });
+        }
+        return new Response('not found', { status: 404 });
+      },
+    } as unknown as Fetcher;
+
+    const models = await app.request('/v1/embedding-models', { headers: { Authorization: 'Bearer key-a' } }, env);
+    const created = await app.request('/v1/indexes', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer key-a' },
+      body: JSON.stringify({ name: 'BGE Small Index', embedding_model: '@cf/baai/bge-small-en-v1.5' }),
+    }, env);
+    const index = await created.json() as IndexRecord;
+    const ingested = await app.request(`/v1/indexes/${index.id}/ingest`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer key-a' },
+      body: JSON.stringify({ documents: [{ content: 'alpha bge small embedding content' }] }),
+    }, env);
+    const queried = await app.request(`/v1/indexes/${index.id}/query`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer key-a' },
+      body: JSON.stringify({ query: 'alpha', mode: 'semantic' }),
+    }, env);
+
+    expect(models.status).toBe(200);
+    expect(await models.json()).toMatchObject({
+      vectorize_profiles: expect.arrayContaining([
+        expect.objectContaining({ key: 'dim_384', dimensions: 384, vectorize_binding: 'VECTORIZE_384' }),
+      ]),
+      free_ai_models: [
+        expect.objectContaining({
+          id: '@cf/baai/bge-small-en-v1.5',
+          compatible_profile: 'dim_384',
+          vectorize_binding: 'VECTORIZE_384',
+          selectable: true,
+        }),
+      ],
+    });
+    expect(created.status).toBe(201);
+    expect(index).toMatchObject({
+      dimensions: 384,
+      embedding_model: '@cf/baai/bge-small-en-v1.5',
+      embedding_provider: 'workers_ai',
+    });
+    expect(ingested.status).toBe(201);
+    expect(queried.status).toBe(200);
+    expect(embeddingCalls[0]).toMatchObject({
+      headers: {
+        'x-gateway-force-model': '@cf/baai/bge-small-en-v1.5',
+        'x-gateway-force-provider': 'workers_ai',
+      },
+      body: {
+        model: '@cf/baai/bge-small-en-v1.5',
+        dimensions: 384,
+      },
+    });
+    expect(vectorize.vectors.size).toBe(0);
+    expect(vectorize.queries).toHaveLength(0);
+    expect(vectorize384.vectors.size).toBeGreaterThan(0);
+    expect(vectorize384.queries).toHaveLength(1);
+  });
+
+  it('rejects small-profile indexes when the small Vectorize binding is absent', async () => {
+    const repo = new MemoryRepository();
+    const app = createApp({ makeRepository: () => repo });
+    const env = makeEnv(new FakeVectorize());
+
+    const res = await app.request('/v1/indexes', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer key-a' },
+      body: JSON.stringify({ name: 'Small Index', embedding_profile: 'small' }),
+    }, env);
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: 'small embedding profile is not configured' });
+  });
+
+  it('uses the index embedding profile for ingest and query defaults', async () => {
+    const repo = new MemoryRepository();
+    const app = createApp({ makeRepository: () => repo });
+    const vectorize = new FakeVectorize();
+    const vectorizeSmall = new FakeVectorize();
+    const env = makeEnv(vectorize, undefined as unknown as D1Database, vectorizeSmall);
+
+    const created = await app.request('/v1/indexes', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer key-a' },
+      body: JSON.stringify({ name: 'Small Index', embedding_profile: 'small' }),
+    }, env);
+    const index = await created.json() as IndexRecord;
+    const ingested = await app.request(`/v1/indexes/${index.id}/ingest`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer key-a' },
+      body: JSON.stringify({ documents: [{ content: 'alpha small profile content' }] }),
+    }, env);
+    const queried = await app.request(`/v1/indexes/${index.id}/query`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer key-a' },
+      body: JSON.stringify({ query: 'alpha', mode: 'semantic' }),
+    }, env);
+
+    expect(created.status).toBe(201);
+    expect(index.dimensions).toBe(384);
+    expect(ingested.status).toBe(201);
+    expect(vectorize.vectors.size).toBe(0);
+    expect(vectorizeSmall.vectors.size).toBeGreaterThan(0);
+    expect(queried.status).toBe(200);
+    expect(vectorize.queries).toHaveLength(0);
+    expect(vectorizeSmall.queries).toHaveLength(1);
+  });
+
+  it('rejects explicit small semantic queries when the small binding is absent', async () => {
+    const repo = new MemoryRepository();
+    const app = createApp({ makeRepository: () => repo });
+    const env = makeEnv(new FakeVectorize());
+
+    const created = await app.request('/v1/indexes', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer key-a' },
+      body: JSON.stringify({ name: 'Base Index' }),
+    }, env);
+    const index = await created.json() as IndexRecord;
+    const queried = await app.request(`/v1/indexes/${index.id}/query`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer key-a' },
+      body: JSON.stringify({ query: 'alpha', mode: 'semantic', semantic_model: 'small' }),
+    }, env);
+
+    expect(created.status).toBe(201);
+    expect(queried.status).toBe(400);
+    expect(await queried.json()).toMatchObject({ error: 'small embedding profile is not configured' });
+  });
+
   it('serves public readiness and Prometheus-compatible metrics aliases', async () => {
     const app = createApp();
     const env = makeEnv(
@@ -1244,7 +2188,7 @@ describe('knowledgebase RAG Worker app', () => {
     const metrics = await app.request('/metrics', {}, env);
     const readyzBody = (await readyz.json()) as {
       status: string;
-      db: { ok: boolean };
+      db: { ok: boolean; schema_ok: boolean };
       vector: { ok: boolean };
       object: { ok: boolean };
       worker: { version: string; deploy_fingerprint: string };
@@ -1254,20 +2198,101 @@ describe('knowledgebase RAG Worker app', () => {
     expect(readyz.status).toBe(200);
     expect(readyzBody).toMatchObject({
       status: 'ok',
-      db: { ok: true },
+      db: { ok: true, schema_ok: true },
       vector: { ok: true },
       object: { ok: true },
       worker: {
         version: '0.1.0',
-        deploy_fingerprint: 'knowledgebase-cloudflare-full-port-2026-06-21',
+        deploy_fingerprint: 'knowledgebase-cloudflare-embedding-models-2026-06-21',
       },
     });
     expect(metrics.status).toBe(200);
     expect(metrics.headers.get('content-type')).toContain('text/plain');
     expect(metricsText).toContain('kb_worker_ready 1');
-    expect(metricsText).toContain('deploy_fingerprint="knowledgebase-cloudflare-full-port-2026-06-21"');
+    expect(metricsText).toContain('kb_d1_schema_ready 1');
+    expect(metricsText).toContain('deploy_fingerprint="knowledgebase-cloudflare-embedding-models-2026-06-21"');
     expect(metricsText).toContain('kb_queries_total');
     expect(metricsText).toContain('kb_ingest_files_total');
+  });
+
+  it('marks health degraded when the required D1 schema migration is missing', async () => {
+    const app = createApp();
+    const db = {
+      prepare: (sql: string) => ({
+        first: async () => {
+          if (sql.includes('embedding_model')) throw new Error('no such column: embedding_model');
+          return { ok: 1 };
+        },
+      }),
+    } as unknown as D1Database;
+    const env = makeEnv(
+      new FakeVectorize(),
+      db,
+      undefined,
+      new FakeR2Bucket() as unknown as R2Bucket,
+    );
+
+    const health = await app.request('/v1/healthz', {}, env);
+    const readyz = await app.request('/readyz', {}, env);
+    const metrics = await app.request('/metrics', {}, env);
+    const healthBody = (await health.json()) as { ok: boolean; d1: boolean; d1_schema: boolean; error: string };
+    const readyzBody = (await readyz.json()) as { status: string; db: { ok: boolean; schema_ok: boolean; error: string } };
+    const metricsText = await metrics.text();
+
+    expect(health.status).toBe(503);
+    expect(healthBody).toMatchObject({
+      ok: false,
+      d1: true,
+      d1_schema: false,
+    });
+    expect(healthBody.error).toContain('embedding_model');
+    expect(readyz.status).toBe(503);
+    expect(readyzBody).toMatchObject({
+      status: 'degraded',
+      db: { ok: false, schema_ok: false },
+    });
+    expect(metricsText).toContain('kb_worker_ready 0');
+    expect(metricsText).toContain('kb_d1_schema_ready 0');
+  });
+
+  it('allows local cutover smoke to skip the D1 schema check without reporting schema ready', async () => {
+    const app = createApp();
+    const db = {
+      prepare: (sql: string) => ({
+        first: async () => {
+          if (sql.includes('embedding_model')) throw new Error('no such table: indexes');
+          return { ok: 1 };
+        },
+      }),
+    } as unknown as D1Database;
+    const env = makeEnv(
+      new FakeVectorize(),
+      db,
+      undefined,
+      new FakeR2Bucket() as unknown as R2Bucket,
+    );
+    env.RAG_ALLOW_UNMIGRATED_LOCAL_D1 = 'true';
+
+    const health = await app.request('/v1/healthz', {}, env);
+    const readyz = await app.request('/readyz', {}, env);
+    const healthBody = (await health.json()) as { ok: boolean; d1_schema: boolean; d1_schema_check_skipped: boolean };
+    const readyzBody = (await readyz.json()) as { status: string; db: { ok: boolean; schema_ok: boolean; schema_check_skipped: boolean } };
+
+    expect(health.status).toBe(200);
+    expect(healthBody).toMatchObject({
+      ok: true,
+      d1_schema: false,
+      d1_schema_check_skipped: true,
+    });
+    expect(readyz.status).toBe(200);
+    expect(readyzBody).toMatchObject({
+      status: 'ok',
+      db: {
+        ok: true,
+        schema_ok: false,
+        schema_check_skipped: true,
+      },
+    });
   });
 
   it('allows an explicit deploy fingerprint override in health metadata', async () => {
@@ -1529,7 +2554,7 @@ describe('knowledgebase RAG Worker app', () => {
     const trace = await app.request(`/query/trace/${queryBody.trace_id}`, { headers: { Authorization: 'Bearer key-a' } }, env);
 
     expect(health.status).toBe(200);
-    expect(healthBody.deploy_fingerprint).toBe('knowledgebase-cloudflare-full-port-2026-06-21');
+    expect(healthBody.deploy_fingerprint).toBe('knowledgebase-cloudflare-embedding-models-2026-06-21');
     expect(noAuthDomains.status).toBe(401);
     expect(domain.status).toBe(201);
     expect(await domains.json()).toMatchObject({ data: [expect.objectContaining({ name: 'manuals' })] });
@@ -3442,6 +4467,278 @@ describe('knowledgebase RAG Worker app', () => {
 	    expect(vectorize.vectors.size).toBeGreaterThan(0);
 	  });
 
+  it('rejects queued knowledgebase ingestion before enqueue when the configured free-ai default model is not live', async () => {
+    const repo = new MemoryRepository();
+    const metadata = new MemoryMetadataRepository();
+    const rawDocs = new FakeR2Bucket();
+    const vectorize = new FakeVectorize();
+    const queue = new FakeQueue();
+    const app = createApp({
+      makeRepository: () => repo,
+      makeMetadataRepository: () => metadata,
+    });
+    const env = makeEnv(
+      vectorize,
+      undefined as unknown as D1Database,
+      undefined,
+      rawDocs as unknown as R2Bucket,
+      queue,
+    );
+    configureStaleFreeAiDefault(env);
+    const auth = { Authorization: 'Bearer key-a', 'Content-Type': 'application/json' };
+    await metadata.registerFile({
+      id: 'file-stale-queued',
+      project: 'tenant-a',
+      domain: 'queued-stale-freeai',
+      filename: 'queued.txt',
+      mime: 'text/plain',
+      bytes: 20,
+      contentHash: 'sha256-stale-queued',
+      objectKey: 'raw/queued-stale-freeai/sha256-stale-queued',
+    });
+    const jobsBeforeRun = await metadata.listIngestJobs('tenant-a', 'queued-stale-freeai');
+
+    const queued = await app.request(
+      '/v1/kb/ingest/run',
+      {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({ domain: 'queued-stale-freeai', run_id: 'run-stale-freeai' }),
+      },
+      env,
+    );
+
+    expect(queued.status).toBe(400);
+    expect(await queued.json()).toMatchObject({
+      error: 'configured base embedding model is not available in free-ai: gemini-embedding-001',
+    });
+    expect(queue.sent).toEqual([]);
+    expect(await metadata.listIngestJobs('tenant-a', 'queued-stale-freeai')).toEqual(jobsBeforeRun);
+    expect(jobsBeforeRun).toEqual([]);
+    expect(repo.indexes.size).toBe(0);
+    expect(vectorize.vectors.size).toBe(0);
+  });
+
+  it('rejects new knowledgebase staging before writes when the configured free-ai default model is not live', async () => {
+    const repo = new MemoryRepository();
+    const metadata = new MemoryMetadataRepository();
+    const rawDocs = new FakeR2Bucket();
+    const app = createApp({
+      makeRepository: () => repo,
+      makeMetadataRepository: () => metadata,
+    });
+    const env = makeEnv(
+      new FakeVectorize(),
+      undefined as unknown as D1Database,
+      undefined,
+      rawDocs as unknown as R2Bucket,
+    );
+    configureStaleFreeAiDefault(env);
+    const auth = { Authorization: 'Bearer key-a', 'Content-Type': 'application/json' };
+
+    const registered = await app.request(
+      '/v1/kb/files',
+      {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({
+          domain: 'stale-stage',
+          filename: 'guide.txt',
+          mime: 'text/plain',
+          bytes: 12,
+          content_hash: 'sha256-stale-stage',
+          object_key: 'raw/stale-stage/sha256-stale-stage',
+        }),
+      },
+      env,
+    );
+    const uploadForm = new FormData();
+    uploadForm.set('domain', 'stale-stage');
+    uploadForm.set('file', new File(['hello upload'], 'guide.txt', { type: 'text/plain' }));
+    const uploaded = await app.request(
+      '/v1/kb/files/upload',
+      { method: 'POST', headers: { Authorization: 'Bearer key-a' }, body: uploadForm },
+      env,
+    );
+    const inferForm = new FormData();
+    inferForm.set('domain', 'stale-stage');
+    inferForm.set('file', new File(['id,name\n1,Acme'], 'rows.csv', { type: 'text/csv' }));
+    const inferredUpload = await app.request(
+      '/v1/kb/schemas/infer-upload',
+      { method: 'POST', headers: { Authorization: 'Bearer key-a' }, body: inferForm },
+      env,
+    );
+    const asyncText = await app.request(
+      '/v1/kb/ingest/text',
+      {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({
+          domain: 'stale-stage',
+          title: 'async-note',
+          text: 'Async text should not stage when embeddings are stale.',
+          async: true,
+        }),
+      },
+      env,
+    );
+    const autoImport = await app.request(
+      '/v1/kb/sources/import',
+      {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({
+          domain: 'stale-stage',
+          source: 'url',
+          config: { urls: ['data:text/plain,hello'] },
+        }),
+      },
+      env,
+    );
+
+    for (const response of [registered, uploaded, inferredUpload, asyncText, autoImport]) {
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({
+        error: 'configured base embedding model is not available in free-ai: gemini-embedding-001',
+      });
+    }
+    expect(rawDocs.puts).toEqual([]);
+    expect(await metadata.listFiles('tenant-a', 'stale-stage')).toEqual([]);
+    expect(await metadata.listIngestJobs('tenant-a', 'stale-stage')).toEqual([]);
+    expect(repo.indexes.size).toBe(0);
+
+    const importOnly = await app.request(
+      '/v1/kb/sources/import',
+      {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({
+          domain: 'stale-stage',
+          source: 'url',
+          auto_ingest: false,
+          config: { urls: ['data:text/plain,hello'] },
+        }),
+      },
+      env,
+    );
+    expect(importOnly.status).toBe(200);
+    expect(await importOnly.json()).toMatchObject({ file_count: 1, enqueued: 0 });
+    expect(rawDocs.puts).toHaveLength(1);
+    expect(await metadata.listIngestJobs('tenant-a', 'stale-stage')).toEqual([]);
+  });
+
+  it('rejects knowledgebase reprocess and requeue before mutation when free-ai readiness fails', async () => {
+    const repo = new MemoryRepository();
+    const metadata = new MemoryMetadataRepository();
+    const app = createApp({
+      makeRepository: () => repo,
+      makeMetadataRepository: () => metadata,
+    });
+    const env = makeEnv(new FakeVectorize());
+    configureStaleFreeAiDefault(env);
+    const auth = { Authorization: 'Bearer key-a', 'Content-Type': 'application/json' };
+    const file = await metadata.registerFile({
+      id: 'file-stale-reprocess',
+      project: 'tenant-a',
+      domain: 'stale-reprocess',
+      filename: 'guide.txt',
+      mime: 'text/plain',
+      bytes: 12,
+      contentHash: 'sha256-stale-reprocess',
+      objectKey: 'raw/stale-reprocess/sha256-stale-reprocess',
+    });
+    await metadata.setFileStatus('tenant-a', file.id, 'ready');
+    await metadata.insertSchema('tenant-a', 'stale-reprocess', 'default', {
+      domain: 'stale-reprocess',
+      name: 'default',
+      version: 1,
+      description: '',
+      vocabulary: {},
+      entities: [{
+        name: 'Guide',
+        description: '',
+        fields: [],
+        summary_field: null,
+        aliases: [],
+        graph_route: false,
+        tabular: false,
+      }],
+      relationships: [],
+    });
+    const filesBefore = await metadata.listFiles('tenant-a', 'stale-reprocess');
+
+    const schemaReprocess = await app.request(
+      '/v1/kb/schemas/stale-reprocess/reprocess',
+      { method: 'POST', headers: auth },
+      env,
+    );
+    const fileReprocess = await app.request(
+      `/v1/kb/files/${file.id}/reprocess`,
+      { method: 'POST', headers: auth },
+      env,
+    );
+    const sourceRequeue = await app.request(
+      '/v1/kb/source-sets/domain:stale-reprocess/actions',
+      { method: 'POST', headers: auth, body: JSON.stringify({ action: 'requeue_all' }) },
+      env,
+    );
+
+    for (const response of [schemaReprocess, fileReprocess, sourceRequeue]) {
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({
+        error: 'configured base embedding model is not available in free-ai: gemini-embedding-001',
+      });
+    }
+    expect(await metadata.listFiles('tenant-a', 'stale-reprocess')).toEqual(filesBefore);
+    expect(await metadata.listIngestJobs('tenant-a', 'stale-reprocess')).toEqual([]);
+    expect(repo.indexes.size).toBe(0);
+  });
+
+  it('rejects knowledgebase scheduling when an existing stored free-ai index model is no longer live', async () => {
+    const repo = new MemoryRepository();
+    const metadata = new MemoryMetadataRepository();
+    const rawDocs = new FakeR2Bucket();
+    const vectorize1024 = new FakeVectorize();
+    const app = createApp({
+      makeRepository: () => repo,
+      makeMetadataRepository: () => metadata,
+    });
+    const env = makeEnv(
+      new FakeVectorize(),
+      undefined as unknown as D1Database,
+      undefined,
+      rawDocs as unknown as R2Bucket,
+    );
+    env.VECTORIZE_1024 = vectorize1024;
+    configureStaleFreeAiDefault(env);
+    await repo.createIndex({
+      id: 'idx-existing-stale',
+      tenant: 'tenant-a',
+      name: 'Knowledgebase existing-stale',
+      externalId: 'kb:existing-stale',
+      dimensions: 1024,
+      embeddingModel: 'retired-embedding-model',
+      embeddingProvider: 'gemini',
+    });
+    const form = new FormData();
+    form.set('domain', 'existing-stale');
+    form.set('file', new File(['existing stale model'], 'guide.txt', { type: 'text/plain' }));
+
+    const uploaded = await app.request(
+      '/v1/kb/files/upload',
+      { method: 'POST', headers: { Authorization: 'Bearer key-a' }, body: form },
+      env,
+    );
+
+    expect(uploaded.status).toBe(400);
+    expect(await uploaded.json()).toMatchObject({
+      error: 'embedding model is not available in free-ai: retired-embedding-model',
+    });
+    expect(rawDocs.puts).toEqual([]);
+    expect(await metadata.listFiles('tenant-a', 'existing-stale')).toEqual([]);
+    expect(vectorize1024.vectors.size).toBe(0);
+  });
+
   it('orchestrates queued ingestion through a Cloudflare Workflow binding when configured', async () => {
     const repo = new MemoryRepository();
     const metadata = new MemoryMetadataRepository();
@@ -3961,6 +5258,15 @@ describe('knowledgebase RAG Worker app', () => {
 	    expect(html).toContain('/drilldown');
 	    expect(html).toContain('Load Trace Drilldown');
 	    expect(html).toContain('id="semanticModel"');
+	    expect(html).toContain('function embeddingSelection()');
+	    expect(html).toContain('function applyEmbeddingSelectionForm(form)');
+	    expect(html).toContain("applyEmbeddingSelectionForm(form);");
+	    expect(html).toContain("return embeddingModel ? { embedding_model: embeddingModel } : {};");
+	    expect(html).toContain('...embeddingSelection()');
+	    expect(html).toContain('if (embeddingModel) payload.embedding_model = embeddingModel;');
+	    expect(html).toContain("else payload.embedding_profile = $('embeddingProfile').value;");
+	    expect(html).toContain("if (body.catalog_source !== 'free_ai') return;");
+	    expect(html).toContain('item && item.selectable === true');
 	    expect(html).toContain('id="minScore"');
 	    expect(html).toContain('id="scope"');
 	    expect(html).toContain('id="queryFilter"');
@@ -5172,12 +6478,64 @@ describe('knowledgebase RAG Worker app', () => {
       {
         method: 'POST',
         headers: { Authorization: 'Bearer key-b', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vector: [1, 0, 0] }),
+        body: JSON.stringify({ vector: vectorOf(index.dimensions) }),
       },
       env,
     );
 
     expect(query.status).toBe(404);
+  });
+
+  it('rejects caller-supplied vectors that do not match the index dimensions', async () => {
+    const repo = new MemoryRepository();
+    const vectorize = new FakeVectorize();
+    const app = createApp({ makeRepository: () => repo });
+    const env = makeEnv(vectorize);
+    const auth = { Authorization: 'Bearer key-a', 'Content-Type': 'application/json' };
+
+    const created = await app.request(
+      '/v1/indexes',
+      { method: 'POST', headers: auth, body: JSON.stringify({ name: 'Dimension Guard' }) },
+      env,
+    );
+    const index = (await created.json()) as IndexRecord;
+
+    const ingest = await app.request(
+      `/v1/indexes/${index.id}/ingest-vectors`,
+      {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({
+          chunks: [{
+            id: 'bad-dim-chunk',
+            document_id: 'bad-dim-doc',
+            content: 'bad dimension vector',
+            embedding: [1, 0, 0],
+          }],
+        }),
+      },
+      env,
+    );
+    const query = await app.request(
+      `/v1/indexes/${index.id}/query-vector`,
+      {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({ vector: [1, 0, 0] }),
+      },
+      env,
+    );
+
+    expect(ingest.status).toBe(400);
+    expect(await ingest.json()).toMatchObject({
+      error: `embedding dimensions 3 do not match expected dimensions ${index.dimensions}`,
+    });
+    expect(query.status).toBe(400);
+    expect(await query.json()).toMatchObject({
+      error: `vector dimensions 3 do not match expected dimensions ${index.dimensions}`,
+    });
+    expect(vectorize.vectors.size).toBe(0);
+    expect(vectorize.queries).toHaveLength(0);
   });
 
   it('does not let caller filters override server tenant and index scope', async () => {
@@ -5210,7 +6568,7 @@ describe('knowledgebase RAG Worker app', () => {
             document_id: 'doc-a',
             document_content: 'tenant a document',
             content: 'tenant a secret',
-            embedding: [10, 0, 0],
+            embedding: vectorOf(indexA.dimensions, 10),
             chunk_index: 0,
           }],
         }),
@@ -5228,7 +6586,7 @@ describe('knowledgebase RAG Worker app', () => {
             document_id: 'doc-b',
             document_content: 'tenant b document',
             content: 'tenant b visible',
-            embedding: [1, 0, 0],
+            embedding: vectorOf(indexB.dimensions),
             chunk_index: 0,
           }],
         }),
@@ -5242,7 +6600,7 @@ describe('knowledgebase RAG Worker app', () => {
         method: 'POST',
         headers: authB,
         body: JSON.stringify({
-          vector: [1, 0, 0],
+          vector: vectorOf(indexB.dimensions),
           filter: { tenant: 'tenant-a', index_id: indexA.id },
         }),
       },
@@ -5284,7 +6642,7 @@ describe('knowledgebase RAG Worker app', () => {
             document_id: 'doc-index-cache',
             document_content: 'alpha cache document',
             content: 'alpha cache document',
-            embedding: [1, 1, 0],
+            embedding: vectorOf(index.dimensions),
             chunk_index: 0,
           }],
         }),
@@ -5298,7 +6656,7 @@ describe('knowledgebase RAG Worker app', () => {
       {
         method: 'POST',
         headers: auth,
-        body: JSON.stringify({ vector: [1, 1, 0], top_k: 1 }),
+        body: JSON.stringify({ vector: vectorOf(index.dimensions), top_k: 1 }),
       },
       env,
     );
@@ -5340,7 +6698,7 @@ describe('knowledgebase RAG Worker app', () => {
               document_id: 'doc-1',
               document_content: 'alpha original document',
               content: 'alpha original',
-              embedding: [1, 1, 0],
+              embedding: vectorOf(index.dimensions),
               chunk_index: 0,
               metadata: { imported: true },
             },
@@ -5355,6 +6713,6 @@ describe('knowledgebase RAG Worker app', () => {
     expect(embedCalls).toBe(0);
     expect(repo.documents.get('doc-1')?.content).toBe('alpha original document');
     expect(repo.chunks.get('chunk-1')?.metadata).toEqual({ imported: true });
-    expect(vectorize.vectors.get('chunk-1')?.values).toEqual([1, 1, 0]);
+    expect(vectorize.vectors.get('chunk-1')?.values).toEqual(vectorOf(index.dimensions));
   });
 });
