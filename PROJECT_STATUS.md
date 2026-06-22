@@ -306,8 +306,8 @@ Worker: Fleet consumer → Hono → free-ai/Workers AI embed → Vectorize query
   reliability, observability, and ease-of-use evidence from readiness reports,
   operator reports, and benchmarks so missing proof cannot be mistaken for
   production excellence. `pnpm run proof:a-plus` generates the deployed
-  readiness, operator, lexical search, semantic answer, and scorecard JSON proof
-  bundle for one domain. Operator
+  readiness, deterministic query eval, operator, lexical search, semantic
+  answer, and scorecard JSON proof bundle for one domain. Operator
   reports automatically prove hosted UI, custom text input, async progress, and
   user-visible UI copy that hides retrieval/storage internals. `benchmark:rag`
   emits mode-labeled lexical/semantic/hybrid evidence for index, domain search,

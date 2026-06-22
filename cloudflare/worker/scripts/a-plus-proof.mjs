@@ -100,6 +100,7 @@ function buildPlan(options) {
     required_grade: options.requireGrade,
     steps: [
       'deploy-readiness',
+      'query-eval',
       'operator-report',
       'benchmark:kb-search:lexical',
       'benchmark:kb-query:semantic',
@@ -125,6 +126,56 @@ async function writeJson(outputDir, name, payload) {
   return path;
 }
 
+function queryEvalCases(input) {
+  const parsed = typeof input === 'string' ? JSON.parse(input) : input;
+  const queries = Array.isArray(parsed?.queries) ? parsed.queries : [];
+  return queries
+    .map((query, index) => {
+      const question = String(query?.query || '').trim();
+      if (!question) return null;
+      const expected = Array.isArray(query?.expected_contains)
+        ? query.expected_contains.map(String).find((value) => value.trim())
+        : null;
+      return {
+        id: query?.id ? String(query.id) : `q${index + 1}`,
+        question,
+        ...(expected ? { expected_text: expected } : {}),
+      };
+    })
+    .filter(Boolean);
+}
+
+async function requestJson(url, { key, method = 'GET', body } = {}) {
+  const res = await fetch(url, {
+    method,
+    headers: {
+      Authorization: `Bearer ${key}`,
+      'Content-Type': 'application/json',
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(`${method} ${url} failed ${res.status}: ${JSON.stringify(payload)}`);
+  return payload;
+}
+
+export async function runQueryEvalProof(options) {
+  const cases = queryEvalCases(options.input);
+  if (cases.length === 0) throw new Error('benchmark input queries are required for query eval proof');
+  return requestJson(`${options.baseUrl}/v1/kb/evals/query`, {
+    key: options.key,
+    method: 'POST',
+    body: {
+      domain: options.domain,
+      mode: 'semantic',
+      top_k: options.topK,
+      answer_mode: 'extractive',
+      ai_judge: false,
+      cases,
+    },
+  });
+}
+
 export async function runAPlusProof(options) {
   const plan = buildPlan(options);
   if (options.dryRun) {
@@ -143,6 +194,13 @@ export async function runAPlusProof(options) {
     baseUrl: options.baseUrl,
     key: options.key,
     expectedDeployFingerprint: options.expectedDeployFingerprint,
+  });
+  const queryEval = await runQueryEvalProof({
+    baseUrl: options.baseUrl,
+    key: options.key,
+    domain: options.domain,
+    input,
+    topK: options.topK,
   });
   const operatorReport = await runOperatorReport({
     baseUrl: options.baseUrl,
@@ -192,6 +250,7 @@ export async function runAPlusProof(options) {
 
   const artifacts = {
     readiness: await writeJson(options.outputDir, 'readiness.json', readinessReport),
+    query_eval: await writeJson(options.outputDir, 'query-eval.json', queryEval),
     operator_report: await writeJson(options.outputDir, 'operator-report.json', operatorReport),
     benchmark_lexical: await writeJson(options.outputDir, 'benchmark-lexical.json', lexicalBenchmark),
     benchmark_semantic: await writeJson(options.outputDir, 'benchmark-semantic.json', semanticBenchmark),
@@ -204,6 +263,7 @@ export async function runAPlusProof(options) {
     plan,
     artifacts,
     readiness: readinessReport,
+    query_eval: queryEval,
     operator_report: operatorReport,
     benchmarks: [lexicalBenchmark, semanticBenchmark],
     scorecard,
@@ -241,4 +301,4 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
 }
 
-export { buildPlan, parseArgs };
+export { buildPlan, parseArgs, queryEvalCases };
