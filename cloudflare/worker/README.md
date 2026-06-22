@@ -654,10 +654,28 @@ index; it does not create, ingest, or delete data.
 
 ## A/A+ Scorecard
 
-Use the scorecard to turn operator-report and benchmark evidence into a
-repeatable readiness grade. It is intentionally evidence-gated: missing
-benchmarks, eval reports, traces, or ingestion status lower the grade instead of
-letting the service claim A/A+ by assumption.
+Use the proof runner to generate readiness, operator, benchmark, and scorecard
+artifacts for one deployed domain. It is intentionally evidence-gated: missing
+benchmarks, eval reports, traces, deploy readiness, or ingestion status lower
+the grade instead of letting the service claim A/A+ by assumption.
+
+```bash
+RAG_SERVICE_KEY=<service-key> \
+pnpm run proof:a-plus -- \
+  --domain <domain> \
+  --output-dir /tmp/kb-a-plus-proof
+```
+
+The command is read-only except for writing local JSON proof artifacts. It calls
+deployed health/readiness, authenticated inventory, lexical `kb-search`,
+semantic `kb-query`, and then the A/A+ scorecard. Use `--dry-run` to inspect the
+planned proof without network calls or file writes:
+
+```bash
+pnpm run proof:a-plus -- --domain <domain> --dry-run
+```
+
+For debugging individual artifacts, run the lower-level commands directly:
 
 ```bash
 RAG_SERVICE_KEY=<service-key> \

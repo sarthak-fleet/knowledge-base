@@ -33,6 +33,7 @@
     "release-plan:embedding-model": "node scripts/embedding-model-release-plan.mjs",
     "release-status:embedding-model": "node scripts/embedding-model-release-status.mjs",
     "scorecard:a-plus": "node scripts/a-plus-scorecard.mjs",
+    "proof:a-plus": "node scripts/a-plus-proof.mjs",
     "operator:report": "node scripts/operator-report.mjs",
     "readiness": "node scripts/deploy-readiness.mjs",
     "readiness:auth": "node scripts/deploy-readiness.mjs --require-auth",

@@ -67,4 +67,10 @@ describe('package scripts', () => {
       'node scripts/benchmark-rag.mjs',
     );
   });
+
+  it('keeps a named A plus proof bundle command', () => {
+    expect(pkg.scripts?.['proof:a-plus']).toBe(
+      'node scripts/a-plus-proof.mjs',
+    );
+  });
 });
