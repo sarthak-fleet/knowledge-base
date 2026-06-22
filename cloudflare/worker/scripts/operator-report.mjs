@@ -179,15 +179,31 @@ function costSignals({ traces, evalSummary, benchmark }) {
   };
 }
 
+function visibleText(html) {
+  return String(html || '')
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function uiCapabilities(ui) {
   const text = ui?.text ?? '';
+  const rendered = visibleText(text);
   const hasHostedUi = ui?.ok === true && /Knowledgebase Cloudflare/.test(text);
   return {
     hosted_ui: hasHostedUi,
     custom_input: hasHostedUi && /\/v1\/kb\/ingest\/text/.test(text),
     async_status: hasHostedUi && /loadRunProgress|\/v1\/kb\/ingest\/runs/.test(text),
     hides_rag_internals: hasHostedUi
-      && !/\b(Index id|Embedding|Vectorize|chunk|RAG)\b/i.test(text),
+      && !/\b(Index id|Embedding|Vectorize|chunk|RAG)\b/i.test(rendered),
   };
 }
 

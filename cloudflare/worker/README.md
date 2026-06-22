@@ -627,7 +627,7 @@ newly-upserted vectors queryable before accuracy is scored.
 
 Use the read-only operator report to inspect existing projects, domains, indexes,
 files, jobs, source sets, recent traces, eval summaries, selectable embedding
-models, and cost-risk signals from one command:
+models, hosted UI capability evidence, and cost-risk signals from one command:
 
 ```bash
 RAG_BASE_URL=https://knowledgebase.<your-subdomain>.workers.dev \
@@ -672,8 +672,10 @@ pnpm run scorecard:a-plus -- \
   --require-grade A
 ```
 
-For A+ evidence, pass a combined JSON object with multiple route-specific
-benchmarks and capability proof:
+For A+ performance evidence, pass a combined JSON object with multiple
+route-specific benchmarks. The operator report already includes capability proof
+for the hosted UI, custom text input, async progress, and whether visible UI copy
+hides retrieval/storage internals:
 
 ```json
 {
@@ -681,13 +683,7 @@ benchmarks and capability proof:
   "benchmarks": [
     { "mode": "lexical", "hit_rate": 0.95, "latency": { "p95_ms": 250 } },
     { "mode": "semantic", "hit_rate": 0.92, "latency": { "p95_ms": 1800 } }
-  ],
-  "capabilities": {
-    "hosted_ui": true,
-    "custom_input": true,
-    "async_status": true,
-    "hides_rag_internals": true
-  }
+  ]
 }
 ```
 

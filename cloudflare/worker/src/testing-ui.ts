@@ -167,31 +167,31 @@ export const TESTING_UI_HTML = `<!doctype html>
         <button class="secondary" id="loadProjects">Load Projects</button>
         <button class="secondary" id="loadDomains">Load Domains</button>
         <button class="secondary" id="loadFiles">Load Files</button>
-        <button class="secondary" id="loadIndexes">Load Indexes</button>
-        <button class="secondary" id="loadEmbeddingModelsAdmin">Load Embedding Models</button>
+        <button class="secondary" id="loadIndexes">Load Collections</button>
+        <button class="secondary" id="loadEmbeddingModelsAdmin">Load Search Models</button>
         <button class="secondary" id="loadSourceSetsAdmin">Load Source Sets</button>
         <button class="secondary" id="loadJobsAdmin">Load Jobs</button>
         <button class="secondary" id="loadTracesAdmin">Load Traces</button>
         <button class="secondary" id="loadEvalReportsAdmin">Load Eval Reports</button>
       </section>
       <section class="span-4 stack">
-        <h2>Index</h2>
-        <label>Index name <input id="indexName" value="Test Index"></label>
-        <label>Embedding profile
+        <h2>Collection</h2>
+        <label>Collection name <input id="indexName" value="Test Collection"></label>
+        <label>Search profile
           <select id="embeddingProfile">
             <option value="base">base</option>
             <option value="small">small</option>
           </select>
         </label>
-        <label>Embedding model
+        <label>Search model
           <select id="embeddingModel">
             <option value="">profile default</option>
           </select>
         </label>
-        <button class="secondary" id="loadEmbeddingModels">Load Embedding Models</button>
-        <button id="createIndex">Create Index</button>
-        <label>Index id <input id="indexId"></label>
-        <label>Raw text <textarea id="rawText">Paste text to ingest into Vectorize.</textarea></label>
+        <button class="secondary" id="loadEmbeddingModels">Load Search Models</button>
+        <button id="createIndex">Create Collection</button>
+        <label>Collection id <input id="indexId"></label>
+        <label>Raw text <textarea id="rawText">Paste text to add to this collection.</textarea></label>
         <button id="ingestText">Ingest Text</button>
       </section>
       <section class="span-4 stack">
@@ -204,16 +204,16 @@ export const TESTING_UI_HTML = `<!doctype html>
             <option value="semantic">semantic</option>
           </select>
         </label>
-        <label>Top K <input id="topK" type="number" min="1" max="50" value="5"></label>
-        <label>Semantic model
+        <label>Result limit <input id="topK" type="number" min="1" max="50" value="5"></label>
+        <label>Search model
           <select id="semanticModel">
             <option value="base">base</option>
             <option value="small">small</option>
           </select>
         </label>
-        <label>Min score <input id="minScore" type="number" min="0" max="1" step="0.01" placeholder="index query only"></label>
-        <label><input id="rerank" type="checkbox" checked> Rerank</label>
-        <label>Rerank model
+        <label>Min score <input id="minScore" type="number" min="0" max="1" step="0.01" placeholder="collection search only"></label>
+        <label><input id="rerank" type="checkbox" checked> Improve ranking</label>
+        <label>Ranking method
           <select id="rerankModel">
             <option value="keyword">keyword</option>
             <option value="workers_ai">Workers AI</option>
@@ -226,11 +226,11 @@ export const TESTING_UI_HTML = `<!doctype html>
           </select>
         </label>
         <label>Answer model <input id="answerModel" value="@cf/meta/llama-3.1-8b-instruct"></label>
-        <label><input id="mmr" type="checkbox" checked> MMR</label>
+        <label><input id="mmr" type="checkbox" checked> Diverse results</label>
 	        <label><input id="queryRewrite" type="checkbox" checked> Rewrite</label>
 	        <label><input id="queryDecompose" type="checkbox" checked> Decompose</label>
-	        <label><input id="aiJudge" type="checkbox"> AI judge eval</label>
-	        <label>Judge model <input id="judgeModel" value="@cf/meta/llama-3.1-8b-instruct"></label>
+	        <label><input id="aiJudge" type="checkbox"> AI answer review</label>
+	        <label>Review model <input id="judgeModel" value="@cf/meta/llama-3.1-8b-instruct"></label>
         <label>Markdown conversion
           <select id="markdownConversion">
             <option value="">env/default</option>
@@ -242,7 +242,7 @@ export const TESTING_UI_HTML = `<!doctype html>
         <label>Vision OCR model <input id="visionOcrModel" placeholder="@cf/..."></label>
         <label><input id="parseTextPreview" type="checkbox"> Text preview</label>
 	        <label>Scope <input id="scope" placeholder="optional answer scope"></label>
-        <label>Vector filter <textarea id="queryFilter">{}</textarea></label>
+        <label>Advanced filter <textarea id="queryFilter">{}</textarea></label>
         <label>Session id <input id="sessionId" placeholder="optional"></label>
         <label>Query <textarea id="query">What is this corpus about?</textarea></label>
         <button id="runQuery">Run Query</button>

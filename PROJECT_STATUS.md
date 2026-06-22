@@ -1,6 +1,6 @@
 # knowledgebase — PROJECT STATUS
 
-Last updated: 2026-06-22
+Last updated: 2026-06-23
 
 ## Why/What
 
@@ -299,7 +299,9 @@ Worker: Fleet consumer → Hono → free-ai/Workers AI embed → Vectorize query
 - A/A+ scorecard gate (`pnpm run scorecard:a-plus`) grades reliability,
   retrieval performance, retrieval quality, ingestion reliability,
   observability, and ease-of-use evidence from operator reports and benchmarks
-  so missing proof cannot be mistaken for production excellence.
+  so missing proof cannot be mistaken for production excellence. Operator
+  reports automatically prove hosted UI, custom text input, async progress, and
+  user-visible UI copy that hides retrieval/storage internals.
 - Public `/readyz` and Prometheus-compatible `/metrics` compatibility endpoints
   for the retired FastAPI meta surface, backed by Cloudflare D1/Vectorize/R2
   binding checks.

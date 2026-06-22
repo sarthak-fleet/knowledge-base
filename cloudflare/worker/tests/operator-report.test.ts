@@ -32,7 +32,7 @@ function makeFetch() {
         <title>Knowledgebase Cloudflare</title>
         <button id="ingestDomainText">Ingest Domain Text</button>
         <button id="loadRunProgress">Load Run Progress</button>
-        <script>await call('/v1/kb/ingest/text', {});</script>
+        <script>await call('/v1/kb/ingest/text', { internal: 'RAG Vectorize Embedding chunk Index id' });</script>
       `);
     }
     if (path === '/v1/indexes' && !init?.headers?.['Authorization' as keyof HeadersInit]) {
@@ -139,5 +139,35 @@ describe('operator-report', () => {
       async_status: true,
     });
     expect(report.benchmark).toMatchObject({ cache_hit_rate: 0.5 });
+  });
+
+  it('flags visible hosted UI retrieval jargon', async () => {
+    const fetchImpl = async (url: string | URL | Request): Promise<Response> => {
+      const href = typeof url === 'string' ? url : url instanceof URL ? url.toString() : url.url;
+      const path = new URL(href).pathname;
+      if (path === '/v1/healthz') {
+        return jsonResponse({ ok: true, deploy_fingerprint: 'fp', d1_schema: true, vectorize: true, r2: true });
+      }
+      if (path === '/ui') {
+        return textResponse(`
+          <title>Knowledgebase Cloudflare</title>
+          <label>Embedding model</label>
+          <button id="ingestDomainText">Ingest Domain Text</button>
+          <button id="loadRunProgress">Load Run Progress</button>
+          <script>await call('/v1/kb/ingest/text', {});</script>
+        `);
+      }
+      if (path === '/v1/indexes') return jsonResponse({ error: 'unauthorized' }, 401);
+      return jsonResponse({ error: `unexpected ${href}` }, 404);
+    };
+
+    const report = await runOperatorReport({ baseUrl: 'https://kb.example', fetchImpl });
+
+    expect(report.capabilities).toMatchObject({
+      hosted_ui: true,
+      custom_input: true,
+      async_status: true,
+      hides_rag_internals: false,
+    });
   });
 });
