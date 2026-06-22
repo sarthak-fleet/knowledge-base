@@ -24,6 +24,7 @@ describe('a-plus-proof', () => {
       '5',
       '--top-k',
       '7',
+      '--continue-after-readiness-failure',
       '--dry-run',
       '--json',
     ])).toMatchObject({
@@ -33,6 +34,7 @@ describe('a-plus-proof', () => {
       outputDir: '/tmp/kb-proof',
       repeat: 5,
       topK: 7,
+      continueAfterReadinessFailure: true,
       dryRun: true,
       jsonOnly: true,
     });
@@ -48,9 +50,11 @@ describe('a-plus-proof', () => {
       topK: 5,
       expectedDeployFingerprint: 'fp',
       requireGrade: 'A+',
+      continueAfterReadinessFailure: false,
     })).toMatchObject({
       base_url: 'https://kb.example',
       domain: 'manuals',
+      continue_after_readiness_failure: false,
       steps: [
         'deploy-readiness',
         'query-eval',
@@ -134,6 +138,46 @@ describe('a-plus-proof', () => {
         domain: 'manuals',
       },
       artifacts: {},
+    });
+  });
+
+  it('stops before eval and benchmark work when deploy readiness fails', async () => {
+    const readiness = {
+      ok: false,
+      base_url: 'https://kb.example',
+      checks: [
+        { name: 'deployed-worker-fingerprint', ok: false, deploy_fingerprint: 'old-fp' },
+      ],
+    };
+    const result = await runAPlusProof({
+      ...parseArgs([
+        '--base-url',
+        'https://kb.example',
+        '--domain',
+        'manuals',
+      ]),
+      key: 'service-key',
+      input: 'fixtures/benchmark.sample.json',
+      readinessRunner: async () => readiness,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      stopped_after_readiness: true,
+      stop_reason: 'deploy_readiness_failed',
+      readiness,
+      query_eval: null,
+      operator_report: null,
+      benchmarks: [],
+      scorecard: {
+        ok: false,
+        blockers: expect.arrayContaining([
+          'readiness_deployed-worker-fingerprint',
+          'missing_operator_report',
+          'missing_benchmark',
+          'missing_query_eval_report',
+        ]),
+      },
     });
   });
 });

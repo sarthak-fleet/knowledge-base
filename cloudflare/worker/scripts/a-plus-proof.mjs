@@ -27,6 +27,8 @@ Options:
   --expected-deploy-fingerprint <value>
                           Expected health deploy fingerprint. Defaults to RAG_EXPECTED_DEPLOY_FINGERPRINT or ${EXPECTED_DEPLOY_FINGERPRINT}.
   --require-grade <grade> Required scorecard grade. Defaults to A+.
+  --continue-after-readiness-failure
+                          Continue into eval and benchmark requests even when deploy readiness fails.
   --dry-run               Print the planned proof run without network calls or file writes.
   --json                  Print JSON only.`);
 }
@@ -52,6 +54,7 @@ function parseArgs(argv) {
     indexId: '',
     expectedDeployFingerprint: process.env.RAG_EXPECTED_DEPLOY_FINGERPRINT || EXPECTED_DEPLOY_FINGERPRINT,
     requireGrade: 'A+',
+    continueAfterReadinessFailure: false,
     dryRun: false,
     jsonOnly: false,
   };
@@ -65,6 +68,10 @@ function parseArgs(argv) {
     }
     if (arg === '--json') {
       out.jsonOnly = true;
+      continue;
+    }
+    if (arg === '--continue-after-readiness-failure') {
+      out.continueAfterReadinessFailure = true;
       continue;
     }
     const value = argv[i + 1];
@@ -98,6 +105,7 @@ function buildPlan(options) {
     top_k: options.topK,
     expected_deploy_fingerprint: options.expectedDeployFingerprint,
     required_grade: options.requireGrade,
+    continue_after_readiness_failure: options.continueAfterReadinessFailure === true,
     steps: [
       'deploy-readiness',
       'query-eval',
@@ -190,11 +198,47 @@ export async function runAPlusProof(options) {
   if (!options.key) throw new Error('--key or RAG_SERVICE_KEY is required');
 
   const input = await readFile(options.input, 'utf8');
-  const readinessReport = await runDeployReadiness({
+  const readinessReport = await (options.readinessRunner ?? runDeployReadiness)({
     baseUrl: options.baseUrl,
     key: options.key,
     expectedDeployFingerprint: options.expectedDeployFingerprint,
   });
+  if (!readinessReport.ok && options.continueAfterReadinessFailure !== true) {
+    const scorecard = buildAPlusScorecard({
+      readiness_reports: [readinessReport],
+    }, {
+      requireGrade: options.requireGrade,
+      requireReadinessReport: true,
+      expectedDeployFingerprint: options.expectedDeployFingerprint,
+      requiredDomain: options.domain,
+      requiredBenchmarkModes: ['lexical', 'semantic'],
+      requiredBenchmarkSurfaces: ['kb-search', 'kb-query'],
+      minBenchmarkRepeat: options.repeat,
+      minBenchmarkSamples: options.repeat * 2,
+      requiredEvalKinds: ['query'],
+    });
+    const artifacts = {
+      readiness: await writeJson(options.outputDir, 'readiness.json', readinessReport),
+      query_eval: null,
+      operator_report: null,
+      benchmark_lexical: null,
+      benchmark_semantic: null,
+      scorecard: await writeJson(options.outputDir, 'scorecard.json', scorecard),
+    };
+    return {
+      ok: false,
+      dry_run: false,
+      stopped_after_readiness: true,
+      stop_reason: 'deploy_readiness_failed',
+      plan,
+      artifacts,
+      readiness: readinessReport,
+      query_eval: null,
+      operator_report: null,
+      benchmarks: [],
+      scorecard,
+    };
+  }
   const queryEval = await runQueryEvalProof({
     baseUrl: options.baseUrl,
     key: options.key,

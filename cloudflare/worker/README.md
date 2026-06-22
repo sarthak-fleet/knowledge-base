@@ -667,15 +667,20 @@ pnpm run proof:a-plus -- \
   --output-dir /tmp/kb-a-plus-proof
 ```
 
-The command is read-only except for writing local JSON proof artifacts. It calls
-deployed health/readiness, deterministic `/v1/kb/evals/query`, authenticated
-inventory, lexical `kb-search`, semantic `kb-query`, and then the A/A+
-scorecard. Use `--dry-run` to inspect the planned proof without network calls or
-file writes:
+The command first runs deployed readiness and stops before eval/benchmark
+requests if the Worker fingerprint or health checks are stale. After readiness
+passes, it writes local JSON proof artifacts and creates deterministic query
+eval/query trace evidence on the deployed Worker, then runs authenticated
+inventory, lexical `kb-search`, semantic `kb-query`, and the A/A+ scorecard.
+Use `--dry-run` to inspect the planned proof without network calls or file
+writes:
 
 ```bash
 pnpm run proof:a-plus -- --domain <domain> --dry-run
 ```
+
+Pass `--continue-after-readiness-failure` only when intentionally collecting
+diagnostics from a stale or partially failing deployment.
 
 For debugging individual artifacts, run the lower-level commands directly:
 
