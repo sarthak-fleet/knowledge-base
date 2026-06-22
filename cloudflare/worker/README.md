@@ -650,3 +650,51 @@ pnpm run operator:report -- \
 The default report performs only GET requests after health/auth-boundary checks.
 The benchmark option calls `/v1/indexes/:id/benchmark-query` on an existing
 index; it does not create, ingest, or delete data.
+
+## A/A+ Scorecard
+
+Use the scorecard to turn operator-report and benchmark evidence into a
+repeatable readiness grade. It is intentionally evidence-gated: missing
+benchmarks, eval reports, traces, or ingestion status lower the grade instead of
+letting the service claim A/A+ by assumption.
+
+```bash
+RAG_SERVICE_KEY=<service-key> \
+pnpm run operator:report -- \
+  --json \
+  --domain <domain> \
+  --index-id <index-id> \
+  --query "what should this account remember?" \
+  > /tmp/kb-operator-report.json
+
+pnpm run scorecard:a-plus -- \
+  --input /tmp/kb-operator-report.json \
+  --require-grade A
+```
+
+For A+ evidence, pass a combined JSON object with multiple route-specific
+benchmarks and capability proof:
+
+```json
+{
+  "operator_report": { "...": "output from operator:report --json" },
+  "benchmarks": [
+    { "mode": "lexical", "hit_rate": 0.95, "latency": { "p95_ms": 250 } },
+    { "mode": "semantic", "hit_rate": 0.92, "latency": { "p95_ms": 1800 } }
+  ],
+  "capabilities": {
+    "hosted_ui": true,
+    "custom_input": true,
+    "async_status": true,
+    "hides_rag_internals": true
+  }
+}
+```
+
+The initial thresholds are:
+
+- lexical A+: p95 <= 300 ms; A: p95 <= 500 ms
+- hybrid A+: p95 <= 1000 ms; A: p95 <= 1500 ms
+- semantic A+: p95 <= 2000 ms; A: p95 <= 3000 ms
+- retrieval quality A+: hit rate >= 0.92 plus citation/eval evidence; A: hit
+  rate >= 0.85 plus citation/eval evidence
