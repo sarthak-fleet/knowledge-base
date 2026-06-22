@@ -49,6 +49,7 @@ export async function requireServiceKey(c: AppContext, next: Next): Promise<Resp
   const keyMap = {
     ...parseKeyMap(c.env.RAG_SERVICE_KEYS),
     ...parseKeyMap(c.env.RAG_SERVICE_KEYS_APPEND),
+    ...parseKeyMap(c.env.RAG_SERVICE_PROOF_KEYS),
   };
   for (const [candidate, tenant] of Object.entries(keyMap)) {
     if (presented && constantTimeEqual(presented, candidate)) {

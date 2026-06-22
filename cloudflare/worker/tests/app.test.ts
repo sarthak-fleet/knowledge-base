@@ -1275,6 +1275,18 @@ describe('knowledgebase RAG Worker app', () => {
     expect((await res.json()) as { data: IndexRecord[] }).toEqual({ data: [] });
   });
 
+  it('accepts isolated proof service keys without replacing consumer keys', async () => {
+    const repo = new MemoryRepository();
+    const app = createApp({ makeRepository: () => repo });
+    const env = makeEnv(new FakeVectorize());
+    env.RAG_SERVICE_PROOF_KEYS = JSON.stringify({ 'proof-key': 'starboard' });
+
+    const res = await app.request('/v1/indexes', { headers: { Authorization: 'Bearer proof-key' } }, env);
+
+    expect(res.status).toBe(200);
+    expect((await res.json()) as { data: IndexRecord[] }).toEqual({ data: [] });
+  });
+
   it('lists embedding profiles and creates indexes with configured free-ai dimensions', async () => {
     const repo = new MemoryRepository();
     const app = createApp({ makeRepository: () => repo });

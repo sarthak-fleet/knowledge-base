@@ -59,6 +59,8 @@ Workers AI embedding calls and is an opt-in post-cutover step.
   `release-status:embedding-model -- --check-vectorize-metadata-indexes` folds
   that proof into the main read-only live status.
 - **Secrets:** `RAG_SERVICE_KEYS` JSON map (never commit). Fleet audit: `pnpm fleet:secret-audit -- --project knowledgebase` from saas-maker.
+  `RAG_SERVICE_PROOF_KEYS` is a separate optional JSON key map for short-lived
+  live proof/eval keys so verification does not replace consumer cutover keys.
 - **AI Gateway cache:** implemented but not enabled (Wrangler OAuth blocked gateway creation).
 
 ### Internal fleet

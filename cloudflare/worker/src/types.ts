@@ -14,6 +14,7 @@ export interface Env {
   RAG_ANALYTICS?: AnalyticsEngineDataset;
   RAG_SERVICE_KEYS?: string;
   RAG_SERVICE_KEYS_APPEND?: string;
+  RAG_SERVICE_PROOF_KEYS?: string;
   EMBEDDING_MODEL?: string;
   EMBEDDING_MODEL_SMALL?: string;
   RAG_AI_GATEWAY_ID?: string;
