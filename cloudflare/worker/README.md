@@ -490,7 +490,7 @@ Successful query traces and eval reports also emit compact data points to the
 Source-set management is domain-backed: `/v1/kb/source-sets` summarizes files,
 statuses, bytes, and MIME groups; `/v1/kb/source-sets/domain:<domain>/actions`
 supports dry-run requeue/archive/delete actions with Vectorize/R2/D1 cleanup for
-deletes.
+deletes, including the core RAG chunks used by lexical search.
 
 ## Backfill Existing SaaS Maker Chunks
 

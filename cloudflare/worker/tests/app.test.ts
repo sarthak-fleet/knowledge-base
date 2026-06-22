@@ -167,6 +167,13 @@ class MemoryRepository implements Repository {
     if (row?.tenant === tenant) this.documents.delete(id);
   }
 
+  async deleteChunksByIds(tenant: string, ids: string[]): Promise<void> {
+    for (const id of ids) {
+      const row = this.chunks.get(id);
+      if (row?.tenant === tenant) this.chunks.delete(id);
+    }
+  }
+
   async insertChunks(chunks: CreateChunkInput[]): Promise<void> {
     for (const chunk of chunks) {
       this.chunks.set(chunk.id, {
@@ -6227,6 +6234,73 @@ describe('knowledgebase RAG Worker app', () => {
 
     expect(repo.getIndexByExternalIdCalls).toBe(0);
     expect(repo.listChunksForIndexCalls).toBe(0);
+  });
+
+  it('removes deleted file chunks from lexical knowledgebase search', async () => {
+    const repo = new MemoryRepository();
+    const metadata = new MemoryMetadataRepository();
+    const rawDocs = new FakeR2Bucket();
+    const vectorize = new FakeVectorize();
+    const app = createApp({
+      makeRepository: () => repo,
+      makeMetadataRepository: () => metadata,
+      embed: async (_env, texts) => texts.map(vectorFor),
+    });
+    const env = makeEnv(
+      vectorize,
+      undefined as unknown as D1Database,
+      undefined,
+      rawDocs as unknown as R2Bucket,
+    );
+    const auth = { Authorization: 'Bearer key-a', 'Content-Type': 'application/json' };
+    const ingest = async (title: string, text: string) => {
+      const response = await app.request(
+        '/v1/kb/ingest/text',
+        {
+          method: 'POST',
+          headers: auth,
+          body: JSON.stringify({ domain: 'delete-proof', title, text, async: false }),
+        },
+        env,
+      );
+      expect(response.status).toBe(201);
+      return (await response.json()) as { file_id: string };
+    };
+
+    const alpha = await ingest('alpha-note', 'Alpha dashboard cache data should disappear after file deletion.');
+    await ingest('beta-note', 'Beta billing guardrails should remain searchable.');
+    const deleted = await app.request(
+      `/v1/kb/files/${alpha.file_id}`,
+      { method: 'DELETE', headers: auth },
+      env,
+    );
+    expect(deleted.status).toBe(200);
+
+    const alphaSearch = await app.request(
+      '/v1/kb/search',
+      {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({ domain: 'delete-proof', query: 'dashboard cache', mode: 'lexical', top_k: 3 }),
+      },
+      env,
+    );
+    const alphaBody = (await alphaSearch.json()) as { data: SearchResult[] };
+    const betaSearch = await app.request(
+      '/v1/kb/search',
+      {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({ domain: 'delete-proof', query: 'billing guardrails', mode: 'lexical', top_k: 3 }),
+      },
+      env,
+    );
+    const betaBody = (await betaSearch.json()) as { data: SearchResult[] };
+
+    expect(alphaSearch.status).toBe(200);
+    expect(alphaBody.data).toHaveLength(0);
+    expect(betaSearch.status).toBe(200);
+    expect(betaBody.data[0]?.chunk_content).toContain('billing guardrails');
   });
 
   it('fuses lexical and semantic results in hybrid mode', async () => {

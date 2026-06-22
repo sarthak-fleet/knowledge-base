@@ -108,11 +108,14 @@ Workers AI embedding calls and is an opt-in post-cutover step.
   `smoke:rag-crud:embedding-model` proves generic index CRUD plus the
   `/v1/kb/ingest/text` custom-input domain path and `/v1/kb/search`.
 - **A+ evidence release:** deployed Worker version
-  `954be3b0-1689-43d8-9f0b-c2b9d9b37329` exposes
+  `eddbb682-d4c0-469b-a3e4-9ee9ac5b565d` exposes
   `deploy_fingerprint=knowledgebase-a-plus-evidence-2026-06-23`. Live
-  Starboard-domain proof at `/tmp/kb-a-plus-proof-starboard-1782158950`
+  Starboard-domain proof at `/tmp/kb-a-plus-proof-starboard-1782159455`
   passed overall A+ with readiness, scoped query eval, lexical `kb-search`,
   semantic `kb-query`, ingestion, observability, and hosted UI evidence.
+  Final benchmark p95s: lexical `99.46 ms` (`server_p95_ms=0`) and semantic
+  `550.73 ms` (`server_p95_ms=439`), with query eval hit/citation rates at
+  `1.0`.
 - **Python runtime:** retired. The Worker full-port/preflight gates, UI,
   migration tooling, and local checks are TypeScript/Node-only; the old Python
   FastAPI server, Python UI, Docker Compose runtime, parser/query/eval package,
@@ -155,6 +158,7 @@ Worker: Fleet consumer → Hono → free-ai/Workers AI embed → Vectorize query
         uploads create D1 ingest jobs; /v1/kb/ingest/run defaults to Workflow-backed Cloudflare Queue ingestion
         async:false is the explicit inline/debug override; queued/inline runs carry durable D1 workflow_id run identifiers
         ingest writes parse artifacts to R2 + D1
+        file/source deletes remove Vectorize vectors, R2 raw artifacts, kb metadata, and core RAG chunks used by lexical search
         active inferred schemas extract structured entities/mentions/provenance into D1
         schema-inferred parent/ref fields, *_ids arrays, and prefixed cross-type fields create D1 entity relationships
         relationship resolution matches exact plus canonicalized identity/display-name aliases
@@ -276,6 +280,7 @@ Worker: Fleet consumer → Hono → free-ai/Workers AI embed → Vectorize query
   instances, Queue messages, and job state.
 - Run-level queued ingestion progress via `/v1/kb/ingest/runs/:run_id`, exposed in the hosted testing UI.
 - Domain-backed source-set summaries and bulk dry-run/requeue/archive/delete actions, exposed in the hosted testing UI.
+- File/source deletes clean Vectorize vectors, raw R2 objects, metadata rows, and core RAG chunks so lexical search cannot return deleted corpus text.
 - Schema-inferred structured entity relationship extraction, prior-ingest target
   resolution, prefixed cross-type entity extraction, and `/v1/kb/relationships`
   inspection.

@@ -162,6 +162,16 @@ export class D1Repository implements Repository {
     await this.db.prepare('DELETE FROM documents WHERE tenant = ? AND id = ?').bind(tenant, id).run();
   }
 
+  async deleteChunksByIds(tenant: string, ids: string[]): Promise<void> {
+    const uniqueIds = [...new Set(ids.filter(Boolean))];
+    if (uniqueIds.length === 0) return;
+    const placeholders = uniqueIds.map(() => '?').join(',');
+    await this.db
+      .prepare(`DELETE FROM chunks WHERE tenant = ? AND id IN (${placeholders})`)
+      .bind(tenant, ...uniqueIds)
+      .run();
+  }
+
   async insertChunks(chunks: CreateChunkInput[]): Promise<void> {
     if (chunks.length === 0) return;
     const statements = chunks.map((chunk) =>

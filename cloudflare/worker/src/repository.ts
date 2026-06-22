@@ -43,6 +43,7 @@ export interface Repository {
   listDocuments(tenant: string, indexId: string, limit: number, offset: number): Promise<DocumentRecord[]>;
   getDocument(tenant: string, id: string): Promise<DocumentRecord | null>;
   deleteDocument(tenant: string, id: string): Promise<void>;
+  deleteChunksByIds(tenant: string, ids: string[]): Promise<void>;
   insertChunks(chunks: CreateChunkInput[]): Promise<void>;
   getChunksByIds(tenant: string, ids: string[]): Promise<ChunkRecord[]>;
   listChunksForIndex(tenant: string, indexId: string, limit: number): Promise<ChunkRecord[]>;

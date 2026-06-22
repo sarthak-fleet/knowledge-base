@@ -2749,9 +2749,11 @@ export function createApp(options: AppOptions = {}) {
     deletedVectors: number;
   }> {
     const metadataRepo = makeMetadataRepository(env);
+    const ragRepo = makeRepository(env);
     const vectorIds = await metadataRepo.listKbChunkVectorIds(tenant, files.map((file) => file.id));
     if (vectorIds.length > 0) {
       await deleteVectorsFromAllProfiles(env, vectorIds);
+      await ragRepo.deleteChunksByIds(tenant, vectorIds);
     }
     if (env.RAW_DOCS) {
       for (const file of files) {
