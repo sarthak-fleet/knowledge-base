@@ -699,9 +699,14 @@ RAG_SERVICE_KEY=<service-key> \
 node scripts/deploy-readiness.mjs --json \
   > /tmp/kb-readiness.json
 
+Save a deterministic `/v1/kb/evals/query` response for the same domain to
+`/tmp/kb-query-eval.json`, or use `pnpm run proof:a-plus` to generate it
+automatically.
+
 pnpm run scorecard:a-plus -- \
   --input /tmp/kb-operator-report.json \
   --readiness-report /tmp/kb-readiness.json \
+  --query-eval-report /tmp/kb-query-eval.json \
   --require-readiness-report \
   --require-grade A
 ```
@@ -733,6 +738,7 @@ RAG_SERVICE_KEY=<service-key> pnpm run benchmark:rag -- \
 pnpm run scorecard:a-plus -- \
   --operator-report /tmp/kb-operator-report.json \
   --readiness-report /tmp/kb-readiness.json \
+  --query-eval-report /tmp/kb-query-eval.json \
   --require-readiness-report \
   --benchmark /tmp/kb-benchmark-lexical.json \
   --benchmark /tmp/kb-benchmark-semantic.json \

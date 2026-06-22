@@ -40,10 +40,11 @@ function usage() {
 Input can be:
   - operator-report JSON
   - benchmark-rag JSON
-  - {"operator_report": {...}, "benchmarks": [{...}], "readiness_reports": [{...}], "capabilities": {...}}
+  - {"operator_report": {...}, "benchmarks": [{...}], "query_evals": [{...}], "readiness_reports": [{...}], "capabilities": {...}}
 
 Options:
   --readiness-report <report.json>       Include deploy-readiness JSON evidence. Repeatable.
+  --query-eval-report <report.json>      Include /v1/kb/evals/query JSON evidence. Repeatable.
   --require-readiness-report             Fail if no deploy-readiness report is provided.
   --expected-deploy-fingerprint <value> Require operator report health to match this deploy fingerprint.
   --require-domain <domain>             Require operator report and domain benchmarks to match this domain.
@@ -63,6 +64,7 @@ function parseArgs(argv) {
     operatorReport: '',
     benchmarks: [],
     readinessReports: [],
+    queryEvalReports: [],
     requireReadinessReport: false,
     requireGrade: 'A',
     expectedDeployFingerprint: process.env.RAG_EXPECTED_DEPLOY_FINGERPRINT || '',
@@ -87,6 +89,7 @@ function parseArgs(argv) {
     else if (arg === '--operator-report') out.operatorReport = value;
     else if (arg === '--benchmark') out.benchmarks.push(value);
     else if (arg === '--readiness-report') out.readinessReports.push(value);
+    else if (arg === '--query-eval-report') out.queryEvalReports.push(value);
     else if (arg === '--require-grade') out.requireGrade = normalizeGrade(value);
     else if (arg === '--expected-deploy-fingerprint') out.expectedDeployFingerprint = value.trim();
     else if (arg === '--require-domain') out.requiredDomain = normalizeDomain(value);
@@ -97,8 +100,8 @@ function parseArgs(argv) {
     else if (arg === '--require-eval-kind') out.requiredEvalKinds.push(normalizeEvalKind(value));
     else throw new Error(`unknown argument: ${arg}`);
   }
-  if (!out.input && !out.operatorReport && out.benchmarks.length === 0 && out.readinessReports.length === 0) {
-    throw new Error('--input, --operator-report/--benchmark, or --readiness-report is required');
+  if (!out.input && !out.operatorReport && out.benchmarks.length === 0 && out.readinessReports.length === 0 && out.queryEvalReports.length === 0) {
+    throw new Error('--input, --operator-report/--benchmark, --readiness-report, or --query-eval-report is required');
   }
   return out;
 }
@@ -195,10 +198,16 @@ function benchmarkSampleCount(benchmark) {
 }
 
 function normalizeEvidence(raw) {
-  if (raw?.operator_report || raw?.operatorReport || raw?.benchmarks || raw?.readiness_reports || raw?.readinessReports || raw?.readiness_report || raw?.readinessReport) {
+  if (raw?.operator_report || raw?.operatorReport || raw?.benchmarks || raw?.readiness_reports || raw?.readinessReports || raw?.readiness_report || raw?.readinessReport || raw?.query_evals || raw?.queryEvals || raw?.query_eval || raw?.queryEval) {
     return {
       operatorReport: raw.operator_report ?? raw.operatorReport ?? null,
       benchmarks: asArray(raw.benchmarks),
+      queryEvals: [
+        ...asArray(raw.query_evals),
+        ...asArray(raw.queryEvals),
+        ...(raw.query_eval ? [raw.query_eval] : []),
+        ...(raw.queryEval ? [raw.queryEval] : []),
+      ],
       readinessReports: [
         ...asArray(raw.readiness_reports),
         ...asArray(raw.readinessReports),
@@ -209,15 +218,15 @@ function normalizeEvidence(raw) {
     };
   }
   if (raw?.inventory || raw?.checks || raw?.cost_signals) {
-    return { operatorReport: raw, benchmarks: raw.benchmark ? [raw.benchmark] : [], readinessReports: [], capabilities: {} };
+    return { operatorReport: raw, benchmarks: raw.benchmark ? [raw.benchmark] : [], queryEvals: [], readinessReports: [], capabilities: {} };
   }
   if (raw?.capabilities) {
-    return { operatorReport: null, benchmarks: [], readinessReports: [], capabilities: raw.capabilities };
+    return { operatorReport: null, benchmarks: [], queryEvals: [], readinessReports: [], capabilities: raw.capabilities };
   }
   if (raw?.latency || raw?.server_latency || raw?.hit_rate !== undefined) {
-    return { operatorReport: null, benchmarks: [raw], readinessReports: [], capabilities: {} };
+    return { operatorReport: null, benchmarks: [raw], queryEvals: [], readinessReports: [], capabilities: {} };
   }
-  return { operatorReport: null, benchmarks: [], readinessReports: [], capabilities: {} };
+  return { operatorReport: null, benchmarks: [], queryEvals: [], readinessReports: [], capabilities: {} };
 }
 
 async function readJson(path) {
@@ -225,11 +234,12 @@ async function readJson(path) {
 }
 
 async function loadScorecardEvidence(args) {
-  if (!args.operatorReport && args.benchmarks.length === 0 && args.readinessReports.length === 0) return readJson(args.input);
+  if (!args.operatorReport && args.benchmarks.length === 0 && args.readinessReports.length === 0 && args.queryEvalReports.length === 0) return readJson(args.input);
 
   const base = args.input ? normalizeEvidence(await readJson(args.input)) : {
     operatorReport: null,
     benchmarks: [],
+    queryEvals: [],
     readinessReports: [],
     capabilities: {},
   };
@@ -238,9 +248,11 @@ async function loadScorecardEvidence(args) {
     : base.operatorReport;
   const benchmarkFiles = await Promise.all(args.benchmarks.map((path) => readJson(path)));
   const readinessFiles = await Promise.all(args.readinessReports.map((path) => readJson(path)));
+  const queryEvalFiles = await Promise.all(args.queryEvalReports.map((path) => readJson(path)));
   return {
     operator_report: operatorReport,
     benchmarks: [...base.benchmarks, ...benchmarkFiles],
+    query_evals: [...base.queryEvals, ...queryEvalFiles],
     readiness_reports: [...base.readinessReports, ...readinessFiles],
     capabilities: base.capabilities,
   };
@@ -484,25 +496,35 @@ function scorePerformance(benchmarks, requirements = {}) {
   };
 }
 
-function scoreQuality(operatorReport, benchmarks, requirements = {}) {
+function scoreQuality(operatorReport, benchmarks, queryEvals, requirements = {}) {
   const requiredEvalKinds = asArray(requirements.evalKinds).map(normalizeEvalKind);
-  const evalKinds = asArray(operatorReport?.inventory?.eval_kinds)
-    .map(normalizeEvalKind)
-    .filter(Boolean);
+  const evalKinds = [
+    ...asArray(operatorReport?.inventory?.eval_kinds).map(normalizeEvalKind).filter(Boolean),
+    ...(queryEvals.length > 0 ? ['query'] : []),
+  ].filter((kind, index, values) => values.indexOf(kind) === index);
   const missingEvalKinds = requiredEvalKinds.filter((kind) => !evalKinds.includes(kind));
   const hitRates = benchmarks
     .map((benchmark) => asNumber(benchmark?.hit_rate))
     .filter((value) => value !== null);
+  const queryEvalHitRates = queryEvals
+    .map((report) => asNumber(report?.hit_rate))
+    .filter((value) => value !== null);
   const hitRate = hitRates.length ? Math.min(...hitRates) : null;
+  const queryEvalHitRate = queryEvalHitRates.length ? Math.min(...queryEvalHitRates) : null;
   const recentTraceCount = asNumber(operatorReport?.cost_signals?.recent_trace_count)
     ?? asNumber(operatorReport?.inventory?.recent_trace_count);
   const tracesWithCitations = asNumber(operatorReport?.cost_signals?.traces_with_citations);
-  const citationRate = recentTraceCount && tracesWithCitations !== null
+  const traceCitationRate = recentTraceCount && tracesWithCitations !== null
     ? tracesWithCitations / recentTraceCount
     : null;
-  const evalReportCount = asNumber(operatorReport?.inventory?.eval_report_count);
+  const queryEvalCitationRates = queryEvals
+    .map((report) => asNumber(report?.citation_rate))
+    .filter((value) => value !== null);
+  const queryEvalCitationRate = queryEvalCitationRates.length ? Math.min(...queryEvalCitationRates) : null;
+  const citationRate = queryEvalCitationRate ?? traceCitationRate;
+  const evalReportCount = (asNumber(operatorReport?.inventory?.eval_report_count) ?? 0) + queryEvals.length;
 
-  const hasHitEvidence = hitRate !== null;
+  const hasHitEvidence = hitRate !== null || queryEvalHitRate !== null;
   const hasCitationEvidence = citationRate !== null || (evalReportCount ?? 0) > 0;
   if (!hasHitEvidence && !hasCitationEvidence) {
     return {
@@ -515,8 +537,11 @@ function scoreQuality(operatorReport, benchmarks, requirements = {}) {
       ],
       evidence: {
         hit_rate: hitRate,
+        query_eval_hit_rate: queryEvalHitRate,
         citation_rate: citationRate,
+        query_eval_citation_rate: queryEvalCitationRate,
         eval_report_count: evalReportCount,
+        query_eval_count: queryEvals.length,
         eval_kinds: evalKinds,
         required_eval_kinds: requiredEvalKinds,
         missing_eval_kinds: missingEvalKinds,
@@ -527,10 +552,12 @@ function scoreQuality(operatorReport, benchmarks, requirements = {}) {
   const hasRequiredEvalKinds = missingEvalKinds.length === 0;
   const aPlus = hasRequiredEvalKinds
     && (hitRate === null || hitRate >= 0.92)
+    && (queryEvalHitRate === null || queryEvalHitRate >= 0.92)
     && (citationRate === null || citationRate >= 0.95)
     && (evalReportCount === null || evalReportCount >= 1);
   const a = hasRequiredEvalKinds
     && (hitRate === null || hitRate >= 0.85)
+    && (queryEvalHitRate === null || queryEvalHitRate >= 0.85)
     && (citationRate === null || citationRate >= 0.9)
     && (evalReportCount === null || evalReportCount >= 1);
   const result = gradeCheck({
@@ -538,8 +565,11 @@ function scoreQuality(operatorReport, benchmarks, requirements = {}) {
     a,
     evidence: {
       hit_rate: hitRate,
+      query_eval_hit_rate: queryEvalHitRate,
       citation_rate: citationRate,
+      query_eval_citation_rate: queryEvalCitationRate,
       eval_report_count: evalReportCount,
+      query_eval_count: queryEvals.length,
       eval_kinds: evalKinds,
       required_eval_kinds: requiredEvalKinds,
       missing_eval_kinds: missingEvalKinds,
@@ -598,10 +628,10 @@ function scoreIngestion(operatorReport) {
   };
 }
 
-function scoreObservability(operatorReport) {
+function scoreObservability(operatorReport, queryEvals = []) {
   const inventory = operatorReport?.inventory;
   const recentTraceCount = asNumber(inventory?.recent_trace_count) ?? 0;
-  const evalReportCount = asNumber(inventory?.eval_report_count) ?? 0;
+  const evalReportCount = (asNumber(inventory?.eval_report_count) ?? 0) + queryEvals.length;
   const avgTraceLatencyMs = asNumber(inventory?.avg_trace_latency_ms);
   const aPlus = recentTraceCount >= 10 && evalReportCount >= 1 && (avgTraceLatencyMs === null || avgTraceLatencyMs <= 1000);
   const a = recentTraceCount >= 1 && evalReportCount >= 1;
@@ -612,6 +642,7 @@ function scoreObservability(operatorReport) {
     evidence: {
       recent_trace_count: recentTraceCount,
       eval_report_count: evalReportCount,
+      query_eval_count: queryEvals.length,
       avg_trace_latency_ms: avgTraceLatencyMs,
     },
   });
@@ -670,11 +701,11 @@ export function buildAPlusScorecard(rawEvidence, options = {}) {
       minRepeat: options.minBenchmarkRepeat,
       minSamples: options.minBenchmarkSamples,
     }),
-    scoreQuality(evidence.operatorReport, evidence.benchmarks, {
+    scoreQuality(evidence.operatorReport, evidence.benchmarks, evidence.queryEvals, {
       evalKinds: options.requiredEvalKinds,
     }),
     scoreIngestion(evidence.operatorReport),
-    scoreObservability(evidence.operatorReport),
+    scoreObservability(evidence.operatorReport, evidence.queryEvals),
     scoreEaseOfUse(evidence.operatorReport, evidence.capabilities),
   ];
   const overallGrade = minGrade(categories.map((category) => category.grade));

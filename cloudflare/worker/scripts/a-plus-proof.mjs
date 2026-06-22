@@ -311,6 +311,7 @@ export async function runAPlusProof(options) {
   const scorecard = buildAPlusScorecard({
     operator_report: operatorReport,
     readiness_reports: [readinessReport],
+    query_evals: [queryEval],
     benchmarks: [lexicalBenchmark, semanticBenchmark],
   }, {
     requireGrade: options.requireGrade,

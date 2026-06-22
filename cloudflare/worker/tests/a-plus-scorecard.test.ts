@@ -61,6 +61,17 @@ const aPlusReadinessReport = {
   ],
 };
 
+const aPlusQueryEvalReport = {
+  report_id: 'eval-query-1',
+  hit_rate: 0.95,
+  citation_rate: 1,
+  ai_use_rate: 0,
+  rows: [
+    { id: 'q1', hit: true, cited: true },
+    { id: 'q2', hit: true, cited: true },
+  ],
+};
+
 describe('a-plus-scorecard', () => {
   it('accepts the pnpm run argument separator', () => {
     expect(parseArgs([
@@ -69,6 +80,8 @@ describe('a-plus-scorecard', () => {
       '/tmp/report.json',
       '--readiness-report',
       '/tmp/readiness.json',
+      '--query-eval-report',
+      '/tmp/query-eval.json',
       '--require-readiness-report',
       '--require-grade',
       'A+',
@@ -89,6 +102,7 @@ describe('a-plus-scorecard', () => {
       operatorReport: '',
       benchmarks: [],
       readinessReports: ['/tmp/readiness.json'],
+      queryEvalReports: ['/tmp/query-eval.json'],
       requireReadinessReport: true,
       requireGrade: 'A+',
       expectedDeployFingerprint: '',
@@ -106,10 +120,12 @@ describe('a-plus-scorecard', () => {
     try {
       const operatorPath = join(dir, 'operator.json');
       const readinessPath = join(dir, 'readiness.json');
+      const queryEvalPath = join(dir, 'query-eval.json');
       const lexicalPath = join(dir, 'lexical.json');
       const semanticPath = join(dir, 'semantic.json');
       await writeFile(operatorPath, JSON.stringify(aPlusOperatorReport));
       await writeFile(readinessPath, JSON.stringify(aPlusReadinessReport));
+      await writeFile(queryEvalPath, JSON.stringify(aPlusQueryEvalReport));
       await writeFile(lexicalPath, JSON.stringify({ mode: 'lexical', hit_rate: 0.96, latency: { p95_ms: 120 } }));
       await writeFile(semanticPath, JSON.stringify({ mode: 'semantic', hit_rate: 0.93, latency: { p95_ms: 1100 } }));
 
@@ -118,6 +134,8 @@ describe('a-plus-scorecard', () => {
         operatorPath,
         '--readiness-report',
         readinessPath,
+        '--query-eval-report',
+        queryEvalPath,
         '--benchmark',
         lexicalPath,
         '--benchmark',
@@ -127,6 +145,7 @@ describe('a-plus-scorecard', () => {
       expect(evidence).toMatchObject({
         operator_report: { ok: true },
         readiness_reports: [{ ok: true }],
+        query_evals: [{ hit_rate: 0.95 }],
         benchmarks: [
           { mode: 'lexical', hit_rate: 0.96 },
           { mode: 'semantic', hit_rate: 0.93 },
@@ -141,6 +160,7 @@ describe('a-plus-scorecard', () => {
     const scorecard = buildAPlusScorecard({
       operator_report: aPlusOperatorReport,
       readiness_reports: [aPlusReadinessReport],
+      query_evals: [aPlusQueryEvalReport],
       benchmarks: [
         {
           mode: 'lexical',
@@ -451,6 +471,74 @@ describe('a-plus-scorecard', () => {
           eval_kinds: ['search'],
           required_eval_kinds: ['query'],
           missing_eval_kinds: ['query'],
+        },
+      });
+  });
+
+  it('uses direct query eval reports as retrieval quality evidence', () => {
+    const scorecard = buildAPlusScorecard({
+      operator_report: {
+        ...aPlusOperatorReport,
+        inventory: {
+          ...aPlusOperatorReport.inventory,
+          eval_report_count: 0,
+          eval_kinds: [],
+        },
+      },
+      query_evals: [aPlusQueryEvalReport],
+      benchmarks: [
+        {
+          surface: 'kb-query',
+          mode: 'semantic',
+          hit_rate: 0.93,
+          latency: { p95_ms: 1300 },
+          server_latency: { p95_ms: 980 },
+        },
+      ],
+    }, {
+      requireGrade: 'A+',
+      requiredEvalKinds: ['query'],
+    });
+
+    expect(scorecard.ok).toBe(true);
+    expect(scorecard.categories.find((category) => category.name === 'retrieval_quality'))
+      .toMatchObject({
+        grade: 'A+',
+        evidence: {
+          query_eval_count: 1,
+          query_eval_hit_rate: 0.95,
+          query_eval_citation_rate: 1,
+          eval_kinds: ['query'],
+          missing_eval_kinds: [],
+        },
+      });
+  });
+
+  it('fails retrieval quality when direct query eval accuracy is below A', () => {
+    const scorecard = buildAPlusScorecard({
+      operator_report: aPlusOperatorReport,
+      query_evals: [{ ...aPlusQueryEvalReport, hit_rate: 0.5, citation_rate: 1 }],
+      benchmarks: [
+        {
+          surface: 'kb-query',
+          mode: 'semantic',
+          hit_rate: 0.93,
+          latency: { p95_ms: 1300 },
+          server_latency: { p95_ms: 980 },
+        },
+      ],
+    }, {
+      requireGrade: 'A',
+      requiredEvalKinds: ['query'],
+    });
+
+    expect(scorecard.ok).toBe(false);
+    expect(scorecard.blockers).toContain('quality_below_a');
+    expect(scorecard.categories.find((category) => category.name === 'retrieval_quality'))
+      .toMatchObject({
+        grade: 'B',
+        evidence: {
+          query_eval_hit_rate: 0.5,
         },
       });
   });
