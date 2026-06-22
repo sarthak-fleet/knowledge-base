@@ -37,11 +37,23 @@ const aPlusOperatorReport = {
 
 describe('a-plus-scorecard', () => {
   it('accepts the pnpm run argument separator', () => {
-    expect(parseArgs(['--', '--input', '/tmp/report.json', '--require-grade', 'A+'])).toEqual({
+    expect(parseArgs([
+      '--',
+      '--input',
+      '/tmp/report.json',
+      '--require-grade',
+      'A+',
+      '--require-benchmark-mode',
+      'lexical',
+      '--require-benchmark-surface',
+      'kb-query',
+    ])).toEqual({
       input: '/tmp/report.json',
       operatorReport: '',
       benchmarks: [],
       requireGrade: 'A+',
+      requiredBenchmarkModes: ['lexical'],
+      requiredBenchmarkSurfaces: ['kb-query'],
     });
   });
 
@@ -100,6 +112,61 @@ describe('a-plus-scorecard', () => {
     expect(scorecard.blockers).toEqual([]);
   });
 
+  it('fails when required benchmark modes or surfaces are missing', () => {
+    const scorecard = buildAPlusScorecard({
+      operator_report: aPlusOperatorReport,
+      benchmarks: [
+        {
+          surface: 'kb-search',
+          mode: 'lexical',
+          hit_rate: 0.98,
+          latency: { p95_ms: 180 },
+          server_latency: { p95_ms: 140 },
+        },
+      ],
+    }, {
+      requireGrade: 'A',
+      requiredBenchmarkModes: ['lexical', 'semantic'],
+      requiredBenchmarkSurfaces: ['kb-search', 'kb-query'],
+    });
+
+    expect(scorecard.ok).toBe(false);
+    expect(scorecard.categories.find((category) => category.name === 'retrieval_performance'))
+      .toMatchObject({
+        grade: 'C',
+        blockers: ['missing_semantic_benchmark', 'missing_kb-query_benchmark'],
+      });
+  });
+
+  it('passes required benchmark mode and surface coverage when all evidence exists', () => {
+    const scorecard = buildAPlusScorecard({
+      operator_report: aPlusOperatorReport,
+      benchmarks: [
+        {
+          surface: 'kb-search',
+          mode: 'lexical',
+          hit_rate: 0.98,
+          latency: { p95_ms: 180 },
+          server_latency: { p95_ms: 140 },
+        },
+        {
+          surface: 'kb-query',
+          mode: 'semantic',
+          hit_rate: 0.93,
+          latency: { p95_ms: 1300 },
+          server_latency: { p95_ms: 980 },
+        },
+      ],
+    }, {
+      requireGrade: 'A+',
+      requiredBenchmarkModes: ['lexical', 'semantic'],
+      requiredBenchmarkSurfaces: ['kb-search', 'kb-query'],
+    });
+
+    expect(scorecard.ok).toBe(true);
+    expect(scorecard.overall_grade).toBe('A+');
+  });
+
   it('treats direct operator-report JSON with capabilities as the operator report', () => {
     const scorecard = buildAPlusScorecard({
       ...aPlusOperatorReport,
@@ -134,12 +201,18 @@ describe('a-plus-scorecard', () => {
           eval_report_count: 0,
         },
       },
-    }, { requireGrade: 'A' });
+    }, {
+      requireGrade: 'A',
+      requiredBenchmarkModes: ['lexical'],
+      requiredBenchmarkSurfaces: ['kb-query'],
+    });
 
     expect(scorecard.ok).toBe(false);
     expect(scorecard.overall_grade).toBe('C');
     expect(scorecard.blockers).toEqual(expect.arrayContaining([
       'missing_benchmark',
+      'missing_lexical_benchmark',
+      'missing_kb-query_benchmark',
       'missing_quality_evidence',
       'missing_traces_or_eval_reports',
     ]));

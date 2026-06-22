@@ -304,7 +304,9 @@ Worker: Fleet consumer → Hono → free-ai/Workers AI embed → Vectorize query
   user-visible UI copy that hides retrieval/storage internals. `benchmark:rag`
   emits mode-labeled lexical/semantic/hybrid evidence for index, domain search,
   and domain answer surfaces, and the scorecard CLI can merge an operator report
-  plus repeated benchmark files without hand-built JSON.
+  plus repeated benchmark files without hand-built JSON. The scorecard can also
+  require specific benchmark modes and surfaces so a narrow benchmark cannot
+  masquerade as across-the-board A/A+ evidence.
 - Public `/readyz` and Prometheus-compatible `/metrics` compatibility endpoints
   for the retired FastAPI meta surface, backed by Cloudflare D1/Vectorize/R2
   binding checks.

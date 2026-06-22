@@ -42,6 +42,10 @@ Input can be:
   - benchmark-rag JSON
   - {"operator_report": {...}, "benchmarks": [{...}], "capabilities": {...}}
 
+Options:
+  --require-benchmark-mode <mode>       Require lexical, semantic, or hybrid evidence. Repeatable.
+  --require-benchmark-surface <surface> Require index, kb-search, or kb-query evidence. Repeatable.
+
 The scorecard is read-only and deterministic. It grades evidence only; it does
 not call the deployed Worker or spend AI/Vectorize requests.`);
 }
@@ -52,6 +56,8 @@ function parseArgs(argv) {
     operatorReport: '',
     benchmarks: [],
     requireGrade: 'A',
+    requiredBenchmarkModes: [],
+    requiredBenchmarkSurfaces: [],
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -63,12 +69,28 @@ function parseArgs(argv) {
     else if (arg === '--operator-report') out.operatorReport = value;
     else if (arg === '--benchmark') out.benchmarks.push(value);
     else if (arg === '--require-grade') out.requireGrade = normalizeGrade(value);
+    else if (arg === '--require-benchmark-mode') out.requiredBenchmarkModes.push(normalizeBenchmarkMode(value));
+    else if (arg === '--require-benchmark-surface') out.requiredBenchmarkSurfaces.push(normalizeBenchmarkSurface(value));
     else throw new Error(`unknown argument: ${arg}`);
   }
   if (!out.input && !out.operatorReport && out.benchmarks.length === 0) {
     throw new Error('--input or --operator-report/--benchmark is required');
   }
   return out;
+}
+
+function normalizeBenchmarkMode(value) {
+  const mode = String(value || '').trim();
+  if (!PERFORMANCE_THRESHOLDS[mode]) throw new Error(`unsupported benchmark mode: ${value}`);
+  return mode;
+}
+
+function normalizeBenchmarkSurface(value) {
+  const surface = String(value || '').trim();
+  if (!['index', 'kb-search', 'kb-query'].includes(surface)) {
+    throw new Error(`unsupported benchmark surface: ${value}`);
+  }
+  return surface;
 }
 
 function normalizeGrade(value) {
@@ -112,6 +134,12 @@ function detectBenchmarkMode(benchmark) {
   if ([...retrievals].some((value) => String(value).includes('hybrid'))) return 'hybrid';
   if ([...retrievals].some((value) => String(value).includes('lexical'))) return 'lexical';
   return 'semantic';
+}
+
+function detectBenchmarkSurface(benchmark) {
+  const surface = benchmark?.surface ?? benchmark?.query_surface;
+  if (surface && ['index', 'kb-search', 'kb-query'].includes(String(surface))) return String(surface);
+  return 'index';
 }
 
 function normalizeEvidence(raw) {
@@ -186,18 +214,30 @@ function scoreReliability(operatorReport) {
   return { name: 'reliability', ...result, blockers };
 }
 
-function scorePerformance(benchmarks) {
+function scorePerformance(benchmarks, requirements = {}) {
+  const requiredModes = asArray(requirements.modes).map(normalizeBenchmarkMode);
+  const requiredSurfaces = asArray(requirements.surfaces).map(normalizeBenchmarkSurface);
   if (benchmarks.length === 0) {
     return {
       name: 'retrieval_performance',
       grade: 'C',
       ok: false,
-      blockers: ['missing_benchmark'],
-      evidence: {},
+      blockers: [
+        'missing_benchmark',
+        ...requiredModes.map((mode) => `missing_${mode}_benchmark`),
+        ...requiredSurfaces.map((surface) => `missing_${surface}_benchmark`),
+      ],
+      evidence: {
+        required_modes: requiredModes,
+        required_surfaces: requiredSurfaces,
+        missing_modes: requiredModes,
+        missing_surfaces: requiredSurfaces,
+      },
     };
   }
   const rows = benchmarks.map((benchmark) => {
     const mode = detectBenchmarkMode(benchmark);
+    const surface = detectBenchmarkSurface(benchmark);
     const thresholds = PERFORMANCE_THRESHOLDS[mode];
     const p95 = asNumber(benchmark?.latency?.p95_ms);
     const serverP95 = asNumber(benchmark?.server_latency?.p95_ms);
@@ -210,19 +250,37 @@ function scorePerformance(benchmarks) {
       && (serverP95 === null || serverP95 <= thresholds.aServerP95Ms);
     return {
       mode,
+      surface,
       grade: gradeCheck({ aPlus, a, missing }).grade,
       p95_ms: p95,
       server_p95_ms: serverP95,
       thresholds,
     };
   });
-  const grade = minGrade(rows.map((row) => row.grade));
+  const missingModes = requiredModes.filter((mode) => !rows.some((row) => row.mode === mode));
+  const missingSurfaces = requiredSurfaces.filter((surface) => !rows.some((row) => row.surface === surface));
+  const grade = missingModes.length > 0 || missingSurfaces.length > 0
+    ? 'C'
+    : minGrade(rows.map((row) => row.grade));
+  const belowABlockers = rows
+    .filter((row) => !gradeAtLeast(row.grade, 'A'))
+    .map((row) => `${row.surface}_${row.mode}_benchmark_below_a`);
   return {
     name: 'retrieval_performance',
     grade,
-    ok: gradeAtLeast(grade, 'A'),
-    blockers: rows.filter((row) => !gradeAtLeast(row.grade, 'A')).map((row) => `${row.mode}_benchmark_below_a`),
-    evidence: { benchmarks: rows },
+    ok: gradeAtLeast(grade, 'A') && missingModes.length === 0 && missingSurfaces.length === 0,
+    blockers: [
+      ...missingModes.map((mode) => `missing_${mode}_benchmark`),
+      ...missingSurfaces.map((surface) => `missing_${surface}_benchmark`),
+      ...belowABlockers,
+    ],
+    evidence: {
+      benchmarks: rows,
+      required_modes: requiredModes,
+      required_surfaces: requiredSurfaces,
+      missing_modes: missingModes,
+      missing_surfaces: missingSurfaces,
+    },
   };
 }
 
@@ -368,7 +426,10 @@ export function buildAPlusScorecard(rawEvidence, options = {}) {
   const evidence = normalizeEvidence(rawEvidence);
   const categories = [
     scoreReliability(evidence.operatorReport),
-    scorePerformance(evidence.benchmarks),
+    scorePerformance(evidence.benchmarks, {
+      modes: options.requiredBenchmarkModes,
+      surfaces: options.requiredBenchmarkSurfaces,
+    }),
     scoreQuality(evidence.operatorReport, evidence.benchmarks),
     scoreIngestion(evidence.operatorReport),
     scoreObservability(evidence.operatorReport),
@@ -399,7 +460,11 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   try {
     const args = parseArgs(process.argv.slice(2));
     const input = await loadScorecardEvidence(args);
-    const scorecard = buildAPlusScorecard(input, { requireGrade: args.requireGrade });
+    const scorecard = buildAPlusScorecard(input, {
+      requireGrade: args.requireGrade,
+      requiredBenchmarkModes: args.requiredBenchmarkModes,
+      requiredBenchmarkSurfaces: args.requiredBenchmarkSurfaces,
+    });
     console.log(JSON.stringify(scorecard, null, 2));
     if (!scorecard.ok) process.exitCode = 1;
   } catch (error) {

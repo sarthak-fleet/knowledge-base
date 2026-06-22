@@ -701,6 +701,10 @@ pnpm run scorecard:a-plus -- \
   --operator-report /tmp/kb-operator-report.json \
   --benchmark /tmp/kb-benchmark-lexical.json \
   --benchmark /tmp/kb-benchmark-semantic.json \
+  --require-benchmark-mode lexical \
+  --require-benchmark-mode semantic \
+  --require-benchmark-surface kb-search \
+  --require-benchmark-surface kb-query \
   --require-grade A+
 ```
 
