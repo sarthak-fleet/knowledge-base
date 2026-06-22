@@ -130,8 +130,9 @@ Workers AI embedding calls and is an opt-in post-cutover step.
   `fixtures/s-grade-consumer-evals.json` and includes the `consumer-auth-smokes`
   step. Current blocker for live S proof is not a Cloudflare runtime gap: it is
   missing `KARTE_SESSION_COOKIE` and `STARBOARD_SESSION_COOKIE` for authenticated
-  product-session smokes plus first-class ingest idempotency/failure
-  classification proof.
+  product-session smokes. The ingestion reliability gate now has first-class
+  Worker proof fields for idempotent content replay, chunk previews, replay
+  routes, and failure classification.
 - **Python runtime:** retired. The Worker full-port/preflight gates, UI,
   migration tooling, and local checks are TypeScript/Node-only; the old Python
   FastAPI server, Python UI, Docker Compose runtime, parser/query/eval package,

@@ -2988,6 +2988,14 @@ describe('knowledgebase RAG Worker app', () => {
       schema_auto_created: boolean;
       entities_upserted: number;
       chunks_indexed: number;
+      ingest_safety: {
+        content_hash: string;
+        idempotent: boolean;
+        chunk_preview: Array<{ text_preview: string }>;
+        replayable: boolean;
+        replay_route: string;
+        failure_classification: unknown;
+      };
     };
     const entities = await app.request('/v1/kb/entities?domain=contracts&type=Contract', { headers: auth }, env);
     const inferredRecordIngest = await app.request(
@@ -3067,8 +3075,40 @@ describe('knowledgebase RAG Worker app', () => {
     const textBody = (await textIngest.json()) as {
       file_id: string;
       ingestion_mode: string;
-      files: Array<{ status: string; chunks_created: number }>;
+      ingest_safety: {
+        content_hash: string;
+        idempotent: boolean;
+        chunk_preview: Array<{ text_preview: string }>;
+        replay_route: string;
+      };
+      files: Array<{
+        status: string;
+        chunks_created: number;
+        chunk_preview: Array<{ text_preview: string }>;
+      }>;
     };
+    const vectorCountAfterTextIngest = vectorize.vectors.size;
+    const duplicateTextIngest = await app.request(
+      '/v1/kb/ingest/text',
+      {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({
+          kind: 'contracts',
+          type: 'Contract',
+          title: 'note',
+          text: 'Contract c-3 has counterparty Gamma and value 9000.',
+          idempotency_key: 'same-note',
+        }),
+      },
+      env,
+    );
+    const duplicateTextBody = (await duplicateTextIngest.json()) as {
+      file_id: string;
+      idempotent_replay: boolean;
+      ingest_safety: { idempotent_replay: boolean; replay_route: string };
+    };
+    const vectorCountAfterDuplicateTextIngest = vectorize.vectors.size;
     const noSchemaTextIngest = await app.request(
       '/v1/kb/ingest/text',
       {
@@ -3105,8 +3145,25 @@ describe('knowledgebase RAG Worker app', () => {
       file_id: string;
       ingestion_mode: string;
       job_id: string;
+      ingest_safety: { replay_route: string; failure_classification: unknown };
     };
     const asyncTextJob = await app.request(`/v1/kb/ingest/jobs/${asyncTextBody.job_id}`, { headers: auth }, env);
+    const emptyTextIngest = await app.request(
+      '/v1/kb/ingest/text',
+      {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({
+          domain: 'contracts',
+          title: 'empty',
+          text: '',
+        }),
+      },
+      env,
+    );
+    const emptyTextBody = (await emptyTextIngest.json()) as {
+      failure_classification: { category: string; retryable: boolean };
+    };
 
     expect(recordIngest.status).toBe(201);
     expect(recordBody).toMatchObject({
@@ -3115,6 +3172,14 @@ describe('knowledgebase RAG Worker app', () => {
       entities_upserted: 2,
     });
     expect(recordBody.chunks_indexed).toBeGreaterThan(0);
+    expect(recordBody.ingest_safety).toMatchObject({
+      content_hash: expect.any(String),
+      idempotent: true,
+      replayable: true,
+      replay_route: `/v1/kb/files/${recordBody.file_id}/reprocess`,
+      failure_classification: null,
+    });
+    expect(recordBody.ingest_safety.chunk_preview[0]?.text_preview).toContain('contract_id');
     expect(vectorize.vectors.size).toBeGreaterThan(0);
     expect(rawDocs.puts.some((put) => put.key.startsWith('raw/contracts/'))).toBe(true);
     expect(rawDocs.puts.some((put) => put.key.startsWith('parse/contracts/'))).toBe(true);
@@ -3170,6 +3235,23 @@ describe('knowledgebase RAG Worker app', () => {
     expect(textBody.ingestion_mode).toBe('inline');
     expect(textBody.files[0]).toMatchObject({ status: 'ready', chunks_created: expect.any(Number) });
     expect(textBody.files[0]?.chunks_created).toBeGreaterThan(0);
+    expect(textBody.files[0]?.chunk_preview[0]?.text_preview).toContain('Contract c-3');
+    expect(textBody.ingest_safety).toMatchObject({
+      content_hash: expect.any(String),
+      idempotent: true,
+      replay_route: `/v1/kb/files/${textBody.file_id}/reprocess`,
+    });
+    expect(textBody.ingest_safety.chunk_preview[0]?.text_preview).toContain('Contract c-3');
+    expect(duplicateTextIngest.status).toBe(200);
+    expect(duplicateTextBody).toMatchObject({
+      file_id: textBody.file_id,
+      idempotent_replay: true,
+      ingest_safety: {
+        idempotent_replay: true,
+        replay_route: `/v1/kb/files/${textBody.file_id}/reprocess`,
+      },
+    });
+    expect(vectorCountAfterDuplicateTextIngest).toBe(vectorCountAfterTextIngest);
     expect(noSchemaTextIngest.status).toBe(201);
     expect(noSchemaTextBody).toMatchObject({
       file_id: expect.any(String),
@@ -3182,12 +3264,28 @@ describe('knowledgebase RAG Worker app', () => {
       file_id: expect.any(String),
       ingestion_mode: 'queued',
       job_id: expect.any(String),
+      ingest_safety: {
+        replay_route: `/v1/kb/files/${asyncTextBody.file_id}/reprocess`,
+        failure_classification: null,
+      },
     });
     expect(asyncTextJob.status).toBe(200);
     expect(await asyncTextJob.json()).toMatchObject({
       id: asyncTextBody.job_id,
       file_id: asyncTextBody.file_id,
       status: 'queued',
+      failure_classification: null,
+      replay: {
+        supported: true,
+        route: `/v1/kb/files/${asyncTextBody.file_id}/reprocess`,
+      },
+    });
+    expect(emptyTextIngest.status).toBe(400);
+    expect(emptyTextBody).toMatchObject({
+      failure_classification: {
+        category: 'parse_empty',
+        retryable: false,
+      },
     });
   });
 

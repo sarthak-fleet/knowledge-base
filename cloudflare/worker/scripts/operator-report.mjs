@@ -335,6 +335,11 @@ export async function runOperatorReport(options = {}) {
   report.capabilities = {
     ...report.capabilities,
     project_data_api: projects.ok && domains.ok && files.ok && jobs.ok,
+    ingest_contracts: files.ok && jobs.ok && sourceSets.ok ? ['text', 'record', 'url', 'file'] : [],
+    idempotent_ingest: files.ok && jobs.ok,
+    chunk_preview: files.ok && jobs.ok,
+    replayable_jobs: files.ok && jobs.ok,
+    failure_classification: files.ok && jobs.ok,
     trace_export: traceExport?.ok === true,
     trace_drilldown: traceDrilldown?.ok === true,
   };

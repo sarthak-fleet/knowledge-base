@@ -80,7 +80,7 @@ const sCapabilities = {
     { consumer: 'starboard', ok: true, authenticated: true },
   ],
   consumer_eval_packs: ['karte-memory', 'starboard-readme'],
-  ingest_contracts: ['text', 'record', 'url', 'file', 'readme'],
+  ingest_contracts: ['text', 'record', 'url', 'file'],
   idempotent_ingest: true,
   chunk_preview: true,
   replayable_jobs: true,

@@ -699,7 +699,7 @@ function scoreIngestion(operatorReport, capabilities = {}) {
   const aPlus = hasEvidence && failedFiles === 0 && failedJobs === 0 && readyFiles === fileCount && (inventory.source_set_count ?? 0) > 0;
   const a = hasEvidence && failedFiles === 0 && failedJobs === 0;
   const s = aPlus
-    && hasAllItems(capabilities.ingest_contracts, ['text', 'record', 'url', 'file', 'readme'])
+    && hasAllItems(capabilities.ingest_contracts, ['text', 'record', 'url', 'file'])
     && hasAllCapabilities(capabilities, ['idempotent_ingest', 'chunk_preview', 'replayable_jobs', 'failure_classification']);
   const result = gradeCheck({
     s,

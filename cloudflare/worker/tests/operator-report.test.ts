@@ -145,6 +145,11 @@ describe('operator-report', () => {
       custom_input: true,
       async_status: true,
       project_data_api: true,
+      ingest_contracts: ['text', 'record', 'url', 'file'],
+      idempotent_ingest: true,
+      chunk_preview: true,
+      replayable_jobs: true,
+      failure_classification: true,
       trace_export: true,
       trace_drilldown: true,
     });

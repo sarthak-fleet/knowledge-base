@@ -159,6 +159,10 @@ buckets, trace drilldown/export evidence, and explicit ingestion
 idempotency/replay/preview/failure-classification evidence. Without the product
 session cookies, `pnpm run smoke:consumer-auth` reports skipped authenticated
 flows and S proof correctly remains blocked.
+The ingest APIs expose that proof directly: `/v1/kb/ingest/record`,
+`/v1/kb/ingest/text`, `/v1/kb/ingest/jobs/:job_id`, and
+`/v1/kb/ingest/runs/:run_id` include idempotent replay status, chunk previews,
+reprocess routes, and classified failures where applicable.
 The sibling `../rag-service` repo is already retired. Use
 `pnpm run audit:sibling-rag-service -- --json --require-retired` to prove it
 stays gone. The current embedding-model release is live: matching `../free-ai`

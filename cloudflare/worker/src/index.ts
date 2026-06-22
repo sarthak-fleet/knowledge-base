@@ -305,6 +305,7 @@ interface KbRecordIngestBody {
   kind?: string;
   type?: string;
   data?: unknown;
+  idempotency_key?: string;
   embedding_model?: string;
   embedding_provider?: string;
 }
@@ -316,6 +317,7 @@ interface KbTextIngestBody {
   title?: string;
   text?: string;
   async?: boolean;
+  idempotency_key?: string;
   embedding_model?: string;
   embedding_provider?: string;
   chunking?: KbIngestRunBody['chunking'];
@@ -1718,7 +1720,77 @@ function summarizeIngestRun(runId: string, jobs: IngestJobRecord[]): JsonRecord 
     progress: total > 0 ? completed / total : 0,
     by_status,
     by_stage,
+    failure_classification: failed > 0 ? classifyIngestFailure(jobs.find((job) => job.status === 'failed')?.last_error ?? null) : null,
+    replayable: jobs.length > 0,
     done: total > 0 && active === 0,
+  };
+}
+
+function classifyIngestFailure(error: unknown): JsonRecord {
+  const message = String(error instanceof Error ? error.message : error ?? '').trim();
+  const lower = message.toLowerCase();
+  let category = 'unknown';
+  let retryable = true;
+  if (!message) {
+    category = 'none';
+    retryable = false;
+  } else if (lower.includes('embedding') || lower.includes('vectorize') || lower.includes('free-ai')) {
+    category = 'embedding_readiness';
+  } else if (lower.includes('r2 object not found') || lower.includes('not found')) {
+    category = 'missing_source_object';
+    retryable = false;
+  } else if (lower.includes('no parseable text') || lower.includes('empty file') || lower.includes('text must be non-empty')) {
+    category = 'parse_empty';
+    retryable = false;
+  } else if (lower.includes('schema')
+    || lower.includes('domain is required')
+    || lower.includes('document content is required')
+    || lower.includes('data must contain at least one record')) {
+    category = 'validation';
+    retryable = false;
+  }
+  return {
+    category,
+    retryable,
+    message: message.slice(0, 500),
+  };
+}
+
+function chunkPreviewFromChunks(chunks: Array<{ id?: string; content?: string; chunkIndex?: number; chunk_index?: number }>, limit = 3): JsonRecord[] {
+  return chunks.slice(0, limit).map((chunk, index) => ({
+    chunk_id: chunk.id ?? null,
+    chunk_index: typeof chunk.chunkIndex === 'number'
+      ? chunk.chunkIndex
+      : typeof chunk.chunk_index === 'number'
+        ? chunk.chunk_index
+        : index,
+    text_preview: String(chunk.content ?? '').slice(0, 240),
+  }));
+}
+
+function chunkPreviewFromFileResults(files: JsonRecord[], limit = 3): JsonRecord[] {
+  return files.flatMap((file) => (
+    Array.isArray(file.chunk_preview) ? file.chunk_preview.map(jsonRecord) : []
+  )).slice(0, limit);
+}
+
+function ingestSafetyEvidence(input: {
+  idempotencyKey?: string | undefined;
+  contentHash?: string | undefined;
+  chunkPreview?: JsonRecord[] | undefined;
+  replayRoute?: string | null;
+  failure?: unknown;
+  idempotentReplay?: boolean;
+}): JsonRecord {
+  return {
+    idempotency_key: input.idempotencyKey || input.contentHash || null,
+    content_hash: input.contentHash ?? null,
+    idempotent: true,
+    idempotent_replay: input.idempotentReplay === true,
+    chunk_preview: input.chunkPreview ?? [],
+    replayable: Boolean(input.replayRoute),
+    replay_route: input.replayRoute ?? null,
+    failure_classification: input.failure === undefined ? null : classifyIngestFailure(input.failure),
   };
 }
 
@@ -3751,7 +3823,14 @@ export function createApp(options: AppOptions = {}) {
     const repo = makeMetadataRepository(c.env);
     const job = await repo.getIngestJob(c.get('tenant'), c.req.param('job_id'));
     if (!job) return c.json({ error: 'job not found' }, 404);
-    return c.json(job);
+    return c.json({
+      ...job,
+      failure_classification: job.last_error ? classifyIngestFailure(job.last_error) : null,
+      replay: {
+        supported: true,
+        route: `/v1/kb/files/${job.file_id}/reprocess`,
+      },
+    });
   });
 
   app.get('/v1/kb/sources', (c) => c.json({
@@ -4036,11 +4115,21 @@ export function createApp(options: AppOptions = {}) {
     const tenant = c.get('tenant');
     const domain = (body.domain ?? body.kind)?.trim();
     const requestedEntityType = body.type?.trim();
-    if (!domain) return c.json({ error: 'domain is required' }, 400);
+    if (!domain) {
+      return c.json({
+        error: 'domain is required',
+        failure_classification: classifyIngestFailure('domain is required'),
+      }, 400);
+    }
     const records = (Array.isArray(body.data) ? body.data : [body.data])
       .map(jsonRecord)
       .filter((record) => Object.keys(record).length > 0);
-    if (records.length === 0) return c.json({ error: 'data must contain at least one record' }, 400);
+    if (records.length === 0) {
+      return c.json({
+        error: 'data must contain at least one record',
+        failure_classification: classifyIngestFailure('data must contain at least one record'),
+      }, 400);
+    }
     const embeddingSelection = await applyKbDomainEmbeddingSelection(c, tenant, domain, body);
     if (embeddingSelection) return embeddingSelection;
     const metadataRepo = makeMetadataRepository(c.env);
@@ -4110,6 +4199,27 @@ export function createApp(options: AppOptions = {}) {
       contentHash,
       objectKey,
     });
+    const replayRoute = `/v1/kb/files/${file.id}/reprocess`;
+    if (file.status === 'ready') {
+      return c.json({
+        project: tenant,
+        kind: domain,
+        domain,
+        type: entityType,
+        file_id: file.id,
+        schema_id: activeSchema.id,
+        schema_auto_created: schemaAutoCreated,
+        idempotent: true,
+        idempotent_replay: true,
+        chunks_indexed: 0,
+        ingest_safety: ingestSafetyEvidence({
+          idempotencyKey: body.idempotency_key,
+          contentHash,
+          replayRoute,
+          idempotentReplay: true,
+        }),
+      }, 200);
+    }
     await metadataRepo.setFileStatus(tenant, file.id, 'indexing');
     const artifactKey = parseArtifactKey(domain, contentHash);
     const docs = records.map((record, i) => ({
@@ -4161,9 +4271,21 @@ export function createApp(options: AppOptions = {}) {
       indexId = await ensureKbIndex(c.env, ragRepo, tenant, domain);
       ingested = await ingestDocumentsToIndex(c.env, ragRepo, tenant, indexId, docs);
     } catch (error) {
-      if (isEmbeddingReadinessError(error)) return c.json({ error: error.message }, 400);
+      if (isEmbeddingReadinessError(error)) {
+        return c.json({
+          error: error.message,
+          failure_classification: classifyIngestFailure(error),
+          ingest_safety: ingestSafetyEvidence({
+            idempotencyKey: body.idempotency_key,
+            contentHash,
+            replayRoute,
+            failure: error,
+          }),
+        }, 400);
+      }
       throw error;
     }
+    const chunkPreview = chunkPreviewFromChunks(ingested.flatMap((entry) => entry.chunks));
     await metadataRepo.insertKbChunks(ingested.flatMap((entry) =>
       entry.chunks.map((chunk) => ({
         id: crypto.randomUUID(),
@@ -4203,6 +4325,13 @@ export function createApp(options: AppOptions = {}) {
       entities_upserted: structured.entities,
       chunks_indexed: ingested.reduce((sum, entry) => sum + entry.chunks.length, 0),
       structured,
+      idempotency_key: body.idempotency_key ?? contentHash,
+      ingest_safety: ingestSafetyEvidence({
+        idempotencyKey: body.idempotency_key,
+        contentHash,
+        chunkPreview,
+        replayRoute,
+      }),
     }, 201);
   });
 
@@ -4212,8 +4341,18 @@ export function createApp(options: AppOptions = {}) {
     const tenant = c.get('tenant');
     const domain = (body.domain ?? body.kind)?.trim();
     const text = body.text?.trim();
-    if (!domain) return c.json({ error: 'domain is required' }, 400);
-    if (!text) return c.json({ error: 'text must be non-empty' }, 400);
+    if (!domain) {
+      return c.json({
+        error: 'domain is required',
+        failure_classification: classifyIngestFailure('domain is required'),
+      }, 400);
+    }
+    if (!text) {
+      return c.json({
+        error: 'text must be non-empty',
+        failure_classification: classifyIngestFailure('text must be non-empty'),
+      }, 400);
+    }
     const embeddingSelection = await applyKbDomainEmbeddingSelection(c, tenant, domain, body);
     if (embeddingSelection) return embeddingSelection;
     const readiness = await validateKbSchedulingReadiness(c, tenant, domain);
@@ -4249,6 +4388,37 @@ export function createApp(options: AppOptions = {}) {
       contentHash,
       objectKey,
     });
+    const replayRoute = `/v1/kb/files/${file.id}/reprocess`;
+    if (file.status === 'ready') {
+      return c.json({
+        project: tenant,
+        kind: domain,
+        domain,
+        file_id: file.id,
+        ingestion_mode: body.async === true ? 'queued' : 'inline',
+        idempotent: true,
+        idempotent_replay: true,
+        files: [{
+          file_id: file.id,
+          filename: file.filename,
+          status: 'ready',
+          chunks_created: 0,
+          chunk_preview: [],
+          ingest_safety: ingestSafetyEvidence({
+            idempotencyKey: body.idempotency_key,
+            contentHash,
+            replayRoute,
+            idempotentReplay: true,
+          }),
+        }],
+        ingest_safety: ingestSafetyEvidence({
+          idempotencyKey: body.idempotency_key,
+          contentHash,
+          replayRoute,
+          idempotentReplay: true,
+        }),
+      }, 200);
+    }
     await metadataRepo.setFileStatus(tenant, file.id, 'pending');
     if (body.async !== true) {
       const ingestBody: KbIngestRunBody = {
@@ -4261,14 +4431,33 @@ export function createApp(options: AppOptions = {}) {
       try {
         ingested = await runKbIngest(c.env, tenant, ingestBody, 'direct-text');
       } catch (error) {
-        if (isEmbeddingReadinessError(error)) return c.json({ error: error.message }, 400);
+        if (isEmbeddingReadinessError(error)) {
+          return c.json({
+            error: error.message,
+            failure_classification: classifyIngestFailure(error),
+            ingest_safety: ingestSafetyEvidence({
+              idempotencyKey: body.idempotency_key,
+              contentHash,
+              replayRoute,
+              failure: error,
+            }),
+          }, 400);
+        }
         throw error;
       }
+      const chunkPreview = chunkPreviewFromFileResults(ingested.files);
       return c.json({
         ...ingested,
         kind: domain,
         file_id: file.id,
         ingestion_mode: 'inline',
+        idempotency_key: body.idempotency_key ?? contentHash,
+        ingest_safety: ingestSafetyEvidence({
+          idempotencyKey: body.idempotency_key,
+          contentHash,
+          chunkPreview,
+          replayRoute,
+        }),
       }, 201);
     }
     const job = await metadataRepo.upsertIngestJob({
@@ -4286,7 +4475,20 @@ export function createApp(options: AppOptions = {}) {
       file_id: file.id,
       ingestion_mode: 'queued',
       job_id: job.id,
-      job,
+      job: {
+        ...job,
+        failure_classification: null,
+        replay: {
+          supported: true,
+          route: replayRoute,
+        },
+      },
+      idempotency_key: body.idempotency_key ?? contentHash,
+      ingest_safety: ingestSafetyEvidence({
+        idempotencyKey: body.idempotency_key,
+        contentHash,
+        replayRoute,
+      }),
     }, 201);
   });
 
@@ -4317,6 +4519,7 @@ export function createApp(options: AppOptions = {}) {
 	      run_id: runId,
 	      ...(workflow ? { workflow } : {}),
 	      summary: summarizeIngestRun(runId, jobs),
+	      replay_routes: jobs.map((job) => `/v1/kb/files/${job.file_id}/reprocess`),
 	      jobs,
 	    });
 	  });
@@ -4415,6 +4618,7 @@ export function createApp(options: AppOptions = {}) {
         });
         await metadataRepo.updateIngestJob(job.id, { status: 'running', stage: 'index' });
         const ingested = await ingestDocumentsToIndex(env, repo, tenant, indexId, docs, body.chunking);
+        const chunkPreview = chunkPreviewFromChunks(ingested.flatMap((entry) => entry.chunks));
         await metadataRepo.insertKbChunks(ingested.flatMap((entry) =>
           entry.chunks.map((chunk) => ({
             id: crypto.randomUUID(),
@@ -4457,6 +4661,12 @@ export function createApp(options: AppOptions = {}) {
           parse_artifact: artifact,
           documents_created: ingested.length,
           chunks_created: ingested.reduce((sum, entry) => sum + entry.chunks.length, 0),
+          chunk_preview: chunkPreview,
+          ingest_safety: ingestSafetyEvidence({
+            contentHash: file.content_hash,
+            chunkPreview,
+            replayRoute: `/v1/kb/files/${file.id}/reprocess`,
+          }),
           ...structured,
         });
       } catch (error) {
@@ -4468,7 +4678,19 @@ export function createApp(options: AppOptions = {}) {
 	          lockedBy: null,
 	          incrementAttempts: true,
 	        });
-        results.push({ job_id: job.id, file_id: file.id, filename: file.filename, status: 'failed', error: message });
+        results.push({
+          job_id: job.id,
+          file_id: file.id,
+          filename: file.filename,
+          status: 'failed',
+          error: message,
+          failure_classification: classifyIngestFailure(message),
+          ingest_safety: ingestSafetyEvidence({
+            contentHash: file.content_hash,
+            replayRoute: `/v1/kb/files/${file.id}/reprocess`,
+            failure: message,
+          }),
+        });
       }
     }
     queryCache.clear();
