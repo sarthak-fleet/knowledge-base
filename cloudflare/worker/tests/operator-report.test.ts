@@ -8,6 +8,13 @@ function jsonResponse(payload: unknown, status = 200): Response {
   });
 }
 
+function textResponse(text: string, status = 200): Response {
+  return new Response(text, {
+    status,
+    headers: { 'Content-Type': 'text/html' },
+  });
+}
+
 function makeFetch() {
   const calls: Array<{ url: string; method: string; body: unknown }> = [];
   const fetchImpl = async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
@@ -19,6 +26,14 @@ function makeFetch() {
     const search = new URL(href).search;
     if (path === '/v1/healthz') {
       return jsonResponse({ ok: true, deploy_fingerprint: 'fp', d1_schema: true, vectorize: true, r2: true });
+    }
+    if (path === '/ui') {
+      return textResponse(`
+        <title>Knowledgebase Cloudflare</title>
+        <button id="ingestDomainText">Ingest Domain Text</button>
+        <button id="loadRunProgress">Load Run Progress</button>
+        <script>await call('/v1/kb/ingest/text', {});</script>
+      `);
     }
     if (path === '/v1/indexes' && !init?.headers?.['Authorization' as keyof HeadersInit]) {
       return jsonResponse({ error: 'unauthorized' }, 401);
@@ -78,7 +93,13 @@ describe('operator-report', () => {
     expect(report.authenticated).toBe(false);
     expect(report.ok).toBe(true);
     expect(report.blockers).toEqual(['authenticated_inventory_requires_RAG_SERVICE_KEY']);
-    expect(calls.map((call) => new URL(call.url).pathname)).toEqual(['/v1/healthz', '/v1/indexes']);
+    expect(report.capabilities).toMatchObject({
+      hosted_ui: true,
+      custom_input: true,
+      async_status: true,
+      hides_rag_internals: true,
+    });
+    expect(calls.map((call) => new URL(call.url).pathname)).toEqual(['/v1/healthz', '/ui', '/v1/indexes']);
   });
 
   it('summarizes authenticated tenant inventory and optional benchmark', async () => {
@@ -111,6 +132,11 @@ describe('operator-report', () => {
       avg_trace_latency_ms: 17,
       avg_eval_ai_use_rate: 0,
       benchmark_cache_hit_rate: 0.5,
+    });
+    expect(report.capabilities).toMatchObject({
+      hosted_ui: true,
+      custom_input: true,
+      async_status: true,
     });
     expect(report.benchmark).toMatchObject({ cache_hit_rate: 0.5 });
   });

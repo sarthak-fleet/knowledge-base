@@ -120,6 +120,17 @@ async function requestJson(fetchImpl, url, { key = '', method = 'GET', body } = 
   return { status: res.status, ok: res.ok, payload };
 }
 
+async function requestText(fetchImpl, url, { key = '', method = 'GET' } = {}) {
+  const res = await fetchImpl(url, {
+    method,
+    headers: {
+      ...(key ? { Authorization: `Bearer ${key}` } : {}),
+    },
+  });
+  const text = await res.text().catch(() => '');
+  return { status: res.status, ok: res.ok, text };
+}
+
 function endpoint(path, domain) {
   if (!domain) return path;
   const separator = path.includes('?') ? '&' : '?';
@@ -168,6 +179,18 @@ function costSignals({ traces, evalSummary, benchmark }) {
   };
 }
 
+function uiCapabilities(ui) {
+  const text = ui?.text ?? '';
+  const hasHostedUi = ui?.ok === true && /Knowledgebase Cloudflare/.test(text);
+  return {
+    hosted_ui: hasHostedUi,
+    custom_input: hasHostedUi && /\/v1\/kb\/ingest\/text/.test(text),
+    async_status: hasHostedUi && /loadRunProgress|\/v1\/kb\/ingest\/runs/.test(text),
+    hides_rag_internals: hasHostedUi
+      && !/\b(Index id|Embedding|Vectorize|chunk|RAG)\b/i.test(text),
+  };
+}
+
 export async function runOperatorReport(options = {}) {
   const fetchImpl = options.fetchImpl ?? fetch;
   const baseUrl = (options.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '');
@@ -182,10 +205,12 @@ export async function runOperatorReport(options = {}) {
     inventory: null,
     cost_signals: null,
     benchmark: null,
+    capabilities: null,
     blockers: [],
   };
 
   const health = await requestJson(fetchImpl, `${baseUrl}/v1/healthz`);
+  const hostedUi = await requestText(fetchImpl, `${baseUrl}/ui`);
   report.checks.push({
     name: 'public_health',
     ok: health.ok && health.payload?.ok === true,
@@ -195,6 +220,12 @@ export async function runOperatorReport(options = {}) {
     vectorize: health.payload?.vectorize ?? null,
     r2: health.payload?.r2 ?? null,
   });
+  report.checks.push({
+    name: 'hosted_ui',
+    ok: hostedUi.ok && /Knowledgebase Cloudflare/.test(hostedUi.text),
+    status: hostedUi.status,
+  });
+  report.capabilities = uiCapabilities(hostedUi);
 
   const authBoundary = await requestJson(fetchImpl, `${baseUrl}/v1/indexes`);
   report.checks.push({
@@ -287,6 +318,10 @@ function printHuman(report) {
     console.log(`  traces=${report.inventory.recent_trace_count} avg_trace_latency_ms=${report.inventory.avg_trace_latency_ms ?? 'n/a'}`);
     console.log(`  eval_reports=${report.inventory.eval_report_count} eval_kinds=${report.inventory.eval_kinds.join(',') || 'none'}`);
     console.log(`  embedding_models=${report.inventory.embedding_model_count} selectable=${report.inventory.selectable_embedding_model_count}`);
+  }
+  if (report.capabilities) {
+    console.log('\nCapabilities');
+    console.log(`  hosted_ui=${report.capabilities.hosted_ui} custom_input=${report.capabilities.custom_input} async_status=${report.capabilities.async_status} hides_rag_internals=${report.capabilities.hides_rag_internals}`);
   }
   if (report.benchmark) {
     console.log('\nBenchmark');

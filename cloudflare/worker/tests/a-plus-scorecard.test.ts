@@ -20,6 +20,12 @@ const aPlusOperatorReport = {
     eval_report_count: 2,
     avg_trace_latency_ms: 420,
   },
+  capabilities: {
+    hosted_ui: true,
+    custom_input: true,
+    async_status: true,
+    hides_rag_internals: true,
+  },
   cost_signals: {
     recent_trace_count: 12,
     traces_with_citations: 12,
@@ -44,12 +50,6 @@ describe('a-plus-scorecard', () => {
           server_latency: { p95_ms: 980 },
         },
       ],
-      capabilities: {
-        hosted_ui: true,
-        custom_input: true,
-        async_status: true,
-        hides_rag_internals: true,
-      },
     }, { requireGrade: 'A+' });
 
     expect(scorecard.ok).toBe(true);

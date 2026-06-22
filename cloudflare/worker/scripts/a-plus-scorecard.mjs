@@ -301,10 +301,15 @@ function scoreObservability(operatorReport) {
 }
 
 function scoreEaseOfUse(operatorReport, capabilities = {}) {
-  const hostedUi = capabilities.hosted_ui === true || operatorReport?.checks?.some?.((check) => check?.name === 'hosted_ui' && check?.ok);
-  const customInput = capabilities.custom_input === true;
-  const asyncStatus = capabilities.async_status === true || (operatorReport?.inventory?.job_count ?? 0) > 0;
-  const hidesRagInternals = capabilities.hides_rag_internals === true;
+  const reported = operatorReport?.capabilities ?? {};
+  const hostedUi = capabilities.hosted_ui === true
+    || reported.hosted_ui === true
+    || operatorReport?.checks?.some?.((check) => check?.name === 'hosted_ui' && check?.ok);
+  const customInput = capabilities.custom_input === true || reported.custom_input === true;
+  const asyncStatus = capabilities.async_status === true
+    || reported.async_status === true
+    || (operatorReport?.inventory?.job_count ?? 0) > 0;
+  const hidesRagInternals = capabilities.hides_rag_internals === true || reported.hides_rag_internals === true;
   const aPlus = hostedUi && customInput && asyncStatus && hidesRagInternals;
   const a = hostedUi && customInput && asyncStatus;
   const result = gradeCheck({
