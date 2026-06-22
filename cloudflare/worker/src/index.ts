@@ -2832,7 +2832,9 @@ export function createApp(options: AppOptions = {}) {
     const vectorizeProfile = vectorizeProfileForIndex(c.env, index, body);
     const embeddingProfile = embeddingProfileForIndex(c.env, index, vectorizeProfile);
     const normalizedQuery = normalizeSemanticQuery(query);
-    const queryPlan = buildQueryPlan(query, body);
+    const queryPlan = body.mode === 'lexical' && body.query_rewrite !== true && body.query_decompose !== true
+      ? { variants: [] }
+      : buildQueryPlan(query, body);
     const cacheKey = buildCacheKey({
       tenant,
       indexId,

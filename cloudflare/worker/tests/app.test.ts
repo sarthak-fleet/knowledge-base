@@ -5893,7 +5893,7 @@ describe('knowledgebase RAG Worker app', () => {
       {
         method: 'POST',
         headers: auth,
-        body: JSON.stringify({ query: 'where are billing guardrails documented?', top_k: 1 }),
+        body: JSON.stringify({ query: 'where are billing guardrails documented?', top_k: 1, mode: 'lexical' }),
       },
       env,
     );
@@ -5903,6 +5903,7 @@ describe('knowledgebase RAG Worker app', () => {
     expect(query.status).toBe(200);
     expect(query.headers.get('X-RAG-Cache')).toBe('miss');
     expect(timing).toMatchObject({ retrieval: 'lexical' });
+    expect(timing.query_plan).toBeUndefined();
     expect(result.data[0]?.chunk_content).toContain('billing guardrails');
     expect(aiCalls).toBe(0);
     expect(vectorQueries).toBe(0);
@@ -5974,6 +5975,8 @@ describe('knowledgebase RAG Worker app', () => {
           query: 'Which docs discuss billing guardrails and retention windows?',
           top_k: 2,
           mode: 'lexical',
+          query_rewrite: true,
+          query_decompose: true,
         }),
       },
       env,
