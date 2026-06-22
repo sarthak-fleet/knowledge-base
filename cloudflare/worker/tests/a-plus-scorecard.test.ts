@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildAPlusScorecard } from '../scripts/a-plus-scorecard.mjs';
+import { buildAPlusScorecard, parseArgs } from '../scripts/a-plus-scorecard.mjs';
 
 const aPlusOperatorReport = {
   ok: true,
@@ -33,6 +33,13 @@ const aPlusOperatorReport = {
 };
 
 describe('a-plus-scorecard', () => {
+  it('accepts the pnpm run argument separator', () => {
+    expect(parseArgs(['--', '--input', '/tmp/report.json', '--require-grade', 'A+'])).toEqual({
+      input: '/tmp/report.json',
+      requireGrade: 'A+',
+    });
+  });
+
   it('grades complete fast evidence as A+', () => {
     const scorecard = buildAPlusScorecard({
       operator_report: aPlusOperatorReport,
@@ -55,6 +62,24 @@ describe('a-plus-scorecard', () => {
     expect(scorecard.ok).toBe(true);
     expect(scorecard.overall_grade).toBe('A+');
     expect(scorecard.blockers).toEqual([]);
+  });
+
+  it('treats direct operator-report JSON with capabilities as the operator report', () => {
+    const scorecard = buildAPlusScorecard({
+      ...aPlusOperatorReport,
+      benchmark: {
+        mode: 'semantic',
+        hit_rate: 0.94,
+        latency: { p95_ms: 1200 },
+        server_latency: { p95_ms: 900 },
+      },
+    }, { requireGrade: 'A' });
+
+    expect(scorecard.categories.find((category) => category.name === 'reliability')).toMatchObject({
+      grade: 'A+',
+      ok: true,
+    });
+    expect(scorecard.blockers).not.toContain('missing_operator_report');
   });
 
   it('does not allow missing benchmarks and evals to pass as A', () => {

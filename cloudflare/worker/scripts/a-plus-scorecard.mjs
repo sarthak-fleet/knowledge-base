@@ -52,6 +52,7 @@ function parseArgs(argv) {
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
+    if (arg === '--') continue;
     const value = argv[i + 1];
     if (!value) throw new Error(`missing value for ${arg}`);
     i += 1;
@@ -107,7 +108,7 @@ function detectBenchmarkMode(benchmark) {
 }
 
 function normalizeEvidence(raw) {
-  if (raw?.operator_report || raw?.benchmarks || raw?.capabilities) {
+  if (raw?.operator_report || raw?.operatorReport || raw?.benchmarks) {
     return {
       operatorReport: raw.operator_report ?? raw.operatorReport ?? null,
       benchmarks: asArray(raw.benchmarks),
@@ -116,6 +117,9 @@ function normalizeEvidence(raw) {
   }
   if (raw?.inventory || raw?.checks || raw?.cost_signals) {
     return { operatorReport: raw, benchmarks: raw.benchmark ? [raw.benchmark] : [], capabilities: {} };
+  }
+  if (raw?.capabilities) {
+    return { operatorReport: null, benchmarks: [], capabilities: raw.capabilities };
   }
   if (raw?.latency || raw?.server_latency || raw?.hit_rate !== undefined) {
     return { operatorReport: null, benchmarks: [raw], capabilities: {} };
@@ -375,4 +379,4 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
 }
 
-export { printHuman };
+export { parseArgs, printHuman };
