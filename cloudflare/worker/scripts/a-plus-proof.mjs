@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { buildAPlusScorecard } from './a-plus-scorecard.mjs';
 import { runBenchmark } from './benchmark-rag.mjs';
 import { runConsumerAuthSmokes } from './consumer-auth-smokes.mjs';
+import { auditClientContract } from './audit-client-contract.mjs';
+import { auditConsumerRagIntegrations } from './audit-consumer-rag-integrations.mjs';
 import { EXPECTED_DEPLOY_FINGERPRINT, runDeployReadiness } from './deploy-readiness.mjs';
 import { runOperatorReport } from './operator-report.mjs';
 
@@ -306,6 +308,7 @@ export async function runQueryEvalProof(options) {
       top_k: options.topK,
       answer_mode: 'extractive',
       ai_judge: false,
+      ...(options.sessionIdPrefix ? { session_id_prefix: options.sessionIdPrefix } : {}),
       cases,
     },
   });
@@ -412,6 +415,9 @@ export async function runAPlusProof(options) {
       domain: options.domain,
       input,
       topK: options.topK,
+      sessionIdPrefix: options.requireGrade === 'S'
+        ? `proof:${options.domain}:${Date.now()}:${i + 1}`
+        : '',
     }));
   }
   const queryEval = queryEvals[0];
@@ -425,6 +431,11 @@ export async function runAPlusProof(options) {
     topK: options.topK,
     mode: 'semantic',
   });
+  const clientContract = await auditClientContract().catch((error) => ({
+    ok: false,
+    blockers: [error instanceof Error ? error.message : String(error)],
+  }));
+  const consumerIntegrationAudit = auditConsumerRagIntegrations();
   const scorecard = buildAPlusScorecard({
     operator_report: operatorReport,
     readiness_reports: [readinessReport],
@@ -433,6 +444,9 @@ export async function runAPlusProof(options) {
     capabilities: {
       ...(consumerSmokes ? { consumer_authenticated_smokes: consumerSmokes.consumers } : {}),
       consumer_eval_packs: detectConsumerEvalPacks(input),
+      typed_client_contract: clientContract.ok === true,
+      one_command_smoke: true,
+      consumer_integration_audit: consumerIntegrationAudit.ok === true,
     },
   }, {
     requireGrade: options.requireGrade,
@@ -452,6 +466,8 @@ export async function runAPlusProof(options) {
     seed_eval_corpus: await writeJson(options.outputDir, 'seed-eval-corpus.json', seedReport),
     query_eval: await writeJson(options.outputDir, 'query-eval.json', queryEval),
     query_evals: queryEvals.length > 1 ? await writeJson(options.outputDir, 'query-evals.json', queryEvals) : null,
+    client_contract: await writeJson(options.outputDir, 'client-contract.json', clientContract),
+    consumer_integration_audit: await writeJson(options.outputDir, 'consumer-integration-audit.json', consumerIntegrationAudit),
     consumer_smokes: consumerSmokes ? await writeJson(options.outputDir, 'consumer-smokes.json', consumerSmokes) : null,
     operator_report: await writeJson(options.outputDir, 'operator-report.json', operatorReport),
     benchmark_lexical: await writeJson(options.outputDir, 'benchmark-lexical.json', lexicalBenchmark),
@@ -468,6 +484,8 @@ export async function runAPlusProof(options) {
     seed_eval_corpus: seedReport,
     query_eval: queryEval,
     query_evals: queryEvals,
+    client_contract: clientContract,
+    consumer_integration_audit: consumerIntegrationAudit,
     consumer_smokes: consumerSmokes,
     operator_report: operatorReport,
     benchmarks: [lexicalBenchmark, semanticBenchmark],

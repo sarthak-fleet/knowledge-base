@@ -253,6 +253,7 @@ interface QueryEvalCase extends SearchEvalCase {
 interface QueryEvalBody {
   domain?: string;
   cases?: QueryEvalCase[];
+  session_id_prefix?: string;
   top_k?: number;
   mode?: 'auto' | 'semantic' | 'lexical' | 'hybrid';
   semantic_model?: SemanticModel;
@@ -2559,6 +2560,20 @@ function timingStages(timing: RagTiming, payload: KbAnswerPayload): JsonRecord[]
     });
   }
   return stages;
+}
+
+function confidenceWithTiming(confidence: JsonRecord, timing: RagTiming, payload: KbAnswerPayload): JsonRecord {
+  return {
+    ...confidence,
+    timing,
+    timing_stages: timingStages(timing, payload),
+    empty_result_diagnostics: {
+      result_count: payload.data.length,
+      citation_count: payload.citations.length,
+      answer_present: Boolean(payload.answer?.trim()),
+      status: payload.data.length === 0 ? 'empty_results' : 'has_results',
+    },
+  };
 }
 
 async function deleteVectorsFromProfile(profile: ConfiguredVectorizeProfile, ids: string[]): Promise<void> {
@@ -5113,18 +5128,34 @@ export function createApp(options: AppOptions = {}) {
           verification_status: String(answerState.confidence.verification_status ?? 'unknown'),
           cache: 'miss',
         };
-	        const trace = await metadataRepo.insertQueryTrace({
-	          project: tenant,
-	          domain,
+        const structuredPayloadForTrace = {
+          project: tenant,
+          domain,
+          index_id: null,
+          route: 'd1_entities',
+          ai_used: answerState.aiUsed,
+          trace_id: '',
+          session_id: sessionId,
+          answer_mode: answerState.answerMode,
+          answer_model: answerState.answerModel,
+          question,
+          answer: answerState.answer,
+          citations,
+          confidence: answerState.confidence,
+          data,
+        };
+        const trace = await metadataRepo.insertQueryTrace({
+          project: tenant,
+          domain,
           question,
           scope: body.scope ?? null,
           filters: { route: graphResults.length > 0 ? 'd1_graph' : structuredRoute, structured_filters: fieldQuery.filters },
           retrieved: data,
           answer: answerState.answer,
           citations,
-	          confidence: answerState.confidence,
-	          latencyMs: elapsedMs(started),
-	        });
+          confidence: confidenceWithTiming(answerState.confidence, timing, structuredPayloadForTrace),
+          latencyMs: elapsedMs(started),
+        });
 	        writeTraceAnalytics(c.env, trace);
         if (sessionId) {
           await metadataRepo.appendSessionHistory(tenant, sessionId, [
@@ -5196,16 +5227,34 @@ export function createApp(options: AppOptions = {}) {
       requestedMode: requestedAnswerMode,
       requestedModel: body.answer_model,
     });
-    const route = result.timing.retrieval === 'lexical'
+    const route = result.timing.retrieval === 'lexical' || result.timing.retrieval === 'semantic_lexical_fast_path'
       ? 'd1_lexical'
       : result.timing.retrieval === 'hybrid_rrf'
         ? 'hybrid_rrf'
-        : 'vectorize';
+        : result.timing.retrieval === 'corrective_hybrid'
+          ? 'corrective_hybrid'
+          : 'vectorize';
     result.timing.verification = 'deterministic';
     Object.assign(result.timing, answerState.timing);
     result.timing.verification_status = String(answerState.confidence.verification_status ?? 'unknown');
-	    const trace = await metadataRepo.insertQueryTrace({
-	      project: tenant,
+    const payloadForTrace = {
+      project: tenant,
+      domain,
+      index_id: index.id,
+      route,
+      ai_used: answerState.aiUsed || (route !== 'd1_lexical' && result.cache !== 'hit'),
+      trace_id: '',
+      session_id: sessionId,
+      answer_mode: answerState.answerMode,
+      answer_model: answerState.answerModel,
+      question,
+      answer: answerState.answer,
+      citations,
+      confidence: answerState.confidence,
+      data: result.payload.data,
+    };
+    const trace = await metadataRepo.insertQueryTrace({
+      project: tenant,
       domain,
       question,
       scope: body.scope ?? null,
@@ -5213,9 +5262,9 @@ export function createApp(options: AppOptions = {}) {
       retrieved: result.payload.data,
       answer: answerState.answer,
       citations,
-	      confidence: answerState.confidence,
-	      latencyMs: elapsedMs(started),
-	    });
+      confidence: confidenceWithTiming(answerState.confidence, result.timing, payloadForTrace),
+      latencyMs: elapsedMs(started),
+    });
 	    writeTraceAnalytics(c.env, trace);
     if (sessionId) {
       await metadataRepo.appendSessionHistory(tenant, sessionId, [
@@ -6112,6 +6161,8 @@ export function createApp(options: AppOptions = {}) {
         domain,
         question,
       };
+      const sessionPrefix = body.session_id_prefix?.trim();
+      if (sessionPrefix) queryBody.session_id = `${sessionPrefix}:${i + 1}`;
       if (body.top_k !== undefined) queryBody.top_k = body.top_k;
       if (body.mode !== undefined) queryBody.mode = body.mode;
       if (body.semantic_model !== undefined) queryBody.semantic_model = body.semantic_model;

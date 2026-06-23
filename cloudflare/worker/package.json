@@ -23,6 +23,7 @@
     "audit:legacy-route-parity": "node scripts/audit-legacy-route-parity.mjs",
     "audit:python-runtime-retirement": "node scripts/audit-python-runtime-retirement.mjs",
     "audit:consumer-rag-integrations": "node scripts/audit-consumer-rag-integrations.mjs",
+    "audit:client-contract": "node scripts/audit-client-contract.mjs",
     "audit:no-external-rag-service-references": "node scripts/audit-sibling-rag-service.mjs --require-no-external-references",
     "audit:sibling-rag-service": "node scripts/audit-sibling-rag-service.mjs",
     "audit:vectorize-embedding-bindings": "node scripts/audit-vectorize-embedding-bindings.mjs",

@@ -24,6 +24,10 @@ export const LOCAL_PREDEPLOY_STEPS = [
     command: ['pnpm', 'run', 'audit:consumer-rag-integrations', '--', '--json', '--require-complete'],
   },
   {
+    name: 'typed-client-contract',
+    command: ['pnpm', 'run', 'audit:client-contract', '--', '--json', '--require-complete'],
+  },
+  {
     name: 'consumer-cloudflare-builds',
     command: ['pnpm', 'run', 'build:consumer-cloudflare', '--', '--json'],
   },
@@ -71,6 +75,7 @@ Runs the local predeploy gate for the Cloudflare cutover:
   - pnpm run audit:python-runtime-retirement -- --json --require-complete
   - pnpm run audit:no-external-rag-service-references -- --json
   - pnpm run audit:consumer-rag-integrations -- --json --require-complete
+  - pnpm run audit:client-contract -- --json --require-complete
   - pnpm run build:consumer-cloudflare -- --json
   - pnpm run audit:free-ai-embedding-contract -- --json --require-complete
   - pnpm --dir ../../../free-ai run check

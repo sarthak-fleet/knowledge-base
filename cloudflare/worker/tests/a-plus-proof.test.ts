@@ -290,6 +290,32 @@ describe('a-plus-proof', () => {
     }]);
   });
 
+  it('can request session-backed query eval proof traces', async () => {
+    const calls: Array<{ body: unknown }> = [];
+    globalThis.fetch = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ body: init?.body ? JSON.parse(String(init.body)) : null });
+      return new Response(JSON.stringify({ n: 1, hit_rate: 1, citation_rate: 1, rows: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    await runQueryEvalProof({
+      baseUrl: 'https://kb.example',
+      key: 'service-key',
+      domain: 'manuals',
+      input: {
+        queries: [{ id: 'q1', query: 'What mentions cache?', expected_contains: ['dashboard cache'] }],
+      },
+      topK: 5,
+      sessionIdPrefix: 'proof:manuals:1',
+    });
+
+    expect(calls[0]?.body).toMatchObject({
+      session_id_prefix: 'proof:manuals:1',
+    });
+  });
+
   it('does not require a service key or network calls for dry-run proof planning', async () => {
     const result = await runAPlusProof({
       ...parseArgs([

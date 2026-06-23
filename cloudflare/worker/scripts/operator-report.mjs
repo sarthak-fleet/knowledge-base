@@ -179,6 +179,29 @@ function costSignals({ traces, evalSummary, benchmark }) {
   };
 }
 
+function traceHasStageTimings(trace) {
+  const stages = trace?.confidence?.timing_stages;
+  return Array.isArray(stages)
+    && stages.some((stage) => typeof stage?.stage === 'string' && typeof stage?.latency_ms === 'number');
+}
+
+function traceHasEmptyResultDiagnostics(trace) {
+  const diagnostics = trace?.confidence?.empty_result_diagnostics;
+  return diagnostics
+    && typeof diagnostics === 'object'
+    && typeof diagnostics.result_count === 'number'
+    && typeof diagnostics.status === 'string';
+}
+
+function drilldownHasEmptyResultDiagnostics(drilldown) {
+  const quality = drilldown?.quality;
+  return quality
+    && typeof quality === 'object'
+    && typeof quality.status === 'string'
+    && typeof quality.retrieved_count === 'number'
+    && typeof quality.citation_count === 'number';
+}
+
 function visibleText(html) {
   return String(html || '')
     .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
@@ -342,6 +365,9 @@ export async function runOperatorReport(options = {}) {
     failure_classification: files.ok && jobs.ok,
     trace_export: traceExport?.ok === true,
     trace_drilldown: traceDrilldown?.ok === true,
+    stage_timings: traceRows.some(traceHasStageTimings),
+    empty_result_diagnostics: traceRows.some(traceHasEmptyResultDiagnostics)
+      || drilldownHasEmptyResultDiagnostics(traceDrilldown?.payload),
   };
   report.ok = report.checks.every((check) => check.ok);
   return report;

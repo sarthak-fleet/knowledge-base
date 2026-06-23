@@ -4,6 +4,11 @@ Cloudflare-native Knowledgebase RAG Worker for fleet projects.
 
 This Worker is the Cloudflare-native shared RAG surface owned by `knowledgebase`: Hono, free-ai/Workers AI embeddings, Vectorize search, D1 for chunk text and metadata, and optional R2 for raw document blobs.
 
+For product integrations, use the dependency-free typed client in
+`src/client.ts` (`KnowledgebaseClient`) instead of constructing ad hoc fetch
+calls. `pnpm run audit:client-contract -- --require-complete` keeps the typed
+custom-input, search, and query contract present.
+
 ## Local Checks
 
 ```bash
@@ -482,6 +487,10 @@ query embeddings are reused through D1 across Worker isolates before the route
 falls back to external embedding generation or Vectorize. Migration
 `0007_embedding_cache.sql` creates the embedding cache table; query payload
 cache storage remains in `0002_query_cache.sql`.
+Successful query traces persist timing stage breakdowns and empty-result
+diagnostic fields in `confidence.timing_stages` and
+`confidence.empty_result_diagnostics`; operator reports use those fields for
+observability grading.
 `/v1/kb/query` defaults to the fast
 extractive cited answer path; set `answer_mode: "workers_ai"` to synthesize a
 richer cited answer with Workers AI using `answer_model`, `RAG_ANSWER_MODEL`, or

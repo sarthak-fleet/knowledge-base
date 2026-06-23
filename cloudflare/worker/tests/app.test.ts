@@ -5248,6 +5248,14 @@ describe('knowledgebase RAG Worker app', () => {
     expect(traceBody.confidence).toMatchObject({
       verification_checked: true,
       verification_status: 'supported',
+      timing: expect.objectContaining({ route: 'query' }),
+      timing_stages: expect.arrayContaining([
+        expect.objectContaining({ stage: expect.any(String) }),
+      ]),
+      empty_result_diagnostics: expect.objectContaining({
+        result_count: expect.any(Number),
+        status: 'has_results',
+      }),
     });
 	    expect(traceDrilldown.status).toBe(200);
 	    expect(traceDrilldownBody.trace_id).toBe(answerBody.trace_id);

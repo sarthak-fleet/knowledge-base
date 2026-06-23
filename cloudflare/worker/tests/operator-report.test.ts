@@ -61,7 +61,17 @@ function makeFetch() {
     }
     if (path === '/v1/kb/query/traces') {
       expect(search).toContain('domain=docs');
-      return jsonResponse({ traces: [{ id: 'trace-1', latency_ms: 17, citations: [{}] }] });
+      return jsonResponse({
+        traces: [{
+          id: 'trace-1',
+          latency_ms: 17,
+          citations: [{}],
+          confidence: {
+            timing_stages: [{ stage: 'lexical', latency_ms: 3 }],
+            empty_result_diagnostics: { result_count: 1, status: 'has_results' },
+          },
+        }],
+      });
     }
     if (path === '/v1/kb/query/traces/export') {
       expect(search).toContain('domain=docs');
@@ -152,6 +162,8 @@ describe('operator-report', () => {
       failure_classification: true,
       trace_export: true,
       trace_drilldown: true,
+      stage_timings: true,
+      empty_result_diagnostics: true,
     });
     expect(report.benchmark).toMatchObject({ cache_hit_rate: 0.5 });
   });

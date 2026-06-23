@@ -91,4 +91,10 @@ describe('package scripts', () => {
       'node scripts/consumer-auth-smokes.mjs',
     );
   });
+
+  it('keeps a named typed client contract audit', () => {
+    expect(pkg.scripts?.['audit:client-contract']).toBe(
+      'node scripts/audit-client-contract.mjs',
+    );
+  });
 });
