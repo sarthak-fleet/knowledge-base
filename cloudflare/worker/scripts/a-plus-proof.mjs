@@ -115,9 +115,9 @@ function buildPlan(options) {
       'deploy-readiness',
       ...(requiresS ? ['consumer-auth-smokes'] : []),
       'seed-eval-corpus',
-      'query-eval',
       'benchmark:kb-search:lexical',
       'benchmark:kb-query:semantic',
+      'query-eval',
       'operator-report',
       requiresS ? 'scorecard:s' : 'scorecard:a-plus',
     ],
@@ -196,6 +196,25 @@ function proofDocuments(input) {
     .filter(Boolean);
 }
 
+function proofEmbeddingSelection(input) {
+  const parsed = typeof input === 'string' ? JSON.parse(input) : input;
+  const index = parsed?.index && typeof parsed.index === 'object' ? parsed.index : {};
+  const embeddingModel = typeof index.embedding_model === 'string'
+    ? index.embedding_model.trim()
+    : typeof index.embeddingModel === 'string'
+      ? index.embeddingModel.trim()
+      : '';
+  const embeddingProvider = typeof index.embedding_provider === 'string'
+    ? index.embedding_provider.trim()
+    : typeof index.embeddingProvider === 'string'
+      ? index.embeddingProvider.trim()
+      : '';
+  return {
+    ...(embeddingModel ? { embedding_model: embeddingModel } : {}),
+    ...(embeddingProvider ? { embedding_provider: embeddingProvider } : {}),
+  };
+}
+
 function hasScoringLabel(query) {
   return ['expected_contains', 'expected_document_ids', 'expected_chunk_ids']
     .some((key) => Array.isArray(query?.[key]) && query[key].some((value) => String(value || '').trim()));
@@ -240,6 +259,7 @@ async function requestJson(url, { key, method = 'GET', body } = {}) {
 export async function seedProofCorpus(options) {
   const documents = proofDocuments(options.input);
   if (documents.length === 0) throw new Error('proof input documents are required for live proof seeding');
+  const embeddingSelection = proofEmbeddingSelection(options.input);
   const seeded = [];
   for (const doc of documents) {
     const response = await requestJson(`${options.baseUrl}/v1/kb/ingest/text`, {
@@ -251,6 +271,7 @@ export async function seedProofCorpus(options) {
         text: doc.text,
         async: false,
         idempotency_key: `proof:${doc.id}`,
+        ...embeddingSelection,
       },
     });
     seeded.push({
@@ -361,13 +382,6 @@ export async function runAPlusProof(options) {
     domain: options.domain,
     input,
   });
-  const queryEval = await runQueryEvalProof({
-    baseUrl: options.baseUrl,
-    key: options.key,
-    domain: options.domain,
-    input,
-    topK: options.topK,
-  });
   const lexicalBenchmark = await runBenchmark({
     baseUrl: options.baseUrl,
     key: options.key,
@@ -386,6 +400,13 @@ export async function runAPlusProof(options) {
     domain: options.domain,
     mode: 'semantic',
     repeat: options.repeat,
+    topK: options.topK,
+  });
+  const queryEval = await runQueryEvalProof({
+    baseUrl: options.baseUrl,
+    key: options.key,
+    domain: options.domain,
+    input,
     topK: options.topK,
   });
   const operatorReport = await runOperatorReport({
@@ -477,4 +498,4 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
 }
 
-export { buildPlan, parseArgs, proofDocuments, queryEvalCases, validateProofInput };
+export { buildPlan, parseArgs, proofDocuments, proofEmbeddingSelection, queryEvalCases, validateProofInput };

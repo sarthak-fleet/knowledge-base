@@ -166,6 +166,9 @@ reprocess routes, and classified failures where applicable.
 `proof:s` seeds the eval fixture documents through `/v1/kb/ingest/text` before
 running query evals and benchmarks, so the live S proof is reproducible from the
 checked-in fixture instead of relying on pre-existing tenant data.
+The S fixture can also declare an embedding model/provider; the current proof
+uses the selectable Workers AI small embedding profile for the speed/accuracy
+S gate while keeping domain-level embedding choice explicit.
 The sibling `../rag-service` repo is already retired. Use
 `pnpm run audit:sibling-rag-service -- --json --require-retired` to prove it
 stays gone. The current embedding-model release is live: matching `../free-ai`
