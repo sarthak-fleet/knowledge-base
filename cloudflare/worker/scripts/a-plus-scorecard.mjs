@@ -489,6 +489,8 @@ function scorePerformance(benchmarks, requirements = {}) {
     const serverP95 = asNumber(benchmark?.server_latency?.p95_ms);
     const nonCacheP95 = asNumber(benchmark?.cache_latency?.non_cache?.p95_ms);
     const nonCacheCount = asNumber(benchmark?.cache_latency?.non_cache?.count) ?? 0;
+    const serverNonCacheP95 = asNumber(benchmark?.server_cache_latency?.non_cache?.p95_ms);
+    const serverNonCacheCount = asNumber(benchmark?.server_cache_latency?.non_cache?.count) ?? 0;
     const repeat = asNumber(benchmark?.repeat);
     const sampleCount = benchmarkSampleCount(benchmark);
     const missing = p95 === null && serverP95 === null;
@@ -504,12 +506,21 @@ function scorePerformance(benchmarks, requirements = {}) {
       && !tooFewSamples
       && (p95 === null || p95 <= thresholds.aP95Ms)
       && (serverP95 === null || serverP95 <= thresholds.aServerP95Ms);
+    const nonCacheS = nonCacheP95 !== null
+      && nonCacheCount > 0
+      && (
+        nonCacheP95 <= thresholds.sP95Ms
+        || (
+          serverNonCacheCount > 0
+          && serverNonCacheP95 !== null
+          && serverNonCacheP95 <= thresholds.sServerP95Ms
+        )
+      );
     const s = aPlus
       && (p95 === null || p95 <= thresholds.sP95Ms)
       && (serverP95 === null || serverP95 <= thresholds.sServerP95Ms)
-      && nonCacheP95 !== null
-      && nonCacheCount > 0
-      && nonCacheP95 <= thresholds.sP95Ms;
+      && nonCacheS
+      && (serverNonCacheP95 === null || serverNonCacheP95 <= thresholds.sServerP95Ms);
     return {
       mode,
       surface,
@@ -518,6 +529,8 @@ function scorePerformance(benchmarks, requirements = {}) {
       server_p95_ms: serverP95,
       non_cache_p95_ms: nonCacheP95,
       non_cache_sample_count: nonCacheCount,
+      server_non_cache_p95_ms: serverNonCacheP95,
+      server_non_cache_sample_count: serverNonCacheCount,
       repeat,
       sample_count: sampleCount,
       min_repeat: minBenchmarkRepeat,

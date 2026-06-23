@@ -137,10 +137,7 @@ describe('a-plus-proof', () => {
 
   it('builds proof documents and seeds them through the KB text ingest API', async () => {
     const input = {
-      index: {
-        embedding_model: '@cf/baai/bge-small-en-v1.5',
-        embedding_provider: 'workers_ai',
-      },
+      index: { name: 'Proof' },
       documents: [
         { external_id: 'doc-1', content: 'Alpha proof document.' },
         { external_id: 'empty', content: ' ' },
@@ -151,10 +148,7 @@ describe('a-plus-proof', () => {
       { id: 'doc-1', title: 'doc-1', text: 'Alpha proof document.' },
       { id: 'doc-2', title: 'doc-2', text: 'Beta proof document.' },
     ]);
-    expect(proofEmbeddingSelection(input)).toEqual({
-      embedding_model: '@cf/baai/bge-small-en-v1.5',
-      embedding_provider: 'workers_ai',
-    });
+    expect(proofEmbeddingSelection(input)).toEqual({});
 
     const calls: Array<{ url: string; body: unknown }> = [];
     globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
@@ -194,8 +188,6 @@ describe('a-plus-proof', () => {
           text: 'Alpha proof document.',
           async: false,
           idempotency_key: 'proof:doc-1',
-          embedding_model: '@cf/baai/bge-small-en-v1.5',
-          embedding_provider: 'workers_ai',
         },
       },
       {
@@ -206,11 +198,21 @@ describe('a-plus-proof', () => {
           text: 'Beta proof document.',
           async: false,
           idempotency_key: 'proof:doc-2',
-          embedding_model: '@cf/baai/bge-small-en-v1.5',
-          embedding_provider: 'workers_ai',
         },
       },
     ]);
+  });
+
+  it('forwards explicit proof embedding selection when a fixture opts in', () => {
+    expect(proofEmbeddingSelection({
+      index: {
+        embedding_model: '@cf/baai/bge-small-en-v1.5',
+        embedding_provider: 'workers_ai',
+      },
+    })).toEqual({
+      embedding_model: '@cf/baai/bge-small-en-v1.5',
+      embedding_provider: 'workers_ai',
+    });
   });
 
   it('validates proof inputs before live proof requests', () => {

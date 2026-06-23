@@ -12,6 +12,7 @@ const DEFAULT_BASE_URL = 'https://knowledgebase.sarthakagrawal927.workers.dev';
 const DEFAULT_QUERY = 'what should this account remember?';
 const MIN_PROOF_QUERIES = 2;
 const MIN_S_PROOF_QUERIES = 4;
+const S_PROOF_QUERY_EVAL_REPEATS = 3;
 
 function usage() {
   console.error(`Usage:
@@ -402,13 +403,18 @@ export async function runAPlusProof(options) {
     repeat: options.repeat,
     topK: options.topK,
   });
-  const queryEval = await runQueryEvalProof({
-    baseUrl: options.baseUrl,
-    key: options.key,
-    domain: options.domain,
-    input,
-    topK: options.topK,
-  });
+  const queryEvalRepeats = options.requireGrade === 'S' ? S_PROOF_QUERY_EVAL_REPEATS : 1;
+  const queryEvals = [];
+  for (let i = 0; i < queryEvalRepeats; i += 1) {
+    queryEvals.push(await runQueryEvalProof({
+      baseUrl: options.baseUrl,
+      key: options.key,
+      domain: options.domain,
+      input,
+      topK: options.topK,
+    }));
+  }
+  const queryEval = queryEvals[0];
   const operatorReport = await runOperatorReport({
     baseUrl: options.baseUrl,
     key: options.key,
@@ -422,7 +428,7 @@ export async function runAPlusProof(options) {
   const scorecard = buildAPlusScorecard({
     operator_report: operatorReport,
     readiness_reports: [readinessReport],
-    query_evals: [queryEval],
+    query_evals: queryEvals,
     benchmarks: [lexicalBenchmark, semanticBenchmark],
     capabilities: {
       ...(consumerSmokes ? { consumer_authenticated_smokes: consumerSmokes.consumers } : {}),
@@ -445,6 +451,7 @@ export async function runAPlusProof(options) {
     readiness: await writeJson(options.outputDir, 'readiness.json', readinessReport),
     seed_eval_corpus: await writeJson(options.outputDir, 'seed-eval-corpus.json', seedReport),
     query_eval: await writeJson(options.outputDir, 'query-eval.json', queryEval),
+    query_evals: queryEvals.length > 1 ? await writeJson(options.outputDir, 'query-evals.json', queryEvals) : null,
     consumer_smokes: consumerSmokes ? await writeJson(options.outputDir, 'consumer-smokes.json', consumerSmokes) : null,
     operator_report: await writeJson(options.outputDir, 'operator-report.json', operatorReport),
     benchmark_lexical: await writeJson(options.outputDir, 'benchmark-lexical.json', lexicalBenchmark),
@@ -460,6 +467,7 @@ export async function runAPlusProof(options) {
     readiness: readinessReport,
     seed_eval_corpus: seedReport,
     query_eval: queryEval,
+    query_evals: queryEvals,
     consumer_smokes: consumerSmokes,
     operator_report: operatorReport,
     benchmarks: [lexicalBenchmark, semanticBenchmark],

@@ -23,6 +23,11 @@ describe('audit-d1-migrations', () => {
       ok: true,
       file: '0006_kb_domain_embedding_model.sql',
     }));
+    expect(report.checks).toContainEqual(expect.objectContaining({
+      name: 'embedding_cache_table',
+      ok: true,
+      file: '0007_embedding_cache.sql',
+    }));
   });
 
   it('fails when the embedding model migration file is missing', async () => {
@@ -74,6 +79,35 @@ describe('audit-d1-migrations', () => {
       ok: false,
       file: '0006_kb_domain_embedding_model.sql',
       error: 'required migration file is missing',
+    }));
+  });
+
+  it('fails when the embedding cache migration is incomplete', async () => {
+    const migrationsDir = await tempMigrationsDir();
+    await writeFile(
+      join(migrationsDir, '0005_index_embedding_model.sql'),
+      'ALTER TABLE indexes ADD COLUMN embedding_model TEXT;\nALTER TABLE indexes ADD COLUMN embedding_provider TEXT;\n',
+    );
+    await writeFile(
+      join(migrationsDir, '0006_kb_domain_embedding_model.sql'),
+      'ALTER TABLE kb_domains ADD COLUMN embedding_model TEXT;\nALTER TABLE kb_domains ADD COLUMN embedding_provider TEXT;\n',
+    );
+    await writeFile(
+      join(migrationsDir, '0007_embedding_cache.sql'),
+      'CREATE TABLE IF NOT EXISTS embedding_cache (cache_key TEXT PRIMARY KEY);\n',
+    );
+
+    const report = await auditD1Migrations({ migrationsDir });
+
+    expect(report.ok).toBe(false);
+    expect(report.blockers).toContainEqual(expect.objectContaining({
+      name: 'embedding_cache_table',
+      ok: false,
+      file: '0007_embedding_cache.sql',
+      missing_patterns: expect.arrayContaining([
+        expect.stringContaining('vector'),
+        expect.stringContaining('idx_embedding_cache_expires'),
+      ]),
     }));
   });
 });

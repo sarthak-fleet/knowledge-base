@@ -342,6 +342,55 @@ describe('a-plus-scorecard', () => {
       });
   });
 
+  it('awards S performance when overall p95 and server-side non-cache p95 meet S despite client RTT outliers', () => {
+    const scorecard = buildAPlusScorecard({
+      operator_report: aPlusOperatorReport,
+      readiness_reports: [aPlusReadinessReport],
+      query_evals: [aPlusQueryEvalReport],
+      benchmarks: [
+        {
+          surface: 'kb-search',
+          domain: 'demo.example',
+          mode: 'lexical',
+          repeat: 8,
+          hit_rate: 1,
+          latency: { p95_ms: 98 },
+          server_latency: { p95_ms: 0 },
+          cache_latency: { non_cache: { count: 4, p95_ms: 520 } },
+          server_cache_latency: { non_cache: { count: 4, p95_ms: 0 } },
+          queries: Array.from({ length: 32 }, (_, i) => ({ query: `lexical ${i}` })),
+        },
+        {
+          surface: 'kb-query',
+          domain: 'demo.example',
+          mode: 'semantic',
+          repeat: 8,
+          hit_rate: 1,
+          latency: { p95_ms: 720 },
+          server_latency: { p95_ms: 620 },
+          cache_latency: { non_cache: { count: 4, p95_ms: 750 } },
+          server_cache_latency: { non_cache: { count: 4, p95_ms: 630 } },
+          queries: Array.from({ length: 32 }, (_, i) => ({ query: `semantic ${i}` })),
+        },
+      ],
+      capabilities: sCapabilities,
+    }, {
+      requireGrade: 'S',
+      requireReadinessReport: true,
+      expectedDeployFingerprint: 'current-fp',
+      requiredDomain: 'demo.example',
+      requiredBenchmarkModes: ['lexical', 'semantic'],
+      requiredBenchmarkSurfaces: ['kb-search', 'kb-query'],
+      minBenchmarkRepeat: 8,
+      minBenchmarkSamples: 32,
+      minQueryEvalRows: 2,
+      requiredEvalKinds: ['query'],
+    });
+
+    expect(scorecard.categories.find((category) => category.name === 'retrieval_performance'))
+      .toMatchObject({ grade: 'S' });
+  });
+
   it('fails when deploy-readiness evidence is required but missing', () => {
     const scorecard = buildAPlusScorecard({
       operator_report: aPlusOperatorReport,

@@ -1043,8 +1043,18 @@ function addTestIdentityAlias(map: Map<string, string>, type: string, value: str
 
 class FakeQueryCacheD1 {
   rows = new Map<string, { tenant: string; indexId: string; payload: string; expiresAt: number }>();
+  embeddingRows = new Map<string, {
+    tenant: string;
+    model: string;
+    provider: string | null;
+    dimensions: number;
+    vector: string;
+    expiresAt: number;
+  }>();
   selectPayloadCalls = 0;
+  selectEmbeddingCalls = 0;
   insertCalls = 0;
+  insertEmbeddingCalls = 0;
   deleteCalls = 0;
 
   prepare(sql: string) {
@@ -1058,6 +1068,13 @@ class FakeQueryCacheD1 {
             if (!row || row.tenant !== tenant || row.indexId !== indexId || row.expiresAt <= now) return null;
             return { payload: row.payload };
           }
+          if (sql.includes('SELECT vector') && sql.includes('embedding_cache')) {
+            this.selectEmbeddingCalls += 1;
+            const [cacheKey, tenant, now] = args as [string, string, number];
+            const row = this.embeddingRows.get(cacheKey);
+            if (!row || row.tenant !== tenant || row.expiresAt <= now) return null;
+            return { vector: row.vector };
+          }
           return { ok: 1 };
         },
         run: async () => {
@@ -1065,6 +1082,19 @@ class FakeQueryCacheD1 {
             this.insertCalls += 1;
             const [cacheKey, tenant, indexId, payload, expiresAt] = args as [string, string, string, string, number];
             this.rows.set(cacheKey, { tenant, indexId, payload, expiresAt });
+          }
+          if (sql.includes('INSERT OR REPLACE INTO embedding_cache')) {
+            this.insertEmbeddingCalls += 1;
+            const [cacheKey, tenant, model, provider, dimensions, vector, expiresAt] = args as [
+              string,
+              string,
+              string,
+              string | null,
+              number,
+              string,
+              number,
+            ];
+            this.embeddingRows.set(cacheKey, { tenant, model, provider, dimensions, vector, expiresAt });
           }
           if (sql.includes('DELETE FROM query_cache')) {
             this.deleteCalls += 1;
@@ -5315,7 +5345,7 @@ describe('knowledgebase RAG Worker app', () => {
       trace_id: firstBody.trace_id,
       answer: firstBody.answer,
     });
-    expect(vectorQueries).toBe(1);
+    expect(vectorQueries).toBe(0);
     expect(tracesBody.traces).toHaveLength(1);
   });
 
@@ -6766,7 +6796,7 @@ describe('knowledgebase RAG Worker app', () => {
       {
         method: 'POST',
         headers: auth,
-        body: JSON.stringify({ query: 'what mentions dashboard cache?', top_k: 1, mode: 'semantic' }),
+        body: JSON.stringify({ query: 'what mentions dashboard cache?', top_k: 1, mode: 'semantic', min_score: 0 }),
       },
       env,
     );
@@ -6783,6 +6813,75 @@ describe('knowledgebase RAG Worker app', () => {
     expect(result.data[0]?.chunk_id).toBe('chunk-lexical-low-score');
     expect(result.data[0]?.chunk_content).toContain('dashboard cache');
     expect(result.data[0]?.metadata.hybrid_sources).toEqual(['lexical']);
+  });
+
+  it('short-circuits semantic queries with strong lexical evidence before embedding or Vectorize', async () => {
+    const repo = new MemoryRepository();
+    const vectorize = new FakeVectorize();
+    let aiCalls = 0;
+    let vectorQueries = 0;
+    const originalQuery = vectorize.query.bind(vectorize);
+    vectorize.query = async (...args) => {
+      vectorQueries += 1;
+      return originalQuery(...args);
+    };
+    const app = createApp({
+      makeRepository: () => repo,
+      embed: async (_env, texts) => {
+        aiCalls += 1;
+        return texts.map(vectorFor);
+      },
+    });
+    const env = makeEnv(vectorize);
+    const auth = { Authorization: 'Bearer key-a', 'Content-Type': 'application/json' };
+
+    const created = await app.request(
+      '/v1/indexes',
+      { method: 'POST', headers: auth, body: JSON.stringify({ name: 'Fast Semantic Docs' }) },
+      env,
+    );
+    const index = (await created.json()) as IndexRecord;
+    await app.request(
+      `/v1/indexes/${index.id}/ingest-vectors`,
+      {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({
+          chunks: [{
+            id: 'chunk-fast-semantic',
+            document_id: 'doc-fast-semantic',
+            document_content: 'The user is wearing a red color t-shirt.',
+            content: 'The user is wearing a red color t-shirt.',
+            embedding: vectorFor('unrelated'),
+            chunk_index: 0,
+          }],
+        }),
+      },
+      env,
+    );
+
+    const query = await app.request(
+      `/v1/indexes/${index.id}/query`,
+      {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({ query: 'what color t-shirt is the user wearing?', top_k: 1, mode: 'semantic' }),
+      },
+      env,
+    );
+    const result = (await query.json()) as { data: Array<{ chunk_id: string; chunk_content: string }> };
+    const timing = JSON.parse(query.headers.get('X-RAG-Timing') ?? '{}');
+
+    expect(query.status).toBe(200);
+    expect(timing).toMatchObject({
+      retrieval: 'semantic_lexical_fast_path',
+      semantic_lexical_fast_path: true,
+      cache: 'miss',
+    });
+    expect(result.data[0]?.chunk_id).toBe('chunk-fast-semantic');
+    expect(result.data[0]?.chunk_content).toContain('red color t-shirt');
+    expect(aiCalls).toBe(0);
+    expect(vectorQueries).toBe(0);
   });
 
   it('benchmarks warmed text queries inside the Worker', async () => {
@@ -6933,6 +7032,85 @@ describe('knowledgebase RAG Worker app', () => {
     });
     expect(aiCalls).toBe(1);
     expect(vectorQueries).toBe(1);
+  });
+
+  it('uses the shared D1 embedding cache across app instances', async () => {
+    const repo = new MemoryRepository();
+    const vectorize = new FakeVectorize();
+    let aiCalls = 0;
+    let vectorQueries = 0;
+    const originalQuery = vectorize.query.bind(vectorize);
+    vectorize.query = async (...args) => {
+      vectorQueries += 1;
+      return originalQuery(...args);
+    };
+    const embed = async (_env: Env, texts: string[]) => {
+      aiCalls += 1;
+      return texts.map(vectorFor);
+    };
+    const db = new FakeQueryCacheD1();
+    const env = makeEnv(vectorize, db as unknown as D1Database);
+    env.RAG_SHARED_EMBEDDING_CACHE_ENABLED = 'true';
+    const auth = { Authorization: 'Bearer key-a', 'Content-Type': 'application/json' };
+    const firstApp = createApp({
+      makeRepository: () => repo,
+      queryCache: new TtlCache({ enabled: true, ttlMs: 60_000, maxEntries: 100 }),
+      embeddingCache: new TtlCache({ enabled: true, ttlMs: 60_000, maxEntries: 100 }),
+      embed,
+    });
+
+    const created = await firstApp.request(
+      '/v1/indexes',
+      { method: 'POST', headers: auth, body: JSON.stringify({ name: 'Shared Embedding Cache Docs' }) },
+      env,
+    );
+    const index = (await created.json()) as IndexRecord;
+    await firstApp.request(
+      `/v1/indexes/${index.id}/ingest-vectors`,
+      {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({
+          chunks: [{
+            id: 'chunk-shared-embedding-cache',
+            document_id: 'doc-shared-embedding-cache',
+            document_content: 'alpha shared embedding cache document',
+            content: 'alpha shared embedding cache document',
+            embedding: vectorFor('alpha'),
+            chunk_index: 0,
+          }],
+        }),
+      },
+      env,
+    );
+    const firstQuery = await firstApp.request(
+      `/v1/indexes/${index.id}/query`,
+      { method: 'POST', headers: auth, body: JSON.stringify({ query: 'alpha', top_k: 1, mode: 'semantic' }) },
+      env,
+    );
+
+    const secondApp = createApp({
+      makeRepository: () => repo,
+      queryCache: new TtlCache({ enabled: true, ttlMs: 60_000, maxEntries: 100 }),
+      embeddingCache: new TtlCache({ enabled: true, ttlMs: 60_000, maxEntries: 100 }),
+      embed,
+    });
+    const secondQuery = await secondApp.request(
+      `/v1/indexes/${index.id}/query`,
+      { method: 'POST', headers: auth, body: JSON.stringify({ query: 'alpha', top_k: 1, mode: 'semantic' }) },
+      env,
+    );
+
+    expect(firstQuery.headers.get('X-RAG-Cache')).toBe('miss');
+    expect(secondQuery.headers.get('X-RAG-Cache')).toBe('miss');
+    expect(JSON.parse(secondQuery.headers.get('X-RAG-Timing') ?? '{}')).toMatchObject({
+      cache: 'miss',
+      embedding_cache: 'd1',
+    });
+    expect(aiCalls).toBe(1);
+    expect(vectorQueries).toBe(2);
+    expect(db.insertEmbeddingCalls).toBe(1);
+    expect(db.selectEmbeddingCalls).toBeGreaterThanOrEqual(2);
   });
 
   it('prevents a tenant from querying another tenant index', async () => {

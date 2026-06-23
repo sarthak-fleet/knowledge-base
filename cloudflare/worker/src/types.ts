@@ -42,6 +42,7 @@ export interface Env {
   RAG_DEPLOY_FINGERPRINT?: string;
   RAG_SEC_USER_AGENT?: string;
   RAG_SHARED_QUERY_CACHE_ENABLED?: string;
+  RAG_SHARED_EMBEDDING_CACHE_ENABLED?: string;
   RAG_CACHE_ENABLED?: string;
   RAG_CACHE_TTL_SECONDS?: string;
   RAG_CACHE_MAX_ENTRIES?: string;

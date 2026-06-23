@@ -23,6 +23,18 @@ const REQUIRED_MIGRATIONS = [
       /ALTER\s+TABLE\s+kb_domains\s+ADD\s+COLUMN\s+embedding_provider\s+TEXT\b/i,
     ],
   },
+  {
+    name: 'embedding_cache_table',
+    file: '0007_embedding_cache.sql',
+    patterns: [
+      /CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+embedding_cache\b/i,
+      /\bcache_key\s+TEXT\s+PRIMARY\s+KEY\b/i,
+      /\btenant\s+TEXT\s+NOT\s+NULL\b/i,
+      /\bvector\s+TEXT\s+NOT\s+NULL\b/i,
+      /\bexpires_at\s+INTEGER\s+NOT\s+NULL\b/i,
+      /CREATE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+idx_embedding_cache_expires\b/i,
+    ],
+  },
 ];
 
 function check(name, ok, detail = {}) {

@@ -12,6 +12,8 @@ Last updated: 2026-06-23
 
 **Migration complete live (2026-06-22):** `knowledgebase` is the only fleet RAG service and the current Cloudflare Worker is deployed at `https://knowledgebase.sarthakagrawal927.workers.dev` with fingerprint `knowledgebase-cloudflare-embedding-models-2026-06-21`. The deployed `free-ai` gateway now returns 6 enabled embedding models, all advertised dimensions (384/768/1024/1536) have matching Vectorize bindings and `tenant`/`index_id` metadata indexes, D1 migrations `0005_index_embedding_model.sql` and `0006_kb_domain_embedding_model.sql` are applied, and `RAG_SERVICE_KEYS_APPEND` contains the cutover key used by deployed Karte/Linkchat and Starboard. Live gates passed on 2026-06-22: `release-status:embedding-model -- --check-vectorize-metadata-indexes --check-knowledgebase-embedding-models` reports `ok: true`; `readiness:embedding-model` reports `ok: true`; `smoke:rag-crud:embedding-model` reports `ok: true` for create/ingest/query/delete plus `/v1/kb/ingest/text` custom input and `/v1/kb/search`; `readiness:full-port` with `RAG_ALLOW_LIVE_OCR=1` reports `ok: true`, hosted `/` and `/ui` checks green, and NVDA scanned-PDF OCR `pass_rate: 1`. The sibling `rag-service` repo remains deleted (source-only archive at `../rag-service-retired-2026-06-21.tgz`), and `audit:consumer-rag-integrations -- --require-complete` is green after deploying Karte and Starboard.
 
+**Performance cache release live (2026-06-23):** D1 migration `0007_embedding_cache.sql` is applied, the deployed Worker version `e10f7319-1f17-4fa1-a23c-1bfb16b93141` has `RAG_SHARED_QUERY_CACHE_ENABLED=true` and `RAG_SHARED_EMBEDDING_CACHE_ENABLED=true`, and `semantic` queries use a strong lexical precheck before embedding/Vectorize. Live fresh-domain proof at `/tmp/kb-s-proof-20260623-final` grades semantic `kb-query` performance S (`p95_ms=728.24`, `server_p95_ms=608`, hit rate `1.0`) and keeps retrieval quality/ingestion/deploy/evidence-scope at S. Remaining S caps are lexical first-isolate D1 chunk-load variance (`retrieval_performance` A+), observability trace-count/stage-diagnostic evidence (A), missing authenticated consumer cookies (reliability A+), and non-UI ease evidence (A+).
+
 **Deployed corpus remains opt-in.** The cutover ships code + infra parity plus
 consumer-ready indexes, not a full demo-corpus backfill. Live smokes create,
 query, and clean up temporary RAG data; Starboard has a dedicated deployed index
@@ -203,7 +205,7 @@ Worker: Fleet consumer → Hono → free-ai/Workers AI embed → Vectorize query
 
 ## Timeline
 
-- **D1 migrations:** core RAG tables, query cache, **`0003_knowledgebase_metadata.sql`** (`kb_*` projects/domains/schemas/files/jobs/chunks/sessions/traces), **`0005_index_embedding_model.sql`** for per-index embedding model/provider metadata, and **`0006_kb_domain_embedding_model.sql`** for selected-model metadata on KB domains before auto-index creation.
+- **D1 migrations:** core RAG tables, query cache, **`0003_knowledgebase_metadata.sql`** (`kb_*` projects/domains/schemas/files/jobs/chunks/sessions/traces), **`0005_index_embedding_model.sql`** for per-index embedding model/provider metadata, **`0006_kb_domain_embedding_model.sql`** for selected-model metadata on KB domains before auto-index creation, and **`0007_embedding_cache.sql`** for cross-isolate normalized query embedding reuse.
 - **Eval maturity:** cross-domain 5×2 LLM eval matrix documented; methodology bugs caught and fixed (DuckDB route, env propagation, citation hygiene).
 - **Fleet cutover:** SaaS Maker, Linkchat, Starboard on service binding; production SaaS Maker knowledge tables empty — no backfill required before rollout.
 - **CI:** Worker-local `pnpm run predeploy:local` is the active local gate;
@@ -308,6 +310,7 @@ Worker: Fleet consumer → Hono → free-ai/Workers AI embed → Vectorize query
 - Zero-AI D1 graph evidence expansion in `/v1/kb/query` for structured entity matches.
 - Explicit `hybrid` retrieval mode with D1 BM25-style fuzzy sparse lexical + Vectorize RRF fusion plus Worker-native keyword rerank/MMR and opt-in Workers AI neural rerank.
 - Cached KB domain index lookup plus cached-chunk lexical scoring for hot `/v1/kb/search` and `/v1/kb/query` paths.
+- Strong lexical precheck for `semantic` queries returns high-confidence zero-AI sparse matches before embedding/Vectorize, preserving semantic fallback for weak lexical evidence.
 - Deterministic rewrite/decompose lexical fanout for multi-part questions, exposed through Worker API/UI flags for benchmark comparison.
 - Corrective semantic fallback: explicit `semantic` queries with low-score/empty Vectorize evidence fuse cached lexical evidence before returning.
 - Opt-in Workers AI answer synthesis for `/v1/kb/query` through `answer_mode: "workers_ai"`, with extractive cited answers kept as the default fast path.
@@ -416,7 +419,7 @@ Worker: Fleet consumer → Hono → free-ai/Workers AI embed → Vectorize query
 - **Per-project service key rotation UI.**
 - **Queue/workflow ingestion at scale** on Worker.
 - **Exact Qdrant BM42 model equivalence on Worker** — Cloudflare Vectorize does not provide BM42. Product retrieval parity uses the Cloudflare-native replacement: Vectorize dense search, D1 fuzzy sparse lexical scoring, semantic/hybrid RRF, MMR, opt-in Workers AI neural rerank, rewrite/decompose, and D1 graph expansion.
-- **Semantic p99 <300 ms on cold Workers AI + Vectorize misses** — needs cached popular queries or precomputed query vectors; weak semantic evidence now has lexical correction, but unique semantic misses still pay Workers AI + Vectorize latency first.
+- **Semantic p99 <300 ms on completely unique cold misses** — query-result and normalized embedding caches now cover hot/repeated questions across Worker isolates, but first-seen semantic misses still pay embedding plus Vectorize latency before the caches can help.
 
 ### Blocked
 

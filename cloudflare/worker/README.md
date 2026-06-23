@@ -470,6 +470,18 @@ candidate set before returning results. Lexical timing reports
 "chunk_cache_full_scan"` when that zero-AI sparse scorer is used; hot
 lexical/hybrid queries reuse the in-Worker chunk cache instead of issuing D1
 LIKE prefilter scans.
+`semantic` mode first checks for strong sparse evidence (`retrieval:
+"semantic_lexical_fast_path"`) and returns that zero-AI result before embedding
+or Vectorize when the lexical score and overlap are high enough. Weak sparse
+matches still fall through to semantic Vectorize plus the existing corrective
+hybrid fallback.
+The deployed Worker enables Cloudflare-native hot-path persistence with
+`RAG_SHARED_QUERY_CACHE_ENABLED=true` and
+`RAG_SHARED_EMBEDDING_CACHE_ENABLED=true`: exact query payloads and normalized
+query embeddings are reused through D1 across Worker isolates before the route
+falls back to external embedding generation or Vectorize. Migration
+`0007_embedding_cache.sql` creates the embedding cache table; query payload
+cache storage remains in `0002_query_cache.sql`.
 `/v1/kb/query` defaults to the fast
 extractive cited answer path; set `answer_mode: "workers_ai"` to synthesize a
 richer cited answer with Workers AI using `answer_model`, `RAG_ANSWER_MODEL`, or
@@ -676,6 +688,10 @@ requests if the Worker fingerprint or health checks are stale. After readiness
 passes, it writes local JSON proof artifacts and creates deterministic query
 eval/query trace evidence on the deployed Worker, then runs authenticated
 inventory, lexical `kb-search`, semantic `kb-query`, and the A/A+ scorecard.
+`pnpm run proof:s` uses the S-grade consumer fixture, seeds it through
+`/v1/kb/ingest/text`, and repeats deterministic query evals to produce enough
+cached trace/eval evidence for observability grading; repeated eval artifacts
+are written to `query-evals.json`.
 The benchmark input must include at least two labeled queries with
 `expected_contains`, `expected_document_ids`, or `expected_chunk_ids`; invalid
 proof inputs fail locally before readiness or live requests. Use `--dry-run` to

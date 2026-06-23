@@ -1,9 +1,7 @@
 {
   "index": {
     "name": "S Grade Consumer Eval Knowledge",
-    "external_id": "s-grade-consumer-eval-index",
-    "embedding_model": "@cf/baai/bge-small-en-v1.5",
-    "embedding_provider": "workers_ai"
+    "external_id": "s-grade-consumer-eval-index"
   },
   "documents": [
     {

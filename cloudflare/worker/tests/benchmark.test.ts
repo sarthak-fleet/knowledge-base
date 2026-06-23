@@ -122,6 +122,10 @@ describe('benchmark-rag', () => {
         hit: { count: 0 },
         non_cache: { count: 1 },
       },
+      server_cache_latency: {
+        hit: { count: 0 },
+        non_cache: { count: 1, p95_ms: 12 },
+      },
     });
   });
 
@@ -169,6 +173,10 @@ describe('benchmark-rag', () => {
       cache_hit_rate: 1,
       cache_latency: {
         hit: { count: 1 },
+        non_cache: { count: 0 },
+      },
+      server_cache_latency: {
+        hit: { count: 1, p95_ms: 9 },
         non_cache: { count: 0 },
       },
       hit_rate: 1,

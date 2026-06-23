@@ -42,6 +42,8 @@ const MAX_BENCHMARK_REPEAT = 200;
 const MAX_BENCHMARK_WARMUP = 20;
 const MAX_EVAL_CASES = 100;
 const CORRECTIVE_SEMANTIC_MIN_SCORE = 0.55;
+const SEMANTIC_LEXICAL_FAST_PATH_MIN_SCORE = 2;
+const SEMANTIC_LEXICAL_FAST_PATH_MIN_OVERLAP = 2;
 const DEFAULT_BASE_EMBEDDING_MODEL = '@cf/baai/bge-base-en-v1.5';
 const DEFAULT_SMALL_EMBEDDING_MODEL = '@cf/baai/bge-small-en-v1.5';
 const DEFAULT_BASE_EMBEDDING_DIMENSIONS = 768;
@@ -1008,6 +1010,10 @@ function userVectorFilter(filter: unknown): JsonRecord | undefined {
 
 function sharedQueryCacheEnabled(env: Env): boolean {
   return env.RAG_SHARED_QUERY_CACHE_ENABLED === 'true';
+}
+
+function sharedEmbeddingCacheEnabled(env: Env): boolean {
+  return env.RAG_SHARED_EMBEDDING_CACHE_ENABLED === 'true';
 }
 
 function vectorMetadata(
@@ -2064,6 +2070,14 @@ function weakSemanticReason(payload: QueryPayload): string | null {
   return null;
 }
 
+function strongLexicalFastPath(payload: QueryPayload | null): boolean {
+  const top = payload?.data[0];
+  if (!top) return false;
+  const overlap = typeof top.metadata?.lexical_overlap === 'number' ? top.metadata.lexical_overlap : 0;
+  return top.score >= SEMANTIC_LEXICAL_FAST_PATH_MIN_SCORE
+    && overlap >= SEMANTIC_LEXICAL_FAST_PATH_MIN_OVERLAP;
+}
+
 function searchResultFromEntity(entity: EntityRecord, score: number, route = 'd1_entities', extraMetadata: JsonRecord = {}): SearchResult {
   const content = JSON.stringify(entity.fields, null, 2);
   return {
@@ -2666,9 +2680,20 @@ export function createApp(options: AppOptions = {}) {
       }
       return cached;
     }
+    const sharedCached = await getSharedEmbeddingCache(env, tenant, key, timing);
+    if (sharedCached) {
+      embeddingCache.set(key, sharedCached);
+      if (timing) {
+        timing.embedding_cache = 'd1';
+        timing.embedding_model = profile.semanticModel;
+        timing.embed_ms = elapsedMs(started);
+      }
+      return sharedCached;
+    }
     const [vector] = await embed(env, [text], embeddingOptionsForProfile(profile));
     if (!vector) throw new Error('Embedding response was empty');
     embeddingCache.set(key, vector);
+    await setSharedEmbeddingCache(env, tenant, key, profile, vector);
     if (timing) {
       timing.embedding_cache = 'miss';
       timing.embedding_model = profile.semanticModel;
@@ -2809,6 +2834,66 @@ export function createApp(options: AppOptions = {}) {
         .run();
     } catch {
       // Best effort cache invalidation; in-memory cache is cleared separately.
+    }
+  }
+
+  async function getSharedEmbeddingCache(
+    env: Env,
+    tenant: string,
+    cacheKey: string,
+    timing?: RagTiming,
+  ): Promise<number[] | null> {
+    if (!sharedEmbeddingCacheEnabled(env)) return null;
+    if (!parseCacheOptions(env).enabled) return null;
+    const started = performance.now();
+    try {
+      const row = await env.DB
+        .prepare(
+          `SELECT vector
+             FROM embedding_cache
+            WHERE cache_key = ? AND tenant = ? AND expires_at > ?`,
+        )
+        .bind(cacheKey, tenant, Date.now())
+        .first<{ vector: string }>();
+      if (!row?.vector) return null;
+      const parsed = JSON.parse(row.vector) as unknown;
+      return Array.isArray(parsed) && parsed.every((value) => typeof value === 'number') ? parsed : null;
+    } catch {
+      return null;
+    } finally {
+      if (timing) timing.shared_embedding_cache_ms = elapsedMs(started);
+    }
+  }
+
+  async function setSharedEmbeddingCache(
+    env: Env,
+    tenant: string,
+    cacheKey: string,
+    profile: ResolvedEmbeddingProfile,
+    vector: number[],
+  ): Promise<void> {
+    if (!sharedEmbeddingCacheEnabled(env)) return;
+    const cacheOptions = parseCacheOptions(env);
+    if (!cacheOptions.enabled) return;
+    try {
+      await env.DB
+        .prepare(
+          `INSERT OR REPLACE INTO embedding_cache
+             (cache_key, tenant, model, provider, dimensions, vector, expires_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          cacheKey,
+          tenant,
+          profile.model,
+          profile.provider ?? null,
+          profile.dimensions,
+          JSON.stringify(vector),
+          Date.now() + cacheOptions.ttlMs,
+        )
+        .run();
+    } catch {
+      // Embedding caching is an optimization. A missing migration or transient D1 write failure should not fail retrieval.
     }
   }
 
@@ -3003,6 +3088,20 @@ export function createApp(options: AppOptions = {}) {
       timing.cache = 'hit';
       timing.total_ms = elapsedMs(started);
       return { payload: sharedCached, cache: 'hit', timing };
+    }
+    if (body.mode === 'semantic' && body.min_score === undefined) {
+      const lexicalFastPath = await queryByLexicalPlan(c, query, { ...body, top_k: clampTopK(body.top_k) }, queryPlan, timing);
+      if (strongLexicalFastPath(lexicalFastPath)) {
+        const payload = await rerankQueryPayload(c.env, lexicalFastPath!, query, body, timing, false);
+        timing.retrieval = 'semantic_lexical_fast_path';
+        timing.semantic_lexical_fast_path = true;
+        queryCache.set(cacheKey, payload);
+        if (payload.data.length > 0) await persistSharedQueryCache(c, tenant, indexId, cacheKey, payload);
+        timing.cache = 'miss';
+        timing.total_ms = elapsedMs(started);
+        return { payload, cache: 'miss', timing };
+      }
+      timing.semantic_lexical_fast_path = false;
     }
     const vector = await embedOne(c.env, tenant, normalizedQuery, embeddingProfile, timing);
     const widenedTopK = Math.min(MAX_TOP_K, clampTopK(body.top_k) * 2);

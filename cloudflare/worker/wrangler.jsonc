@@ -86,6 +86,8 @@
 		"RAG_CACHE_ENABLED": "true",
 		"RAG_CACHE_TTL_SECONDS": "300",
 		"RAG_CACHE_MAX_ENTRIES": "1000",
+		"RAG_SHARED_QUERY_CACHE_ENABLED": "true",
+		"RAG_SHARED_EMBEDDING_CACHE_ENABLED": "true",
 		"RAG_EMBED_PROVIDER": "free_ai",
 		"RAG_SYNTH_PROVIDER": "free_ai",
 		"FREE_AI_BASE_URL": "https://free-ai-gateway.sarthakagrawal927.workers.dev/v1",
