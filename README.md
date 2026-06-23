@@ -163,6 +163,9 @@ The ingest APIs expose that proof directly: `/v1/kb/ingest/record`,
 `/v1/kb/ingest/text`, `/v1/kb/ingest/jobs/:job_id`, and
 `/v1/kb/ingest/runs/:run_id` include idempotent replay status, chunk previews,
 reprocess routes, and classified failures where applicable.
+`proof:s` seeds the eval fixture documents through `/v1/kb/ingest/text` before
+running query evals and benchmarks, so the live S proof is reproducible from the
+checked-in fixture instead of relying on pre-existing tenant data.
 The sibling `../rag-service` repo is already retired. Use
 `pnpm run audit:sibling-rag-service -- --json --require-retired` to prove it
 stays gone. The current embedding-model release is live: matching `../free-ai`

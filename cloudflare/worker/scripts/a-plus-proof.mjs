@@ -114,6 +114,7 @@ function buildPlan(options) {
     steps: [
       'deploy-readiness',
       ...(requiresS ? ['consumer-auth-smokes'] : []),
+      'seed-eval-corpus',
       'query-eval',
       'benchmark:kb-search:lexical',
       'benchmark:kb-query:semantic',
@@ -179,6 +180,22 @@ function queryEvalCases(input) {
     .filter(Boolean);
 }
 
+function proofDocuments(input) {
+  const parsed = typeof input === 'string' ? JSON.parse(input) : input;
+  const docs = Array.isArray(parsed?.documents) ? parsed.documents : [];
+  return docs
+    .map((doc, index) => {
+      const content = String(doc?.content ?? '').trim();
+      if (!content) return null;
+      return {
+        id: String(doc?.external_id || doc?.id || `proof-doc-${index + 1}`),
+        title: String(doc?.external_id || doc?.id || `proof-doc-${index + 1}`),
+        text: content,
+      };
+    })
+    .filter(Boolean);
+}
+
 function hasScoringLabel(query) {
   return ['expected_contains', 'expected_document_ids', 'expected_chunk_ids']
     .some((key) => Array.isArray(query?.[key]) && query[key].some((value) => String(value || '').trim()));
@@ -218,6 +235,41 @@ async function requestJson(url, { key, method = 'GET', body } = {}) {
   const payload = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(`${method} ${url} failed ${res.status}: ${JSON.stringify(payload)}`);
   return payload;
+}
+
+export async function seedProofCorpus(options) {
+  const documents = proofDocuments(options.input);
+  if (documents.length === 0) throw new Error('proof input documents are required for live proof seeding');
+  const seeded = [];
+  for (const doc of documents) {
+    const response = await requestJson(`${options.baseUrl}/v1/kb/ingest/text`, {
+      key: options.key,
+      method: 'POST',
+      body: {
+        domain: options.domain,
+        title: doc.title,
+        text: doc.text,
+        async: false,
+        idempotency_key: `proof:${doc.id}`,
+      },
+    });
+    seeded.push({
+      id: doc.id,
+      file_id: response.file_id ?? null,
+      status: response.idempotent_replay === true ? 'replayed' : 'seeded',
+      chunks_indexed: Number(response.chunks_indexed ?? (
+        Array.isArray(response.files)
+          ? response.files.reduce((sum, file) => sum + Number(file?.chunks_created ?? 0), 0)
+          : 0
+      )),
+      ingest_safety: response.ingest_safety ?? null,
+    });
+  }
+  return {
+    domain: options.domain,
+    document_count: seeded.length,
+    documents: seeded,
+  };
 }
 
 export async function runQueryEvalProof(options) {
@@ -275,12 +327,13 @@ export async function runAPlusProof(options) {
       requiredBenchmarkModes: ['lexical', 'semantic'],
       requiredBenchmarkSurfaces: ['kb-search', 'kb-query'],
       minBenchmarkRepeat: options.repeat,
-      minBenchmarkSamples: options.repeat * MIN_PROOF_QUERIES,
-      minQueryEvalRows: MIN_PROOF_QUERIES,
+      minBenchmarkSamples: options.repeat * minQueries,
+      minQueryEvalRows: minQueries,
       requiredEvalKinds: ['query'],
     });
     const artifacts = {
       readiness: await writeJson(options.outputDir, 'readiness.json', readinessReport),
+      seed_eval_corpus: null,
       query_eval: null,
       operator_report: null,
       benchmark_lexical: null,
@@ -295,12 +348,19 @@ export async function runAPlusProof(options) {
       plan,
       artifacts,
       readiness: readinessReport,
+      seed_eval_corpus: null,
       query_eval: null,
       operator_report: null,
       benchmarks: [],
       scorecard,
     };
   }
+  const seedReport = await seedProofCorpus({
+    baseUrl: options.baseUrl,
+    key: options.key,
+    domain: options.domain,
+    input,
+  });
   const queryEval = await runQueryEvalProof({
     baseUrl: options.baseUrl,
     key: options.key,
@@ -362,6 +422,7 @@ export async function runAPlusProof(options) {
 
   const artifacts = {
     readiness: await writeJson(options.outputDir, 'readiness.json', readinessReport),
+    seed_eval_corpus: await writeJson(options.outputDir, 'seed-eval-corpus.json', seedReport),
     query_eval: await writeJson(options.outputDir, 'query-eval.json', queryEval),
     consumer_smokes: consumerSmokes ? await writeJson(options.outputDir, 'consumer-smokes.json', consumerSmokes) : null,
     operator_report: await writeJson(options.outputDir, 'operator-report.json', operatorReport),
@@ -376,6 +437,7 @@ export async function runAPlusProof(options) {
     plan,
     artifacts,
     readiness: readinessReport,
+    seed_eval_corpus: seedReport,
     query_eval: queryEval,
     consumer_smokes: consumerSmokes,
     operator_report: operatorReport,
@@ -415,4 +477,4 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
 }
 
-export { buildPlan, parseArgs, queryEvalCases, validateProofInput };
+export { buildPlan, parseArgs, proofDocuments, queryEvalCases, validateProofInput };

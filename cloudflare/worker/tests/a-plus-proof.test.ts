@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildPlan, parseArgs, queryEvalCases, runAPlusProof, runQueryEvalProof, validateProofInput } from '../scripts/a-plus-proof.mjs';
+import { buildPlan, parseArgs, proofDocuments, queryEvalCases, runAPlusProof, runQueryEvalProof, seedProofCorpus, validateProofInput } from '../scripts/a-plus-proof.mjs';
 
 const originalFetch = globalThis.fetch;
 
@@ -60,6 +60,7 @@ describe('a-plus-proof', () => {
       continue_after_readiness_failure: false,
       steps: [
         'deploy-readiness',
+        'seed-eval-corpus',
         'query-eval',
         'benchmark:kb-search:lexical',
         'benchmark:kb-query:semantic',
@@ -95,6 +96,7 @@ describe('a-plus-proof', () => {
       steps: [
         'deploy-readiness',
         'consumer-auth-smokes',
+        'seed-eval-corpus',
         'query-eval',
         'benchmark:kb-search:lexical',
         'benchmark:kb-query:semantic',
@@ -129,6 +131,72 @@ describe('a-plus-proof', () => {
         expected_text: 'billing guardrails',
         expected_document_ids: ['doc-1'],
         expected_chunk_ids: ['chunk-1'],
+      },
+    ]);
+  });
+
+  it('builds proof documents and seeds them through the KB text ingest API', async () => {
+    const input = {
+      documents: [
+        { external_id: 'doc-1', content: 'Alpha proof document.' },
+        { external_id: 'empty', content: ' ' },
+        { id: 'doc-2', content: 'Beta proof document.' },
+      ],
+    };
+    expect(proofDocuments(input)).toEqual([
+      { id: 'doc-1', title: 'doc-1', text: 'Alpha proof document.' },
+      { id: 'doc-2', title: 'doc-2', text: 'Beta proof document.' },
+    ]);
+
+    const calls: Array<{ url: string; body: unknown }> = [];
+    globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const href = typeof url === 'string' ? url : url instanceof URL ? url.toString() : url.url;
+      const body = init?.body ? JSON.parse(String(init.body)) : null;
+      calls.push({ url: href, body });
+      return new Response(JSON.stringify({
+        file_id: `${body.title}-file`,
+        files: [{ chunks_created: 1 }],
+        ingest_safety: { idempotent: true, replayable: true },
+      }), {
+        status: 201,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    await expect(seedProofCorpus({
+      baseUrl: 'https://kb.example',
+      key: 'service-key',
+      domain: 'manuals',
+      input,
+    })).resolves.toMatchObject({
+      domain: 'manuals',
+      document_count: 2,
+      documents: [
+        { id: 'doc-1', file_id: 'doc-1-file', status: 'seeded', chunks_indexed: 1 },
+        { id: 'doc-2', file_id: 'doc-2-file', status: 'seeded', chunks_indexed: 1 },
+      ],
+    });
+
+    expect(calls).toEqual([
+      {
+        url: 'https://kb.example/v1/kb/ingest/text',
+        body: {
+          domain: 'manuals',
+          title: 'doc-1',
+          text: 'Alpha proof document.',
+          async: false,
+          idempotency_key: 'proof:doc-1',
+        },
+      },
+      {
+        url: 'https://kb.example/v1/kb/ingest/text',
+        body: {
+          domain: 'manuals',
+          title: 'doc-2',
+          text: 'Beta proof document.',
+          async: false,
+          idempotency_key: 'proof:doc-2',
+        },
       },
     ]);
   });
