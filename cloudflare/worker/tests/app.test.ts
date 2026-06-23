@@ -5242,8 +5242,82 @@ describe('knowledgebase RAG Worker app', () => {
 	    expect(session.status).toBe(200);
 	    expect(sessionBody.history).toHaveLength(4);
 	    expect(sessionBody.history[0]).toMatchObject({ role: 'user', trace_id: answerBody.trace_id });
-	    expect(sessionBody.history[1]).toMatchObject({ role: 'assistant', trace_id: answerBody.trace_id });
-	  });
+		    expect(sessionBody.history[1]).toMatchObject({ role: 'assistant', trace_id: answerBody.trace_id });
+		  });
+
+  it('caches complete stateless KB answers after the first retrieval', async () => {
+    const repo = new MemoryRepository();
+    const metadata = new MemoryMetadataRepository();
+    const rawDocs = new FakeR2Bucket();
+    const vectorize = new FakeVectorize();
+    let vectorQueries = 0;
+    const originalQuery = vectorize.query.bind(vectorize);
+    vectorize.query = async (...args) => {
+      vectorQueries += 1;
+      return originalQuery(...args);
+    };
+    const app = createApp({
+      makeRepository: () => repo,
+      makeMetadataRepository: () => metadata,
+      queryCache: new TtlCache({ enabled: true, ttlMs: 60_000, maxEntries: 100 }),
+      answerCache: new TtlCache({ enabled: true, ttlMs: 60_000, maxEntries: 100 }),
+    });
+    const env = makeEnv(
+      vectorize,
+      undefined as unknown as D1Database,
+      undefined,
+      rawDocs as unknown as R2Bucket,
+    );
+    const auth = { Authorization: 'Bearer key-a', 'Content-Type': 'application/json' };
+    const ingested = await app.request(
+      '/v1/kb/ingest/text',
+      {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({
+          domain: 'memories',
+          title: 'shirt-memory',
+          text: 'The user is wearing a red color t-shirt.',
+        }),
+      },
+      env,
+    );
+    expect(ingested.status).toBe(201);
+
+    const queryBody = {
+      domain: 'memories',
+      question: 'what color tshirt is the user wearing?',
+      mode: 'semantic',
+      top_k: 3,
+      answer_mode: 'extractive',
+    };
+    const first = await app.request(
+      '/v1/kb/query',
+      { method: 'POST', headers: auth, body: JSON.stringify(queryBody) },
+      env,
+    );
+    const firstBody = (await first.json()) as { trace_id: string; answer: string };
+    const second = await app.request(
+      '/v1/kb/query',
+      { method: 'POST', headers: auth, body: JSON.stringify(queryBody) },
+      env,
+    );
+    const secondBody = (await second.json()) as { trace_id: string; answer: string };
+    const secondTiming = JSON.parse(second.headers.get('X-RAG-Timing') ?? '{}');
+    const traces = await app.request('/v1/kb/query/traces?domain=memories', { headers: auth }, env);
+    const tracesBody = (await traces.json()) as { traces: QueryTraceRecord[] };
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(second.headers.get('X-RAG-Cache')).toBe('hit');
+    expect(secondTiming).toMatchObject({ cache_layer: 'answer_memory' });
+    expect(secondBody).toMatchObject({
+      trace_id: firstBody.trace_id,
+      answer: firstBody.answer,
+    });
+    expect(vectorQueries).toBe(1);
+    expect(tracesBody.traces).toHaveLength(1);
+  });
 
   it('can synthesize cited domain answers with Workers AI', async () => {
     const repo = new MemoryRepository();

@@ -137,6 +137,7 @@ interface AppOptions {
   makeMetadataRepository?: (env: Env) => MetadataRepository;
   embed?: (env: Env, texts: string[], options?: EmbeddingCallOptions) => Promise<number[][]>;
   queryCache?: TtlCache<QueryPayload>;
+  answerCache?: TtlCache<KbAnswerPayload>;
   embeddingCache?: TtlCache<number[]>;
   indexCache?: TtlCache<boolean>;
   indexRecordCache?: TtlCache<IndexRecord>;
@@ -2585,11 +2586,17 @@ export function createApp(options: AppOptions = {}) {
   const makeMetadataRepository = options.makeMetadataRepository ?? ((env: Env) => new D1MetadataRepository(env.DB));
   const embed = options.embed ?? defaultEmbed;
   const queryCache = options.queryCache ?? new TtlCache<QueryPayload>(parseCacheOptions({}));
+  const answerCache = options.answerCache ?? new TtlCache<KbAnswerPayload>(parseCacheOptions({}));
   const embeddingCache = options.embeddingCache ?? new TtlCache<number[]>(parseCacheOptions({}));
   const indexCache = options.indexCache ?? new TtlCache<boolean>(parseCacheOptions({}));
   const indexRecordCache = options.indexRecordCache ?? new TtlCache<IndexRecord>(parseCacheOptions({}));
   const kbDomainIndexCache = options.kbDomainIndexCache ?? new TtlCache<IndexRecord>(parseCacheOptions({}));
   const lexicalChunkCache = options.lexicalChunkCache ?? new TtlCache<ChunkRecord[]>(parseCacheOptions({}));
+
+  function clearAnswerAndQueryCaches(): void {
+    queryCache.clear();
+    answerCache.clear();
+  }
 
   function rememberIndex(env: Env, tenant: string, indexId: string): void {
     indexCache.configure(parseCacheOptions(env));
@@ -2808,7 +2815,7 @@ export function createApp(options: AppOptions = {}) {
   async function clearKbDomainCaches(env: Env, tenant: string, domain: string): Promise<void> {
     const ragRepo = makeRepository(env);
     const index = await ragRepo.getIndexByExternalId(tenant, kbIndexExternalId(domain));
-    queryCache.clear();
+    clearAnswerAndQueryCaches();
     kbDomainIndexCache.clear();
     if (index) {
       clearLexicalChunkCache(tenant, index.id);
@@ -4693,7 +4700,7 @@ export function createApp(options: AppOptions = {}) {
         });
       }
     }
-    queryCache.clear();
+    clearAnswerAndQueryCaches();
     clearLexicalChunkCache(tenant, indexId);
     await primeLexicalChunkCache(env, repo, tenant, indexId);
     await clearSharedQueryCache(env, tenant, indexId);
@@ -5050,6 +5057,34 @@ export function createApp(options: AppOptions = {}) {
     }
     const index = await getKbDomainIndex(c.env, repo, tenant, domain);
     if (!index) throw new Error('domain index not found');
+    const answerCacheKey = sessionId
+      ? null
+      : buildCacheKey({
+          tenant,
+          domain,
+          indexId: index.id,
+          question: normalizeSemanticQuery(question),
+          queryBody,
+          answerMode: requestedAnswerMode,
+          answerModel: body.answer_model ?? null,
+          scope: body.scope ?? null,
+        });
+    answerCache.configure(parseCacheOptions(c.env));
+    if (answerCacheKey) {
+      const cachedAnswer = answerCache.get(answerCacheKey);
+      if (cachedAnswer) {
+        return {
+          payload: cachedAnswer,
+          timing: {
+            route: 'query',
+            cache_layer: 'answer_memory',
+            cache: 'hit',
+            total_ms: elapsedMs(started),
+          },
+          cache: 'hit',
+        };
+      }
+    }
     const result = await runTextQuery(contextWithIndex(c, index.id), question, queryBody);
     const citations = citationsFromResults(result.payload.data, question);
     const answerState = await answerFromEvidence({
@@ -5089,23 +5124,25 @@ export function createApp(options: AppOptions = {}) {
         { role: 'assistant', content: answerState.answer, trace_id: trace.id, citations, route, answer_mode: answerState.answerMode, created_at: new Date().toISOString() },
       ]);
     }
+    const payload = {
+      project: tenant,
+      domain,
+      index_id: index.id,
+      route,
+      ai_used: answerState.aiUsed || (route !== 'd1_lexical' && result.cache !== 'hit'),
+      trace_id: trace.id,
+      session_id: sessionId,
+      answer_mode: answerState.answerMode,
+      answer_model: answerState.answerModel,
+      question,
+      answer: answerState.answer,
+      citations,
+      confidence: answerState.confidence,
+      data: result.payload.data,
+    };
+    if (answerCacheKey && payload.data.length > 0) answerCache.set(answerCacheKey, payload);
     return {
-      payload: {
-        project: tenant,
-        domain,
-        index_id: index.id,
-        route,
-        ai_used: answerState.aiUsed || (route !== 'd1_lexical' && result.cache !== 'hit'),
-        trace_id: trace.id,
-        session_id: sessionId,
-        answer_mode: answerState.answerMode,
-        answer_model: answerState.answerModel,
-        question,
-        answer: answerState.answer,
-        citations,
-        confidence: answerState.confidence,
-        data: result.payload.data,
-      },
+      payload,
       timing: result.timing,
       cache: result.cache,
     };
@@ -5317,7 +5354,7 @@ export function createApp(options: AppOptions = {}) {
     const chunkIds = await repo.getChunkIdsForIndex(tenant, indexId);
     await deleteVectorsForIndex(c.env, index, chunkIds);
     await repo.deleteIndex(tenant, indexId);
-    queryCache.clear();
+    clearAnswerAndQueryCaches();
     indexCache.clear();
     indexRecordCache.clear();
     kbDomainIndexCache.clear();
@@ -5384,7 +5421,7 @@ export function createApp(options: AppOptions = {}) {
       if (smallProfile && smallVectors.length > 0) {
         await upsertChunkVectors(c.env, tenant, indexId, chunkRows, smallVectors, smallProfile);
       }
-      queryCache.clear();
+      clearAnswerAndQueryCaches();
       clearLexicalChunkCache(tenant, indexId);
       await clearSharedQueryCache(c.env, tenant, indexId);
       out.push({ document_id: document.id, chunks_created: chunkRows.length });
@@ -5481,7 +5518,7 @@ export function createApp(options: AppOptions = {}) {
     }
     await repo.insertChunks(chunkRows);
     await vectorizeProfile.binding.upsert(vectorRows);
-    queryCache.clear();
+    clearAnswerAndQueryCaches();
     clearLexicalChunkCache(tenant, indexId);
     await primeLexicalChunkCache(c.env, repo, tenant, indexId);
     await clearSharedQueryCache(c.env, tenant, indexId);
@@ -5499,7 +5536,7 @@ export function createApp(options: AppOptions = {}) {
     if (index) await deleteVectorsForIndex(c.env, index, chunkIds);
     else await deleteVectorsFromAllProfiles(c.env, chunkIds);
     await repo.deleteDocument(tenant, docId);
-    queryCache.clear();
+    clearAnswerAndQueryCaches();
     indexCache.clear();
     kbDomainIndexCache.clear();
     clearLexicalChunkCache(tenant, doc.index_id);
