@@ -3380,7 +3380,7 @@ describe('knowledgebase RAG Worker app', () => {
     expect(chunk.metadata.record).toMatchObject({ paper_id: 'p-1', citation_count: 1000 });
   });
 
-  it('retries direct record ingestion without duplicating partially written chunks', async () => {
+  it('replays direct record ingestion without duplicating chunks after metadata chunk warnings', async () => {
     class FailOnceMetadataRepository extends MemoryMetadataRepository {
       failuresRemaining = 1;
 
@@ -3420,27 +3420,33 @@ describe('knowledgebase RAG Worker app', () => {
       }],
     };
 
-    const failed = await app.request(
+    const first = await app.request(
       '/v1/kb/ingest/record',
       { method: 'POST', headers: auth, body: JSON.stringify(request) },
       env,
     );
-    const ragChunkCountAfterFailure = ragRepo.chunks.size;
-    const kbChunkCountAfterFailure = metadata.chunks.size;
-    const vectorCountAfterFailure = vectorize.vectors.size;
+    const firstBody = (await first.json()) as {
+      chunks_indexed: number;
+      chunk_metadata_failure_classification: { category: string };
+    };
+    const ragChunkCountAfterFirst = ragRepo.chunks.size;
+    const kbChunkCountAfterFirst = metadata.chunks.size;
+    const vectorCountAfterFirst = vectorize.vectors.size;
     const retried = await app.request(
       '/v1/kb/ingest/record',
       { method: 'POST', headers: auth, body: JSON.stringify(request) },
       env,
     );
-    const retryBody = (await retried.json()) as { chunks_indexed: number };
+    const retryBody = (await retried.json()) as { chunks_indexed: number; idempotent_replay: boolean };
 
-    expect(failed.status).toBe(500);
-    expect(ragChunkCountAfterFailure).toBe(1);
-    expect(kbChunkCountAfterFailure).toBe(1);
-    expect(vectorCountAfterFailure).toBe(1);
-    expect(retried.status).toBe(201);
-    expect(retryBody.chunks_indexed).toBe(1);
+    expect(first.status).toBe(201);
+    expect(firstBody.chunks_indexed).toBe(1);
+    expect(firstBody.chunk_metadata_failure_classification).toMatchObject({ category: 'unknown' });
+    expect(ragChunkCountAfterFirst).toBe(1);
+    expect(kbChunkCountAfterFirst).toBe(1);
+    expect(vectorCountAfterFirst).toBe(1);
+    expect(retried.status).toBe(200);
+    expect(retryBody).toMatchObject({ chunks_indexed: 0, idempotent_replay: true });
     expect(ragRepo.chunks.size).toBe(1);
     expect(metadata.chunks.size).toBe(1);
     expect(vectorize.vectors.size).toBe(1);

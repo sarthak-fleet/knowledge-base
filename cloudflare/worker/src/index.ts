@@ -4476,20 +4476,25 @@ export function createApp(options: AppOptions = {}) {
       throw error;
     }
     const chunkPreview = chunkPreviewFromChunks(ingested.flatMap((entry) => entry.chunks));
-    await metadataRepo.insertKbChunks((await Promise.all(ingested.flatMap((entry) =>
-      entry.chunks.map(async (chunk) => ({
-        id: await deterministicId('kbchk', `${file.id}:${chunk.id}`),
-        project: tenant,
-        domain,
-        fileId: file.id,
-        vectorId: chunk.id,
-        pageStart: 0,
-        pageEnd: 0,
-        text: chunk.content,
-        contentHash,
-        metadata: chunk.metadata,
-      })),
-    ))));
+    let chunkMetadataFailure: JsonRecord | null = null;
+    try {
+      await metadataRepo.insertKbChunks((await Promise.all(ingested.flatMap((entry) =>
+        entry.chunks.map(async (chunk) => ({
+          id: await deterministicId('kbchk', `${file.id}:${chunk.id}`),
+          project: tenant,
+          domain,
+          fileId: file.id,
+          vectorId: chunk.id,
+          pageStart: 0,
+          pageEnd: 0,
+          text: chunk.content,
+          contentHash,
+          metadata: chunk.metadata,
+        })),
+      ))));
+    } catch (error) {
+      chunkMetadataFailure = classifyIngestFailure(error);
+    }
     let structured: RecordStructuredEntitiesResult = {
       entities: 0,
       mentions: 0,
@@ -4527,6 +4532,7 @@ export function createApp(options: AppOptions = {}) {
       entities_upserted: structured.entities,
       chunks_indexed: ingested.reduce((sum, entry) => sum + entry.chunks.length, 0),
       structured,
+      chunk_metadata_failure_classification: chunkMetadataFailure,
       structured_failure_classification: structuredFailure,
       idempotency_key: body.idempotency_key ?? contentHash,
       ingest_safety: ingestSafetyEvidence({
