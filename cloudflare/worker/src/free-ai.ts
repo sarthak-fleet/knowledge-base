@@ -63,6 +63,10 @@ function projectId(env: Env): string {
   return env.FREE_AI_PROJECT_ID?.trim() || DEFAULT_PROJECT_ID;
 }
 
+function freeAiSynthProvider(env: Env): string | undefined {
+  return env.FREE_AI_SYNTH_PROVIDER?.trim() || undefined;
+}
+
 function catalogModel(model: string): FreeAiEmbeddingModel | null {
   const normalized = model.trim();
   return FREE_AI_EMBEDDING_MODELS.find((item) => item.id === normalized || item.aliases?.includes(normalized)) ?? null;
@@ -291,9 +295,15 @@ export async function freeAiChatRaw(env: Env, model: string, body: FreeAiChatBod
   const url = `${baseUrl(env)}/chat/completions`;
   const pid = projectId(env);
   const responseFormat = mapResponseFormat(body.response_format);
+  const provider = freeAiSynthProvider(env);
   const res = await gatewayFetchRetry(env, url, {
     method: 'POST',
-    headers: { ...authHeaders(env), 'x-gateway-project-id': pid },
+    headers: {
+      ...authHeaders(env),
+      'x-gateway-project-id': pid,
+      'x-gateway-force-model': model,
+      ...(provider ? { 'x-gateway-force-provider': provider } : {}),
+    },
     body: JSON.stringify({
       model,
       messages: body.messages,

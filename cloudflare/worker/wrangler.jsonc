@@ -95,6 +95,7 @@
 		"FREE_AI_EMBED_MODEL": "gemini-embedding-001",
 		"FREE_AI_EMBED_PROVIDER": "gemini",
 		"FREE_AI_EMBED_DIMENSIONS": "1536",
-		"FREE_AI_SYNTH_MODEL": "gemini-2.5-flash"
+		"FREE_AI_SYNTH_MODEL": "command-code-mimo-v2-5",
+		"FREE_AI_SYNTH_PROVIDER": "command_code"
 	}
 }

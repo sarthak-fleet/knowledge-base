@@ -37,6 +37,7 @@ export interface Env {
   FREE_AI_EMBED_PROVIDER_SMALL?: string;
   FREE_AI_EMBED_DIMENSIONS_SMALL?: string;
   FREE_AI_SYNTH_MODEL?: string;
+  FREE_AI_SYNTH_PROVIDER?: string;
   RAG_MARKDOWN_CONVERSION?: string;
   RAG_VISION_OCR_MODEL?: string;
   RAG_DEPLOY_FINGERPRINT?: string;

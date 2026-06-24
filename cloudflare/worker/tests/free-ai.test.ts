@@ -163,6 +163,38 @@ describe('freeAiEmbed', () => {
   });
 });
 
+describe('freeAiChatRaw', () => {
+  it('forces configured Command Code synthesis provider and model', async () => {
+    const calls = captureFetch(() =>
+      jsonResponse({ choices: [{ message: { content: 'answer' } }] }),
+    );
+    const out = await freeAiChatRaw(
+      makeEnv({
+        FREE_AI_SYNTH_MODEL: 'command-code-mimo-v2-5',
+        FREE_AI_SYNTH_PROVIDER: 'command_code',
+      }),
+      'command-code-mimo-v2-5',
+      { messages: [{ role: 'user', content: 'question' }], max_tokens: 64 },
+    );
+
+    expect(out.response).toBe('answer');
+    expect(first(calls)).toMatchObject({
+      url: 'https://gw.example/v1/chat/completions',
+      headers: {
+        Authorization: 'Bearer test-key',
+        'x-gateway-project-id': 'kb-test',
+        'x-gateway-force-model': 'command-code-mimo-v2-5',
+        'x-gateway-force-provider': 'command_code',
+      },
+      body: {
+        model: 'command-code-mimo-v2-5',
+        max_tokens: 64,
+        project_id: 'kb-test',
+      },
+    });
+  });
+});
+
 describe('fetchFreeAiEmbeddingCatalog', () => {
   it('requires live free-ai model rows to include embedding entries', async () => {
     captureFetch(() => jsonResponse({ data: [{ id: 'gemini-2.5-flash', type: 'chat', provider: 'gemini' }] }));
