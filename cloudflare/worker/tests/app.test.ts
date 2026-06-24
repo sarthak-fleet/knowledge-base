@@ -1980,6 +1980,7 @@ describe('knowledgebase RAG Worker app', () => {
     const vectorize = new FakeVectorize();
     const vectorize1024 = new FakeVectorize();
     const env = makeEnv(vectorize);
+    const embeddingCalls: Array<{ headers: Record<string, string>; body: { model?: string; dimensions?: number; input?: string[] } }> = [];
     env.VECTORIZE_1024 = vectorize1024;
     env.RAG_EMBED_PROVIDER = 'free_ai';
     env.FREE_AI_EMBED_MODEL = 'gemini-embedding-001';
@@ -2003,7 +2004,9 @@ describe('knowledgebase RAG Worker app', () => {
           });
         }
         if (href.endsWith('/v1/embeddings')) {
-          const body = JSON.parse(String(init?.body ?? '{}')) as { input?: string[] };
+          const headers = Object.fromEntries(new Headers(init?.headers).entries());
+          const body = JSON.parse(String(init?.body ?? '{}')) as { model?: string; dimensions?: number; input?: string[] };
+          embeddingCalls.push({ headers, body });
           return Response.json({
             data: (body.input ?? []).map((_, i) => ({ index: i, embedding: vectorOf(1024, i + 1) })),
           });
@@ -2052,6 +2055,16 @@ describe('knowledgebase RAG Worker app', () => {
     });
     expect(ingested.status).toBe(201);
     expect(queried.status).toBe(200);
+    expect(embeddingCalls[0]).toMatchObject({
+      headers: {
+        'x-gateway-force-model': 'voyage-3.5-lite',
+        'x-gateway-force-provider': 'voyage_ai',
+      },
+      body: {
+        model: 'voyage-3.5-lite',
+      },
+    });
+    expect(embeddingCalls[0]?.body).not.toHaveProperty('dimensions');
     expect(vectorize.vectors.size).toBe(0);
     expect(vectorize.queries).toHaveLength(0);
     expect(vectorize1024.vectors.size).toBeGreaterThan(0);
@@ -2146,9 +2159,9 @@ describe('knowledgebase RAG Worker app', () => {
       },
       body: {
         model: '@cf/baai/bge-small-en-v1.5',
-        dimensions: 384,
       },
     });
+    expect(embeddingCalls[0]?.body).not.toHaveProperty('dimensions');
     expect(vectorize.vectors.size).toBe(0);
     expect(vectorize.queries).toHaveLength(0);
     expect(vectorize384.vectors.size).toBeGreaterThan(0);

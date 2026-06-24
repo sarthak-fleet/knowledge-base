@@ -28,7 +28,7 @@ export interface FreeAiEmbeddingModel {
 }
 
 const FREE_AI_EMBEDDING_MODELS: FreeAiEmbeddingModel[] = [
-  { id: 'gemini-embedding-001', provider: 'gemini', dimensions: 1536, aliases: ['text-embedding-3-small', 'text-embedding-3-large', 'text-embedding-004'] },
+  { id: 'gemini-embedding-001', provider: 'gemini', dimensions: 1536, supports_dimensions: true, aliases: ['text-embedding-3-small', 'text-embedding-3-large', 'text-embedding-004'] },
   { id: 'voyage-3.5-lite', provider: 'voyage_ai', dimensions: 1024 },
   { id: 'voyage-3-lite', provider: 'voyage_ai', dimensions: 1024 },
   { id: '@cf/baai/bge-large-en-v1.5', provider: 'workers_ai', dimensions: 1024 },
@@ -86,6 +86,10 @@ function configuredDimensions(env: Env, profile: SemanticProfile, model: string)
     return Math.trunc(configured);
   }
   return catalogModel(model)?.dimensions ?? DEFAULT_DIMENSIONS;
+}
+
+function supportsDimensionOverride(model: string): boolean {
+  return catalogModel(model)?.supports_dimensions === true;
 }
 
 export function freeAiEmbeddingModel(env: Env, profile: SemanticProfile): string {
@@ -240,7 +244,7 @@ export async function freeAiEmbed(
       body: JSON.stringify({
         model,
         input: batch,
-        dimensions,
+        ...(supportsDimensionOverride(model) ? { dimensions } : {}),
         encoding_format: 'float',
         project_id: pid,
       }),

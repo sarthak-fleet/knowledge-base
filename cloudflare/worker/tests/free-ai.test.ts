@@ -86,7 +86,7 @@ describe('freeAiEmbed', () => {
     const out = await freeAiEmbed(makeEnv(), ['x'], { model: '@cf/baai/bge-small-en-v1.5' });
     expect(first(calls).headers['x-gateway-force-provider']).toBe('workers_ai');
     expect(first(calls).headers['x-gateway-force-model']).toBe('@cf/baai/bge-small-en-v1.5');
-    expect(first(calls).body.dimensions).toBe(384);
+    expect(first(calls).body).not.toHaveProperty('dimensions');
     expect(first(calls).body.model).toBe('@cf/baai/bge-small-en-v1.5');
     expect(out[0]).toHaveLength(384);
   });
