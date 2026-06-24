@@ -3393,6 +3393,72 @@ describe('knowledgebase RAG Worker app', () => {
     expect(chunk.metadata.record).toMatchObject({ paper_id: 'p-1', citation_count: 1000 });
   });
 
+  it('compacts oversized record metadata for Vectorize while preserving stored chunk metadata', async () => {
+    const metadata = new MemoryMetadataRepository();
+    const ragRepo = new MemoryRepository();
+    const rawDocs = new FakeR2Bucket();
+    const vectorize = new FakeVectorize();
+    const app = createApp({
+      makeRepository: () => ragRepo,
+      makeMetadataRepository: () => metadata,
+      embed: async (_env, texts) => texts.map(vectorFor),
+    });
+    const env = makeEnv(
+      vectorize,
+      undefined as unknown as D1Database,
+      undefined,
+      rawDocs as unknown as R2Bucket,
+    );
+    const auth = { Authorization: 'Bearer key-a', 'Content-Type': 'application/json' };
+    const longSummary = 'oversized metadata '.repeat(900);
+
+    const response = await app.request(
+      '/v1/kb/ingest/record',
+      {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({
+          domain: 'papers-oversized-metadata',
+          type: 'Paper',
+          data: [{
+            paper_id: 'p-large-meta',
+            title: 'Large metadata paper',
+            abstract: 'A concise abstract should remain available in chunk content.',
+            author_names: ['Ada Lovelace', 'Grace Hopper'],
+            authors: Array.from({ length: 40 }, (_, i) => ({
+              name: `Author ${i}`,
+              openalex_id: `https://openalex.org/A${i}`,
+              institutions: ['A very verbose institution name that is not needed in Vectorize metadata'],
+            })),
+            primary_topic: 'Neural Networks',
+            publication_year: 2024,
+            citation_count: 1000,
+            url: 'https://doi.org/10.0000/large-meta',
+            summary: longSummary,
+          }],
+        }),
+      },
+      env,
+    );
+    const body = (await response.json()) as { chunks_indexed: number };
+    const chunk = [...ragRepo.chunks.values()][0];
+    const vector = [...vectorize.vectors.values()][0];
+    const vectorMetadataBytes = new TextEncoder().encode(JSON.stringify(vector?.metadata ?? {})).length;
+    const vectorChunkMetadata = JSON.parse(String(vector?.metadata.chunk_metadata ?? '{}')) as {
+      record?: { paper_id?: string; summary?: string; author_names?: string[] };
+    };
+
+    expect(response.status).toBe(201);
+    expect(body.chunks_indexed).toBe(1);
+    expect(vectorMetadataBytes).toBeLessThanOrEqual(9_500);
+    expect(vectorChunkMetadata.record).toMatchObject({
+      paper_id: 'p-large-meta',
+      author_names: ['Ada Lovelace', 'Grace Hopper'],
+    });
+    expect(vectorChunkMetadata.record?.summary).toBeUndefined();
+    expect(chunk?.metadata.record).toMatchObject({ paper_id: 'p-large-meta', summary: longSummary });
+  });
+
   it('replays direct record ingestion without duplicating chunks after metadata chunk warnings', async () => {
     class FailOnceMetadataRepository extends MemoryMetadataRepository {
       failuresRemaining = 1;

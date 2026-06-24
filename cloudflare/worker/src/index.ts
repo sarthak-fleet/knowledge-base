@@ -1072,6 +1072,38 @@ function vectorMetadata(
   content: string,
   metadata: JsonRecord,
 ): JsonRecord {
+  const full = buildVectorMetadata(tenant, indexId, documentId, chunkIndex, content, metadata);
+  if (jsonByteLength(full) <= VECTOR_METADATA_SAFE_BYTES) return full;
+
+  const compact = buildVectorMetadata(
+    tenant,
+    indexId,
+    documentId,
+    chunkIndex,
+    content,
+    compactChunkMetadataForVectorize(metadata),
+  );
+  if (jsonByteLength(compact) <= VECTOR_METADATA_SAFE_BYTES) return compact;
+
+  return {
+    tenant,
+    index_id: indexId,
+    document_id: documentId,
+    chunk_index: chunkIndex,
+    metadata_hydrate: true,
+  };
+}
+
+const VECTOR_METADATA_SAFE_BYTES = 9_500;
+
+function buildVectorMetadata(
+  tenant: string,
+  indexId: string,
+  documentId: string,
+  chunkIndex: number,
+  content: string,
+  metadata: JsonRecord,
+): JsonRecord {
   return {
     tenant,
     index_id: indexId,
@@ -1082,8 +1114,61 @@ function vectorMetadata(
   };
 }
 
+function jsonByteLength(value: unknown): number {
+  return new TextEncoder().encode(JSON.stringify(value)).length;
+}
+
+function compactChunkMetadataForVectorize(metadata: JsonRecord): JsonRecord {
+  const compact = { ...metadata };
+  if (compact.record && typeof compact.record === 'object' && !Array.isArray(compact.record)) {
+    compact.record = compactPaperRecordForVectorize(compact.record as JsonRecord);
+  }
+  return compact;
+}
+
+function compactPaperRecordForVectorize(record: JsonRecord): JsonRecord {
+  const keep = [
+    'record_kind',
+    'collection',
+    'openalex_id',
+    'paper_id',
+    'type',
+    'title',
+    'publication_year',
+    'publication_date',
+    'citation_count',
+    'referenced_works_count',
+    'language',
+    'author_names',
+    'primary_topic',
+    'primary_topic_id',
+    'subfield',
+    'field',
+    'topics',
+    'url',
+    'pdf_url',
+    'openalex_url',
+    'doi',
+    'source_name',
+    'source_id',
+    'is_open_access',
+  ];
+  const compact: JsonRecord = {};
+  for (const key of keep) {
+    if (record[key] !== undefined) compact[key] = compactVectorMetadataValue(record[key], key);
+  }
+  return compact;
+}
+
+function compactVectorMetadataValue(value: unknown, key: string): unknown {
+  if (Array.isArray(value)) return value.slice(0, key === 'author_names' ? 12 : 8);
+  if (typeof value === 'string' && value.length > 1_000) return `${value.slice(0, 997)}...`;
+  return value;
+}
+
 function searchResultFromVectorMetadata(match: { id: string; score: number; metadata?: JsonRecord }): SearchResult | null {
   const metadata = match.metadata ?? {};
+  if (metadata.metadata_hydrate === true) return null;
   if (typeof metadata.document_id !== 'string' || typeof metadata.chunk_content !== 'string') return null;
   let parsedMetadata: unknown = {};
   if (typeof metadata.chunk_metadata === 'string') {
