@@ -7160,6 +7160,78 @@ describe('knowledgebase RAG Worker app', () => {
     expect(vectorQueries).toBe(0);
   });
 
+  it('forwards min_score from knowledgebase answer queries to semantic retrieval', async () => {
+    const repo = new MemoryRepository();
+    const metadata = new MemoryMetadataRepository();
+    const rawDocs = new FakeR2Bucket();
+    const vectorize = new FakeVectorize();
+    let aiCalls = 0;
+    let vectorQueries = 0;
+    const originalQuery = vectorize.query.bind(vectorize);
+    vectorize.query = async (...args) => {
+      vectorQueries += 1;
+      return originalQuery(...args);
+    };
+    const app = createApp({
+      makeRepository: () => repo,
+      makeMetadataRepository: () => metadata,
+      embed: async (_env, texts) => {
+        aiCalls += 1;
+        return texts.map(vectorFor);
+      },
+    });
+    const env = makeEnv(
+      vectorize,
+      undefined as unknown as D1Database,
+      undefined,
+      rawDocs as unknown as R2Bucket,
+    );
+    const auth = { Authorization: 'Bearer key-a', 'Content-Type': 'application/json' };
+
+    const ingested = await app.request(
+      '/v1/kb/ingest/text',
+      {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({
+          domain: 'semantic-min-score',
+          title: 'prompting-note',
+          text: 'Prompting language models connects instruction following, retrieval, and evaluation.',
+          async: false,
+        }),
+      },
+      env,
+    );
+    expect(ingested.status).toBe(201);
+    aiCalls = 0;
+    vectorQueries = 0;
+
+    const query = await app.request(
+      '/v1/kb/query',
+      {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({
+          domain: 'semantic-min-score',
+          question: 'what connects prompting and language models?',
+          top_k: 1,
+          mode: 'semantic',
+          min_score: 0,
+          answer_mode: 'extractive',
+          cache_mode: 'bypass_read_write',
+        }),
+      },
+      env,
+    );
+    const body = (await query.json()) as { route?: string; data: SearchResult[] };
+
+    expect(query.status).toBe(200);
+    expect(body.route).toBe('vectorize');
+    expect(body.data[0]?.chunk_content).toContain('Prompting language models');
+    expect(aiCalls).toBe(1);
+    expect(vectorQueries).toBe(1);
+  });
+
   it('benchmarks warmed text queries inside the Worker', async () => {
     const repo = new MemoryRepository();
     const vectorize = new FakeVectorize();

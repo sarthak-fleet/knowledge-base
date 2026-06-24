@@ -380,6 +380,7 @@ interface KbSearchBody {
   domain?: string;
   query?: string;
   top_k?: number;
+  min_score?: number;
   mode?: 'auto' | 'semantic' | 'lexical' | 'hybrid';
   semantic_model?: SemanticModel;
   rerank?: boolean;
@@ -5252,6 +5253,7 @@ export function createApp(options: AppOptions = {}) {
     const queryBody: QueryBody = {};
     if (body.top_k !== undefined) queryBody.top_k = body.top_k;
     if (body.mode !== undefined) queryBody.mode = body.mode;
+    if (body.min_score !== undefined) queryBody.min_score = body.min_score;
     if (body.semantic_model !== undefined) queryBody.semantic_model = body.semantic_model;
     if (body.rerank !== undefined) queryBody.rerank = body.rerank;
     if (body.rerank_model !== undefined) queryBody.rerank_model = body.rerank_model;
@@ -5489,6 +5491,7 @@ export function createApp(options: AppOptions = {}) {
     const queryBody: QueryBody = {};
     if (body.top_k !== undefined) queryBody.top_k = body.top_k;
     if (body.mode !== undefined) queryBody.mode = body.mode;
+    if (body.min_score !== undefined) queryBody.min_score = body.min_score;
     if (body.semantic_model !== undefined) queryBody.semantic_model = body.semantic_model;
     if (body.rerank !== undefined) queryBody.rerank = body.rerank;
     if (body.rerank_model !== undefined) queryBody.rerank_model = body.rerank_model;
