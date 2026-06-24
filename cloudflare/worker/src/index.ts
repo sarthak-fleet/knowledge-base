@@ -54,6 +54,7 @@ const WORKER_VERSION = '0.1.0';
 const WORKER_DEPLOY_FINGERPRINT = 'knowledgebase-a-plus-evidence-2026-06-23';
 const LEXICAL_SCORING_VERSION = 'bm25_fuzzy_sparse_v3';
 const MAX_RERANK_CONTEXT_CHARS = 1200;
+const MAX_RECORD_INDEX_TEXT_CHARS = 1800;
 const STOP_WORDS = new Set([
   'a',
   'an',
@@ -433,6 +434,51 @@ interface IngestVectorsBody {
 
 function jsonRecord(value: unknown): JsonRecord {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as JsonRecord) : {};
+}
+
+function stringField(record: JsonRecord, key: string): string | null {
+  const value = record[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function listField(record: JsonRecord, key: string): string[] {
+  const value = record[key];
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0).map((item) => item.trim());
+}
+
+function clampIndexText(value: string): string {
+  if (value.length <= MAX_RECORD_INDEX_TEXT_CHARS) return value;
+  const clipped = value.slice(0, MAX_RECORD_INDEX_TEXT_CHARS).replace(/\s+\S*$/, '').trimEnd();
+  return `${clipped || value.slice(0, MAX_RECORD_INDEX_TEXT_CHARS).trimEnd()}...`;
+}
+
+function structuredRecordIndexText(record: JsonRecord): string {
+  const ragText = stringField(record, 'rag_text');
+  if (ragText) return clampIndexText(ragText);
+
+  const authorNames = listField(record, 'author_names');
+  const topics = listField(record, 'topics');
+  const lines = [
+    ['Title', stringField(record, 'title')],
+    ['Abstract', stringField(record, 'abstract')],
+    ['Summary', stringField(record, 'summary')],
+    ['Authors', authorNames.length ? authorNames.join(', ') : null],
+    ['Primary topic', stringField(record, 'primary_topic')],
+    ['Subfield', stringField(record, 'subfield')],
+    ['Source', stringField(record, 'source_name')],
+    ['Publication year', record.publication_year === undefined || record.publication_year === null ? null : String(record.publication_year)],
+    ['Citations', record.citation_count === undefined || record.citation_count === null ? null : String(record.citation_count)],
+    ['Topics', topics.length ? topics.join(', ') : null],
+    ['URL', stringField(record, 'url')],
+    ['PDF link', stringField(record, 'pdf_url')],
+    ['OpenAlex URL', stringField(record, 'openalex_url')],
+    ['DOI', stringField(record, 'doi')],
+  ]
+    .filter((entry): entry is [string, string] => Boolean(entry[1]))
+    .map(([label, value]) => `${label}: ${value}`);
+
+  return lines.length > 0 ? clampIndexText(lines.join('\n')) : stableStringify(record);
 }
 
 function clampTopK(value: unknown): number {
@@ -3336,6 +3382,8 @@ export function createApp(options: AppOptions = {}) {
     const smallProfile = embeddingProfile.vectorizeProfile === 'base'
       ? configuredVectorizeProfiles(env).find((profile) => profile.key === 'small')
       : undefined;
+    const pendingChunks: CreateChunkInput[] = [];
+    const pendingChunkContents: string[] = [];
     for (const input of documents) {
       const content = input.content.trim();
       if (!content) continue;
@@ -3349,10 +3397,6 @@ export function createApp(options: AppOptions = {}) {
         metadata: input.metadata,
       });
       const chunkContents = chunkText(content, chunking);
-      const vectors = await embed(env, chunkContents, embeddingOptionsForProfile(embeddingProfile));
-      const smallVectors = smallProfile
-        ? await embed(env, chunkContents, { model: embeddingModel(env, 'small') })
-        : [];
       const chunkRows: CreateChunkInput[] = chunkContents.map((chunk, i) => ({
         id: crypto.randomUUID(),
         tenant,
@@ -3362,12 +3406,19 @@ export function createApp(options: AppOptions = {}) {
         chunkIndex: i,
         metadata: input.metadata,
       }));
-      await repo.insertChunks(chunkRows);
-      await upsertChunkVectors(env, tenant, indexId, chunkRows, vectors, vectorizeProfile);
-      if (smallProfile && smallVectors.length > 0) {
-        await upsertChunkVectors(env, tenant, indexId, chunkRows, smallVectors, smallProfile);
-      }
+      pendingChunks.push(...chunkRows);
+      pendingChunkContents.push(...chunkContents);
       out.push({ document_id: document.id, chunks: chunkRows });
+    }
+    if (pendingChunks.length === 0) return out;
+    const vectors = await embed(env, pendingChunkContents, embeddingOptionsForProfile(embeddingProfile));
+    const smallVectors = smallProfile
+      ? await embed(env, pendingChunkContents, { model: embeddingModel(env, 'small') })
+      : [];
+    await repo.insertChunks(pendingChunks);
+    await upsertChunkVectors(env, tenant, indexId, pendingChunks, vectors, vectorizeProfile);
+    if (smallProfile && smallVectors.length > 0) {
+      await upsertChunkVectors(env, tenant, indexId, pendingChunks, smallVectors, smallProfile);
     }
     return out;
   }
@@ -4345,7 +4396,7 @@ export function createApp(options: AppOptions = {}) {
     const artifactKey = parseArtifactKey(domain, contentHash);
     const docs = records.map((record, i) => ({
       external_id: `${file.id}:record:${i}`,
-      content: stableStringify(record),
+      content: structuredRecordIndexText(record),
       metadata: {
         project: tenant,
         domain,

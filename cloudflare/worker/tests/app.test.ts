@@ -2963,9 +2963,14 @@ describe('knowledgebase RAG Worker app', () => {
     const ragRepo = new MemoryRepository();
     const rawDocs = new FakeR2Bucket();
     const vectorize = new FakeVectorize();
+    const embedBatchSizes: number[] = [];
     const app = createApp({
       makeRepository: () => ragRepo,
       makeMetadataRepository: () => metadata,
+      embed: async (_env, texts) => {
+        embedBatchSizes.push(texts.length);
+        return texts.map(vectorFor);
+      },
     });
     const env = makeEnv(
       vectorize,
@@ -3202,6 +3207,8 @@ describe('knowledgebase RAG Worker app', () => {
       entities_upserted: 2,
     });
     expect(recordBody.chunks_indexed).toBeGreaterThan(0);
+    expect(embedBatchSizes[0]).toBe(recordBody.chunks_indexed);
+    expect(embedBatchSizes[0]).toBeGreaterThan(1);
     expect(recordBody.ingest_safety).toMatchObject({
       content_hash: expect.any(String),
       idempotent: true,
@@ -3317,6 +3324,60 @@ describe('knowledgebase RAG Worker app', () => {
         retryable: false,
       },
     });
+  });
+
+  it('derives paper vector content from structured records while preserving metadata', async () => {
+    const metadata = new MemoryMetadataRepository();
+    const ragRepo = new MemoryRepository();
+    const rawDocs = new FakeR2Bucket();
+    const vectorize = new FakeVectorize();
+    const app = createApp({
+      makeRepository: () => ragRepo,
+      makeMetadataRepository: () => metadata,
+      embed: async (_env, texts) => texts.map(vectorFor),
+    });
+    const env = makeEnv(
+      vectorize,
+      undefined as unknown as D1Database,
+      undefined,
+      rawDocs as unknown as R2Bucket,
+    );
+    const auth = { Authorization: 'Bearer key-a', 'Content-Type': 'application/json' };
+
+    const response = await app.request(
+      '/v1/kb/ingest/record',
+      {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({
+          domain: 'papers',
+          type: 'Paper',
+          data: [{
+            paper_id: 'p-1',
+            title: 'Attention paper',
+            abstract: 'Transformers use attention.',
+            author_names: ['Ada Lovelace', 'Grace Hopper'],
+            primary_topic: 'Neural Networks',
+            publication_year: 2024,
+            citation_count: 1000,
+            pdf_url: 'https://example.test/attention.pdf',
+          }],
+        }),
+      },
+      env,
+    );
+    const body = (await response.json()) as { chunks_indexed: number };
+    const chunk = [...ragRepo.chunks.values()][0];
+
+    expect(response.status).toBe(201);
+    expect(body.chunks_indexed).toBe(1);
+    expect(chunk).toBeDefined();
+    if (!chunk) throw new Error('missing chunk');
+    expect(chunk.content).toContain('Title: Attention paper');
+    expect(chunk.content).toContain('Abstract: Transformers use attention.');
+    expect(chunk.content).toContain('Authors: Ada Lovelace, Grace Hopper');
+    expect(chunk.content).toContain('PDF link: https://example.test/attention.pdf');
+    expect(chunk.metadata.record).toMatchObject({ paper_id: 'p-1', citation_count: 1000 });
   });
 
   it('lists Cloudflare-supported sources and imports URL sources into R2/D1', async () => {
