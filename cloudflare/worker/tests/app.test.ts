@@ -3446,6 +3446,62 @@ describe('knowledgebase RAG Worker app', () => {
     expect(vectorize.vectors.size).toBe(1);
   });
 
+  it('keeps direct record RAG ingestion successful when structured entity persistence fails', async () => {
+    class FailingStructuredMetadataRepository extends MemoryMetadataRepository {
+      override async recordStructuredEntities(): Promise<RecordStructuredEntitiesResult> {
+        throw new Error('structured persistence failed');
+      }
+    }
+
+    const metadata = new FailingStructuredMetadataRepository();
+    const ragRepo = new MemoryRepository();
+    const rawDocs = new FakeR2Bucket();
+    const vectorize = new FakeVectorize();
+    const app = createApp({
+      makeRepository: () => ragRepo,
+      makeMetadataRepository: () => metadata,
+      embed: async (_env, texts) => texts.map(vectorFor),
+    });
+    const env = makeEnv(
+      vectorize,
+      undefined as unknown as D1Database,
+      undefined,
+      rawDocs as unknown as R2Bucket,
+    );
+    const auth = { Authorization: 'Bearer key-a', 'Content-Type': 'application/json' };
+
+    const response = await app.request(
+      '/v1/kb/ingest/record',
+      {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({
+          domain: 'papers-structured-warning',
+          type: 'Paper',
+          data: [{
+            paper_id: 'p-warning',
+            title: 'RAG survives structured warnings',
+            abstract: 'The vector index should still be ready.',
+            citation_count: 1002,
+          }],
+        }),
+      },
+      env,
+    );
+    const body = (await response.json()) as {
+      chunks_indexed: number;
+      structured: RecordStructuredEntitiesResult;
+      structured_failure_classification: { category: string; retryable: boolean };
+    };
+
+    expect(response.status).toBe(201);
+    expect(body.chunks_indexed).toBe(1);
+    expect(body.structured).toMatchObject({ entities: 0, chunks_linked: 0 });
+    expect(body.structured_failure_classification).toMatchObject({ category: 'unknown' });
+    expect(ragRepo.chunks.size).toBe(1);
+    expect(vectorize.vectors.size).toBe(1);
+  });
+
   it('lists Cloudflare-supported sources and imports URL sources into R2/D1', async () => {
     const metadata = new MemoryMetadataRepository();
     const rawDocs = new FakeR2Bucket();

@@ -28,6 +28,7 @@ import {
   type IngestJobRecord,
   type MetadataRepository,
   type QueryTraceRecord,
+  type RecordStructuredEntitiesResult,
 } from './kb-metadata-repository';
 import type { CreateChunkInput, Repository } from './repository';
 import { inferSchema, recordsFromUnknown, type DomainSchema } from './schema-inference';
@@ -4489,18 +4490,30 @@ export function createApp(options: AppOptions = {}) {
         metadata: chunk.metadata,
       })),
     ))));
-    const structured = await metadataRepo.recordStructuredEntities({
-      project: tenant,
-      domain,
-      fileId: file.id,
-      schema: activeSchema,
-      records: records.map((record, i) => ({
-        documentId: ingested[i]?.document_id ?? `${file.id}:record:${i}`,
-        recordIndex: i,
-        record,
-        chunks: ingested[i]?.chunks.map((chunk) => ({ id: chunk.id, content: chunk.content })) ?? [],
-      })),
-    });
+    let structured: RecordStructuredEntitiesResult = {
+      entities: 0,
+      mentions: 0,
+      relationships: 0,
+      provenance_spans: 0,
+      chunks_linked: 0,
+    };
+    let structuredFailure: JsonRecord | null = null;
+    try {
+      structured = await metadataRepo.recordStructuredEntities({
+        project: tenant,
+        domain,
+        fileId: file.id,
+        schema: activeSchema,
+        records: records.map((record, i) => ({
+          documentId: ingested[i]?.document_id ?? `${file.id}:record:${i}`,
+          recordIndex: i,
+          record,
+          chunks: ingested[i]?.chunks.map((chunk) => ({ id: chunk.id, content: chunk.content })) ?? [],
+        })),
+      });
+    } catch (error) {
+      structuredFailure = classifyIngestFailure(error);
+    }
     await metadataRepo.setFileStatus(tenant, file.id, 'ready');
     await clearKbDomainCaches(c.env, tenant, domain);
     return c.json({
@@ -4514,6 +4527,7 @@ export function createApp(options: AppOptions = {}) {
       entities_upserted: structured.entities,
       chunks_indexed: ingested.reduce((sum, entry) => sum + entry.chunks.length, 0),
       structured,
+      structured_failure_classification: structuredFailure,
       idempotency_key: body.idempotency_key ?? contentHash,
       ingest_safety: ingestSafetyEvidence({
         idempotencyKey: body.idempotency_key,
