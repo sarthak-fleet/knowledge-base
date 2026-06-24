@@ -3380,6 +3380,72 @@ describe('knowledgebase RAG Worker app', () => {
     expect(chunk.metadata.record).toMatchObject({ paper_id: 'p-1', citation_count: 1000 });
   });
 
+  it('retries direct record ingestion without duplicating partially written chunks', async () => {
+    class FailOnceMetadataRepository extends MemoryMetadataRepository {
+      failuresRemaining = 1;
+
+      override async insertKbChunks(chunks: KbChunkInput[]): Promise<void> {
+        await super.insertKbChunks(chunks);
+        if (this.failuresRemaining > 0) {
+          this.failuresRemaining -= 1;
+          throw new Error('transient metadata failure');
+        }
+      }
+    }
+
+    const metadata = new FailOnceMetadataRepository();
+    const ragRepo = new MemoryRepository();
+    const rawDocs = new FakeR2Bucket();
+    const vectorize = new FakeVectorize();
+    const app = createApp({
+      makeRepository: () => ragRepo,
+      makeMetadataRepository: () => metadata,
+      embed: async (_env, texts) => texts.map(vectorFor),
+    });
+    const env = makeEnv(
+      vectorize,
+      undefined as unknown as D1Database,
+      undefined,
+      rawDocs as unknown as R2Bucket,
+    );
+    const auth = { Authorization: 'Bearer key-a', 'Content-Type': 'application/json' };
+    const request = {
+      domain: 'papers-retry',
+      type: 'Paper',
+      data: [{
+        paper_id: 'p-retry',
+        title: 'Retry-safe paper',
+        abstract: 'A retry should not duplicate chunks.',
+        citation_count: 1001,
+      }],
+    };
+
+    const failed = await app.request(
+      '/v1/kb/ingest/record',
+      { method: 'POST', headers: auth, body: JSON.stringify(request) },
+      env,
+    );
+    const ragChunkCountAfterFailure = ragRepo.chunks.size;
+    const kbChunkCountAfterFailure = metadata.chunks.size;
+    const vectorCountAfterFailure = vectorize.vectors.size;
+    const retried = await app.request(
+      '/v1/kb/ingest/record',
+      { method: 'POST', headers: auth, body: JSON.stringify(request) },
+      env,
+    );
+    const retryBody = (await retried.json()) as { chunks_indexed: number };
+
+    expect(failed.status).toBe(500);
+    expect(ragChunkCountAfterFailure).toBe(1);
+    expect(kbChunkCountAfterFailure).toBe(1);
+    expect(vectorCountAfterFailure).toBe(1);
+    expect(retried.status).toBe(201);
+    expect(retryBody.chunks_indexed).toBe(1);
+    expect(ragRepo.chunks.size).toBe(1);
+    expect(metadata.chunks.size).toBe(1);
+    expect(vectorize.vectors.size).toBe(1);
+  });
+
   it('lists Cloudflare-supported sources and imports URL sources into R2/D1', async () => {
     const metadata = new MemoryMetadataRepository();
     const rawDocs = new FakeR2Bucket();

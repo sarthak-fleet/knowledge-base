@@ -1214,6 +1214,13 @@ async function sha256Hex(blob: ArrayBuffer): Promise<string> {
   return hex(await crypto.subtle.digest('SHA-256', blob));
 }
 
+async function deterministicId(prefix: string, value: string): Promise<string> {
+  const bytes = new TextEncoder().encode(value);
+  const buffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+  return `${prefix}_${(await sha256Hex(buffer)).slice(0, 32)}`;
+}
+
 function percentile(sorted: number[], p: number): number {
   if (sorted.length === 0) return 0;
   const index = Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1);
@@ -3388,8 +3395,12 @@ export function createApp(options: AppOptions = {}) {
       const content = input.content.trim();
       if (!content) continue;
       if (content.length > MAX_DOC_SIZE) throw new Error('document content too large');
-      const document = await repo.createDocument({
-        id: crypto.randomUUID(),
+      const documentId = input.external_id
+        ? await deterministicId('doc', `${tenant}:${indexId}:${input.external_id}`)
+        : crypto.randomUUID();
+      const existingDocument = await repo.getDocument(tenant, documentId);
+      const document = existingDocument ?? await repo.createDocument({
+        id: documentId,
         tenant,
         indexId,
         externalId: input.external_id,
@@ -3397,15 +3408,21 @@ export function createApp(options: AppOptions = {}) {
         metadata: input.metadata,
       });
       const chunkContents = chunkText(content, chunking);
-      const chunkRows: CreateChunkInput[] = chunkContents.map((chunk, i) => ({
-        id: crypto.randomUUID(),
-        tenant,
-        indexId,
-        documentId: document.id,
-        content: chunk,
-        chunkIndex: i,
-        metadata: input.metadata,
-      }));
+      const chunkRows: CreateChunkInput[] = [];
+      for (let i = 0; i < chunkContents.length; i += 1) {
+        const chunk = chunkContents[i] ?? '';
+        chunkRows.push({
+          id: input.external_id
+            ? await deterministicId('chk', `${tenant}:${indexId}:${input.external_id}:${i}:${chunk}`)
+            : crypto.randomUUID(),
+          tenant,
+          indexId,
+          documentId: document.id,
+          content: chunk,
+          chunkIndex: i,
+          metadata: input.metadata,
+        });
+      }
       pendingChunks.push(...chunkRows);
       pendingChunkContents.push(...chunkContents);
       out.push({ document_id: document.id, chunks: chunkRows });
@@ -4458,9 +4475,9 @@ export function createApp(options: AppOptions = {}) {
       throw error;
     }
     const chunkPreview = chunkPreviewFromChunks(ingested.flatMap((entry) => entry.chunks));
-    await metadataRepo.insertKbChunks(ingested.flatMap((entry) =>
-      entry.chunks.map((chunk) => ({
-        id: crypto.randomUUID(),
+    await metadataRepo.insertKbChunks((await Promise.all(ingested.flatMap((entry) =>
+      entry.chunks.map(async (chunk) => ({
+        id: await deterministicId('kbchk', `${file.id}:${chunk.id}`),
         project: tenant,
         domain,
         fileId: file.id,
@@ -4471,7 +4488,7 @@ export function createApp(options: AppOptions = {}) {
         contentHash,
         metadata: chunk.metadata,
       })),
-    ));
+    ))));
     const structured = await metadataRepo.recordStructuredEntities({
       project: tenant,
       domain,
