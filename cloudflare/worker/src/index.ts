@@ -4520,7 +4520,12 @@ export function createApp(options: AppOptions = {}) {
       structuredFailure = classifyIngestFailure(error);
     }
     await metadataRepo.setFileStatus(tenant, file.id, 'ready');
-    await clearKbDomainCaches(c.env, tenant, domain);
+    let cacheClearFailure: JsonRecord | null = null;
+    try {
+      await clearKbDomainCaches(c.env, tenant, domain);
+    } catch (error) {
+      cacheClearFailure = classifyIngestFailure(error);
+    }
     return c.json({
       project: tenant,
       kind: domain,
@@ -4534,6 +4539,7 @@ export function createApp(options: AppOptions = {}) {
       structured,
       chunk_metadata_failure_classification: chunkMetadataFailure,
       structured_failure_classification: structuredFailure,
+      cache_clear_failure_classification: cacheClearFailure,
       idempotency_key: body.idempotency_key ?? contentHash,
       ingest_safety: ingestSafetyEvidence({
         idempotencyKey: body.idempotency_key,
