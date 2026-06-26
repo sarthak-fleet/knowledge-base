@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const FLEET_ROOT = resolve(REPO_ROOT, '..');
-const DEFAULT_FREE_AI_REPO = resolve(FLEET_ROOT, 'free-ai');
+export const DEFAULT_FREE_AI_REPO = resolve(FLEET_ROOT, 'free-ai');
 
 export const REQUIRED_MODELS = [
   { id: 'gemini-embedding-001', provider: 'gemini', dimensions: 1536, aliases: ['text-embedding-3-small', 'text-embedding-3-large', 'text-embedding-004'] },
