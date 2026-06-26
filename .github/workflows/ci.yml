@@ -21,5 +21,15 @@ jobs:
           cache: pnpm
           cache-dependency-path: cloudflare/worker/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
+      # predeploy:local audits fleet consumer/sibling repos on disk (free-ai
+      # embedding contract, linkchat/starboard RAG integrations). CI checks out
+      # knowledge-base alone, so clone the (public) siblings into the fleet root
+      # next to this checkout before the audits run.
+      - name: Check out sibling fleet repos for predeploy audits
+        working-directory: ${{ runner.workspace }}
+        run: |
+          for repo in free-ai karte starboard; do
+            git clone --depth 1 "https://github.com/sarthak-fleet/$repo.git" || echo "warn: could not clone $repo"
+          done
       - run: pnpm run predeploy:local -- --json
       - run: pnpm run gaps:full-port -- --json
