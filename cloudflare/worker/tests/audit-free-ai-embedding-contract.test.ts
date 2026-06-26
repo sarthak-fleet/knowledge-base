@@ -1,8 +1,17 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { auditFreeAiEmbeddingContract } from '../scripts/audit-free-ai-embedding-contract.mjs';
+import {
+  auditFreeAiEmbeddingContract,
+  DEFAULT_FREE_AI_REPO,
+} from '../scripts/audit-free-ai-embedding-contract.mjs';
+
+// The "current sibling" check reads the real free-ai repo on disk (fleet sibling).
+// It runs in local dev where free-ai is checked out alongside; CI checks out
+// knowledge-base alone, so skip it there. The fixture-based tests below still
+// cover the audit logic.
+const siblingFreeAiPresent = existsSync(DEFAULT_FREE_AI_REPO);
 
 function makeFreeAiRepo() {
   const freeAiRepo = mkdtempSync(resolve(tmpdir(), 'kb-free-ai-contract-'));
@@ -55,7 +64,7 @@ const embeddings = EMBEDDING_CANDIDATES.map((candidate) => ({
 }
 
 describe('audit-free-ai-embedding-contract', () => {
-  it('passes for the current sibling free-ai contract', () => {
+  it.skipIf(!siblingFreeAiPresent)('passes for the current sibling free-ai contract', () => {
     const report = auditFreeAiEmbeddingContract();
 
     expect(report.ok).toBe(true);
