@@ -57,6 +57,8 @@ describe('a-plus-proof', () => {
     })).toMatchObject({
       base_url: 'https://kb.example',
       domain: 'manuals',
+      benchmark_cache_mode: 'default',
+      benchmark_warmup: 0,
       continue_after_readiness_failure: false,
       steps: [
         'deploy-readiness',
@@ -93,6 +95,8 @@ describe('a-plus-proof', () => {
     })).toMatchObject({
       base_url: 'https://kb.example',
       domain: 'manuals',
+      benchmark_cache_mode: 'bypass_read_write',
+      benchmark_warmup: 1,
       steps: [
         'deploy-readiness',
         'consumer-auth-smokes',
@@ -309,10 +313,12 @@ describe('a-plus-proof', () => {
       },
       topK: 5,
       sessionIdPrefix: 'proof:manuals:1',
+      cacheMode: 'bypass_read_write',
     });
 
     expect(calls[0]?.body).toMatchObject({
       session_id_prefix: 'proof:manuals:1',
+      cache_mode: 'bypass_read_write',
     });
   });
 

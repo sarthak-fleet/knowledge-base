@@ -38,6 +38,7 @@ describe('predeploy-local', () => {
       'python-runtime-retirement',
       'external-rag-service-references',
       'consumer-rag-integrations',
+      'consumer-public-smoke',
       'typed-client-contract',
       'consumer-cloudflare-builds',
       'free-ai-embedding-contract',

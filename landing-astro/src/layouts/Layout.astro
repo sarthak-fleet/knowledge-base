@@ -1,0 +1,56 @@
+---
+import '@/styles/landing.css';
+import '@fontsource-variable/geist';
+import '@fontsource-variable/geist-mono';
+
+interface Props {
+  title: string;
+  description: string;
+}
+
+const { title, description } = Astro.props;
+
+const SITE_URL = 'https://knowledgebase-landing.pages.dev';
+const APP_URL = 'https://knowledgebase-app.sarthakagrawal927.workers.dev';
+const API_URL = 'https://knowledgebase.sarthakagrawal927.workers.dev/v1/kb/search';
+---
+
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta name="application-name" content="Knowledgebase" />
+    <meta
+      name="keywords"
+      content="private search, RAG, cited answers, agent search, knowledge base, Cloudflare Workers"
+    />
+
+    <link rel="canonical" href={SITE_URL} />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content={SITE_URL} />
+    <meta property="og:site_name" content="Knowledgebase" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+
+    <style is:inline>
+      :root {
+        --font-geist-sans: 'Geist Variable', system-ui, -apple-system, sans-serif;
+        --font-geist-mono: 'Geist Mono Variable', ui-monospace, Menlo, monospace;
+      }
+      html.dark { color-scheme: dark; }
+      body { margin: 0; }
+    </style>
+  </head>
+  <body class="antialiased">
+    <slot />
+  </body>
+</html>

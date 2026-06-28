@@ -9,6 +9,22 @@ For product integrations, use the dependency-free typed client in
 calls. `pnpm run audit:client-contract -- --require-complete` keeps the typed
 custom-input, search, and query contract present.
 
+## Frontend surfaces
+
+This repo has three frontend surfaces, each independently deployed:
+
+| Surface | Path | Stack | Deploy |
+| --- | --- | --- | --- |
+| **Landing page** | `landing-astro/` | Astro (static) → Cloudflare Pages | `https://knowledgebase-landing.pages.dev` |
+| **Dashboard app** | `app/` | Next.js 16 → Cloudflare Workers (OpenNext) | `https://knowledgebase-app.sarthakagrawal927.workers.dev` |
+| **Operator testing UI** | Worker `/` and `/ui` | Inline HTML in Worker | `https://knowledgebase.sarthakagrawal927.workers.dev/ui` |
+
+The landing page is the public marketing surface. The dashboard app is the
+operator/admin UI for managing domains, ingesting files, running queries,
+and viewing evals — it talks to this Worker's `/v1/*` API from the browser
+using a user-provided service key. The Worker `/ui` remains as the
+low-level operator testing surface for direct API control.
+
 ## Local Checks
 
 ```bash
@@ -87,8 +103,9 @@ embedding-model selector and custom-input `/v1/kb/*` controls.
 Run `pnpm run predeploy:local` before the real deploy. It runs Worker
 tests/typecheck, binding and D1 migration preflight, Python runtime retirement audit, the
 no-external-`rag-service` reference guard, the Linkchat/Starboard consumer
-knowledgebase RAG integration audit, local Linkchat/Starboard Cloudflare bundle
-builds, the local `../../../free-ai` embedding catalog and cost-audited
+knowledgebase RAG integration audit, deployed public Karte demo chat and
+Starboard app smoke, local Linkchat/Starboard Cloudflare bundle builds, the
+local `../../../free-ai` embedding catalog and cost-audited
 Cloudflare deploy-script audit, the upstream free-ai cost/type/test check, the
 Vectorize embedding binding selectability audit, the
 full-port gap matrix, the no-network NVDA scanned-PDF OCR eval payload dry-run,
@@ -159,13 +176,15 @@ The smoke first checks authenticated `/v1/healthz` and requires
 `deploy_fingerprint` before creating the temporary index; it still mutates and
 spends embedding calls after that gate, so it is intentionally not part of
 `predeploy:local`. The release plan keeps consumer proof split into targeted
-re-runs and live proof: local source audit (`audit:consumer-rag-integrations`)
-and local Cloudflare consumer builds (`build:consumer-cloudflare`, which runs
-`../../../karte` `cf:build` and `../../../starboard` `build:cf`) are already
-included in `predeploy:local` and can be rerun directly after consumer-only
-changes; approved consumer deploys (`../../../karte` and `../../../starboard`
-`deploy:cf`) and manual deployed consumer smoke for karte profile memory plus
-Starboard sync/search remain separate live steps. The local
+re-runs and live proof: local source audit (`audit:consumer-rag-integrations`),
+public consumer smoke (`smoke:consumer-auth -- --json`), and local Cloudflare
+consumer builds (`build:consumer-cloudflare`, which runs `../../../karte`
+`cf:build` and `../../../starboard` `build:cf`) are already included in
+`predeploy:local` and can be rerun directly after consumer-only changes;
+approved consumer deploys (`../../../karte` and `../../../starboard`
+`deploy:cf`) and authenticated account-flow smoke for karte profile memory plus
+Starboard sync/search remain separate live steps that require
+`KARTE_SESSION_COOKIE` and `STARBOARD_SESSION_COOKIE`. The local
 consumer audit proves karte's profile-memory create/ingest/delete/search client
 contract including document content/metadata and query/top_k payloads, plus
 Starboard's user-scoped semantic search and ingest content/metadata contract,
@@ -474,7 +493,8 @@ candidate set before returning results. Lexical timing reports
 `lexical_scoring: "bm25_fuzzy_sparse_v3"` and `lexical_prefilter:
 "chunk_cache_full_scan"` when that zero-AI sparse scorer is used; hot
 lexical/hybrid queries reuse the in-Worker chunk cache instead of issuing D1
-LIKE prefilter scans.
+LIKE prefilter scans. The chunk cache stores a prepared sparse-token corpus, so
+non-query-cache lexical misses do not re-tokenize every cached chunk.
 `semantic` mode first checks for strong sparse evidence (`retrieval:
 "semantic_lexical_fast_path"`) and returns that zero-AI result before embedding
 or Vectorize when the lexical score and overlap are high enough. Weak sparse
@@ -647,6 +667,12 @@ Use `--index-id <id>` to benchmark an existing populated index. Add `--cleanup` 
 when the script created the benchmark index and you want it deleted after the run.
 Fresh-index runs wait 15 seconds after ingest by default so Vectorize can make
 newly-upserted vectors queryable before accuracy is scored.
+Use `--warmup <n>` to run unmeasured passes before collecting latency samples.
+Use `--cache-mode bypass-read-write` when you need non-cache latency evidence:
+the benchmark skips query/answer result cache reads and avoids writing synthetic
+benchmark payloads back into the shared query cache. Embedding cache still stays
+available, so repeated semantic proof runs do not spend extra embedding calls
+just to prove retrieval-path cache misses.
 
 ## Operator Performance Report
 
@@ -700,7 +726,18 @@ inventory, lexical `kb-search`, semantic `kb-query`, and the A/A+ scorecard.
 `pnpm run proof:s` uses the S-grade consumer fixture, seeds it through
 `/v1/kb/ingest/text`, and repeats deterministic query evals to produce enough
 cached trace/eval evidence for observability grading; repeated eval artifacts
-are written to `query-evals.json`.
+are written to `query-evals.json`. S proof benchmarks run with one warmup pass
+and `cache_mode: "bypass_read_write"` so the retrieval-performance gate has
+measured non-cache samples for lexical `kb-search` and semantic `kb-query`
+without globally disabling production caches. Retrieval-performance S uses
+server-owned timing for the hard gate and reports client-observed p95
+separately, so local network RTT spikes do not downgrade a Worker path whose
+server-side non-cache timing is still S. The S proof also records public
+consumer smoke evidence for Karte's demo chat endpoint and Starboard's public
+app. Cookie-backed Karte profile-memory mutation and Starboard sync/search
+smokes remain separate authenticated account-flow evidence; missing
+`KARTE_SESSION_COOKIE` or `STARBOARD_SESSION_COOKIE` is reported as skipped
+instead of capping the public consumer reliability grade.
 The benchmark input must include at least two labeled queries with
 `expected_contains`, `expected_document_ids`, or `expected_chunk_ids`; invalid
 proof inputs fail locally before readiness or live requests. Use `--dry-run` to
@@ -753,6 +790,8 @@ RAG_SERVICE_KEY=<service-key> pnpm run benchmark:rag -- \
   --surface kb-search \
   --domain <domain> \
   --mode lexical \
+  --warmup 1 \
+  --cache-mode bypass-read-write \
   --repeat 5 \
   > /tmp/kb-benchmark-lexical.json
 
@@ -761,6 +800,8 @@ RAG_SERVICE_KEY=<service-key> pnpm run benchmark:rag -- \
   --surface kb-query \
   --domain <domain> \
   --mode semantic \
+  --warmup 1 \
+  --cache-mode bypass-read-write \
   --repeat 5 \
   > /tmp/kb-benchmark-semantic.json
 

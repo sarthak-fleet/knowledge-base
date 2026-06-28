@@ -13,8 +13,10 @@ Options:
   --surface <surface>    index, kb-search, or kb-query; default index
   --domain <domain>      Required for kb-search and kb-query
   --repeat <n>           Number of query passes; default 3
+  --warmup <n>           Warmup query passes before measured samples; default 0
   --top-k <n>            Query top_k; default 5
   --mode <mode>          Query mode: auto, lexical, semantic, or hybrid; default auto
+  --cache-mode <mode>    default, bypass-read, or bypass-read-write; default default
   --settle-ms <n>        Wait after ingest before querying; default 15000 when creating an index
   --cleanup              Delete an index created by this benchmark at the end
   --dry-run              Validate input and print the planned run without network calls`);
@@ -30,8 +32,10 @@ function parseArgs(argv) {
     surface: 'index',
     domain: '',
     repeat: 3,
+    warmup: 0,
     topK: 5,
     mode: 'auto',
+    cacheMode: 'default',
     settleMs: 15000,
     cleanup: false,
     dryRun: false,
@@ -58,8 +62,10 @@ function parseArgs(argv) {
     else if (arg === '--surface') out.surface = parseSurface(value);
     else if (arg === '--domain') out.domain = value.trim();
     else if (arg === '--repeat') out.repeat = parsePositiveInteger(value, '--repeat');
+    else if (arg === '--warmup') out.warmup = parseNonNegativeInteger(value, '--warmup');
     else if (arg === '--top-k') out.topK = parsePositiveInteger(value, '--top-k');
     else if (arg === '--mode') out.mode = parseMode(value);
+    else if (arg === '--cache-mode') out.cacheMode = parseCacheMode(value);
     else if (arg === '--settle-ms') out.settleMs = parsePositiveInteger(value, '--settle-ms');
     else throw new Error(`unknown argument: ${arg}`);
   }
@@ -85,9 +91,23 @@ function parseMode(value) {
   return mode;
 }
 
+function parseCacheMode(value) {
+  const mode = String(value || '').trim().replace(/-/g, '_');
+  if (!['default', 'bypass_read', 'bypass_read_write'].includes(mode)) {
+    throw new Error('--cache-mode must be default, bypass-read, or bypass-read-write');
+  }
+  return mode;
+}
+
 function parsePositiveInteger(value, label) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed) || parsed < 1) throw new Error(`${label} must be a positive integer`);
+  return parsed;
+}
+
+function parseNonNegativeInteger(value, label) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) throw new Error(`${label} must be a non-negative integer`);
   return parsed;
 }
 
@@ -231,29 +251,32 @@ export function scoreResults(expectation, results) {
   });
 }
 
-function benchmarkRequest({ baseUrl, indexId, surface, domain, query, topK, mode }) {
+function benchmarkRequest({ baseUrl, indexId, surface, domain, query, topK, mode, cacheMode }) {
+  const cache = cacheMode && cacheMode !== 'default' ? { cache_mode: cacheMode } : {};
   if (surface === 'kb-search') {
     return {
       url: `${baseUrl}/v1/kb/search`,
-      body: { domain, query: query.query, top_k: topK, mode },
+      body: { domain, query: query.query, top_k: topK, mode, ...cache },
     };
   }
   if (surface === 'kb-query') {
     return {
       url: `${baseUrl}/v1/kb/query`,
-      body: { domain, question: query.query, top_k: topK, mode, answer_mode: 'extractive' },
+      body: { domain, question: query.query, top_k: topK, mode, answer_mode: 'extractive', ...cache },
     };
   }
   return {
     url: `${baseUrl}/v1/indexes/${indexId}/query`,
-    body: { query: query.query, top_k: topK, mode },
+    body: { query: query.query, top_k: topK, mode, ...cache },
   };
 }
 
 export async function runBenchmark(options) {
   const repeat = Math.max(1, options.repeat || 3);
+  const warmup = Math.max(0, options.warmup || 0);
   const topK = Math.max(1, options.topK || 5);
   const mode = parseMode(options.mode || 'auto');
+  const cacheMode = parseCacheMode(options.cacheMode || 'default');
   const surface = parseSurface(options.surface || 'index');
   const domain = String(options.domain || '').trim();
   const fetchImpl = options.fetchImpl ?? fetch;
@@ -269,7 +292,10 @@ export async function runBenchmark(options) {
       surface,
       domain: domain || null,
       mode,
-      planned_requests: input.queries.length * repeat,
+      cache_mode: cacheMode,
+      warmup,
+      planned_requests: input.queries.length * (repeat + warmup),
+      planned_measured_requests: input.queries.length * repeat,
     };
   }
 
@@ -306,6 +332,25 @@ export async function runBenchmark(options) {
   let scored = 0;
   let cacheHits = 0;
   try {
+    for (let pass = 0; pass < warmup; pass += 1) {
+      for (const query of input.queries) {
+        const request = benchmarkRequest({
+          baseUrl: options.baseUrl,
+          indexId,
+          surface,
+          domain,
+          query,
+          topK,
+          mode,
+          cacheMode,
+        });
+        await requestJson(fetchImpl, request.url, {
+          key: options.key,
+          method: 'POST',
+          body: request.body,
+        });
+      }
+    }
     for (let pass = 0; pass < repeat; pass += 1) {
       for (const query of input.queries) {
         const started = performance.now();
@@ -317,6 +362,7 @@ export async function runBenchmark(options) {
           query,
           topK,
           mode,
+          cacheMode,
         });
         const { payload, cache, timing } = await requestJson(fetchImpl, request.url, {
           key: options.key,
@@ -366,8 +412,10 @@ export async function runBenchmark(options) {
     surface,
     domain: domain || null,
     repeat,
+    warmup,
     top_k: topK,
     mode,
+    cache_mode: cacheMode,
     latency: summarizeLatencies(samples),
     server_latency: summarizeLatencies(serverSamples),
     cache_latency: {

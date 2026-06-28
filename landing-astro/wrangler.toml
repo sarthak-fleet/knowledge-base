@@ -1,0 +1,7 @@
+# Cloudflare Pages config for the knowledgebase landing-astro project.
+#
+# Pure-static deploy (output: "static" in astro.config.mjs).
+# Deploy with: cd landing-astro && wrangler pages deploy dist
+name = "knowledgebase-landing"
+compatibility_date = "2026-06-20"
+pages_build_output_dir = "dist"

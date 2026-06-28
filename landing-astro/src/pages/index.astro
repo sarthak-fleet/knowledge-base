@@ -1,0 +1,512 @@
+---
+import Layout from '@/layouts/Layout.astro';
+
+const TITLE = 'Knowledgebase — Cited answers from your private corpus';
+const DESCRIPTION =
+  'Ingest PDFs, spreadsheets, nested JSON, CSV, HTML, DOCX, scanned images — Knowledgebase infers schemas, extracts entities, and gives your agents cited search over any structure. 12+ formats, lexical p95 99ms, 1.0 citation rate.';
+
+const APP_URL = 'https://knowledgebase-app.sarthakagrawal927.workers.dev';
+const API_DOCS = 'https://github.com/sarthak-fleet/knowledge-base';
+---
+
+<Layout title={TITLE} description={DESCRIPTION}>
+  <div
+    class="relative flex min-h-svh w-full flex-col items-center overflow-x-hidden"
+    style="background-color: var(--background);"
+  >
+    {/* ── Nav ──────────────────────────────────────────────────── */}
+    <nav class="relative z-10 flex w-full max-w-6xl items-center justify-between px-5 py-5 sm:px-6">
+      <div class="flex items-center gap-2.5">
+        <span
+          class="flex size-8 items-center justify-center rounded-lg font-mono text-sm font-bold"
+          style="background-color: var(--accent); color: var(--accent-foreground);"
+        >KB</span>
+        <span class="text-lg font-semibold tracking-tight text-foreground">Knowledgebase</span>
+      </div>
+      <div class="flex items-center gap-6 text-sm">
+        <a href="#how" class="nav-link text-muted-foreground hover:text-foreground">How it works</a>
+        <a href="#demo" class="nav-link text-muted-foreground hover:text-foreground">Demo</a>
+        <a href="#api" class="nav-link text-muted-foreground hover:text-foreground">API</a>
+        <a
+          href={APP_URL}
+          class="inline-flex h-9 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-all hover:bg-primary/90 hover:scale-[1.02]"
+        >Open dashboard</a>
+      </div>
+    </nav>
+
+    <main
+      class="relative z-10 flex w-full max-w-6xl flex-col items-center gap-24 px-5 py-12 sm:px-6 sm:py-20"
+      style="font-family: var(--font-geist-sans);"
+    >
+      {/* ── Hero ──────────────────────────────────────────────────── */}
+      <section class="flex w-full max-w-3xl flex-col items-start gap-8">
+        <span class="reveal reveal-hidden reveal-delay-1 inline-flex items-center gap-2 rounded-full border bg-card/80 px-3 py-1 text-xs text-muted-foreground backdrop-blur-sm">
+          <span class="inline-block size-1.5 rounded-full" style="background-color: var(--accent);"></span>
+          12+ formats · nested JSON · schema inference
+        </span>
+
+        <h1 class="reveal reveal-hidden reveal-delay-2 text-balance text-4xl font-bold tracking-tight text-foreground sm:text-5xl lg:text-6xl" style="text-wrap: balance;">
+          Any structure in. Cited answers out.
+        </h1>
+
+        <p class="reveal reveal-hidden reveal-delay-3 max-w-xl text-pretty text-base text-muted-foreground sm:text-lg" style="text-wrap: pretty;">
+          Drop in PDFs, spreadsheets, nested JSON, CSV, HTML, DOCX,
+          scanned images — Knowledgebase detects the structure, infers
+          schemas, extracts entities, and gives your agents cited
+          search over the lot.
+        </p>
+
+        {/* Stats with count-up animation */}
+        <div class="reveal reveal-hidden reveal-delay-4 flex flex-wrap gap-x-8 gap-y-3 text-sm">
+          <div class="flex flex-col">
+            <span class="stat-number font-mono text-2xl font-bold text-foreground" data-count-to="99" data-suffix="ms">0ms</span>
+            <span class="text-muted-foreground">lexical p95</span>
+          </div>
+          <div class="flex flex-col">
+            <span class="stat-number font-mono text-2xl font-bold text-foreground" data-count-to="550" data-suffix="ms">0ms</span>
+            <span class="text-muted-foreground">semantic p95</span>
+          </div>
+          <div class="flex flex-col">
+            <span class="stat-number font-mono text-2xl font-bold text-foreground" data-count-to="100" data-suffix="%" data-divisor="100">0%</span>
+            <span class="text-muted-foreground">citation rate</span>
+          </div>
+          <div class="flex flex-col">
+            <span class="stat-number font-mono text-2xl font-bold text-foreground" data-count-to="6">0</span>
+            <span class="text-muted-foreground">embedding models</span>
+          </div>
+        </div>
+
+        <div class="reveal reveal-hidden reveal-delay-5 flex w-full flex-col items-start gap-4 pt-2">
+          <a
+            href={APP_URL}
+            class="cta-primary inline-flex h-12 items-center justify-center gap-2 rounded-md px-8 text-base font-medium transition-all hover:scale-[1.02] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            style="background-color: var(--accent); color: var(--accent-foreground);"
+          >
+            Open the dashboard
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="size-4" aria-hidden="true">
+              <path d="M5 12h14" /><path d="m12 5 7 7-7 7" />
+            </svg>
+          </a>
+          <a
+            href="#demo"
+            class="text-sm font-medium text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+          >See it in action →</a>
+        </div>
+      </section>
+
+      {/* ── Demo ──────────────────────────────────────────────────── */}
+      <section id="demo" class="reveal reveal-hidden flex w-full max-w-4xl flex-col gap-6">
+        <h2 class="text-sm font-semibold uppercase tracking-wide text-muted-foreground">A query, answered with evidence</h2>
+        <div class="overflow-hidden rounded-xl border bg-card/80 backdrop-blur-sm">
+          {/* Query bar */}
+          <div class="flex items-center gap-3 border-b px-5 py-4">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="size-4 text-muted-foreground" aria-hidden="true">
+              <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
+            </svg>
+            <span class="font-mono text-sm text-foreground">What risk factors did NVIDIA disclose in 2024?</span>
+          </div>
+          {/* Answer */}
+          <div class="answer-reveal px-5 py-4">
+            <p class="text-pretty text-sm leading-relaxed text-foreground">
+              NVIDIA identified supply chain concentration in TSMC as a
+              primary risk, citing dependency on a single foundry for
+              all GPU manufacturing. The company also flagged U.S.
+              export controls on AI accelerators as material to revenue.
+            </p>
+          </div>
+          {/* Citations */}
+          <div class="border-t px-5 py-3">
+            <div class="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Sources</div>
+            <div class="flex flex-col gap-2">
+              <div class="citation-item citation-item-1 flex items-center gap-3 rounded-lg border bg-background/50 px-3 py-2 text-xs">
+                <span class="flex size-5 shrink-0 items-center justify-center rounded font-mono font-bold" style="background-color: var(--accent); color: var(--accent-foreground);">1</span>
+                <span class="font-mono text-muted-foreground">NVDA_10-K_2024.pdf</span>
+                <span class="ml-auto text-muted-foreground">chunk 47 · score 0.91</span>
+              </div>
+              <div class="citation-item citation-item-2 flex items-center gap-3 rounded-lg border bg-background/50 px-3 py-2 text-xs">
+                <span class="flex size-5 shrink-0 items-center justify-center rounded font-mono font-bold" style="background-color: var(--accent); color: var(--accent-foreground);">2</span>
+                <span class="font-mono text-muted-foreground">NVDA_10-K_2024.pdf</span>
+                <span class="ml-auto text-muted-foreground">chunk 52 · score 0.87</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── Formats showcase ──────────────────────────────────────── */}
+      <section id="how" class="reveal reveal-hidden flex w-full max-w-4xl flex-col gap-10">
+        <h2 class="text-2xl font-bold tracking-tight text-foreground">Every format. Every structure.</h2>
+        <p class="max-w-xl text-sm text-muted-foreground">
+          One ingestion pipeline handles documents, spreadsheets,
+          structured data, and images. No pre-processing, no ETL, no
+          Python runtime — parsing is TypeScript-native on Cloudflare
+          Workers.
+        </p>
+
+        {/* Format grid */}
+        <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {/* Documents */}
+          <div class="card-lift reveal reveal-hidden reveal-delay-1 flex flex-col gap-3 rounded-xl border bg-card/80 p-5 backdrop-blur-sm">
+            <div class="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-4" style="color: var(--accent);" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+              Documents
+            </div>
+            <div class="flex flex-wrap gap-1.5">
+              <span class="rounded-md border border-border bg-background/50 px-2 py-1 font-mono text-xs text-foreground">PDF</span>
+              <span class="rounded-md border border-border bg-background/50 px-2 py-1 font-mono text-xs text-foreground">HTML</span>
+              <span class="rounded-md border border-border bg-background/50 px-2 py-1 font-mono text-xs text-foreground">DOCX</span>
+              <span class="rounded-md border border-border bg-background/50 px-2 py-1 font-mono text-xs text-foreground">PPTX</span>
+              <span class="rounded-md border border-border bg-background/50 px-2 py-1 font-mono text-xs text-foreground">TXT</span>
+              <span class="rounded-md border border-border bg-background/50 px-2 py-1 font-mono text-xs text-foreground">MD</span>
+            </div>
+            <p class="text-xs leading-relaxed text-muted-foreground">
+              Digital PDF text + table rows. Scanned PDF OCR via
+              Cloudflare vision models. HTML tag stripping. DOCX
+              paragraphs. PPTX slide text.
+            </p>
+          </div>
+
+          {/* Spreadsheets */}
+          <div class="card-lift reveal reveal-hidden reveal-delay-2 flex flex-col gap-3 rounded-xl border bg-card/80 p-5 backdrop-blur-sm">
+            <div class="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-4" style="color: var(--accent);" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
+              Spreadsheets
+            </div>
+            <div class="flex flex-wrap gap-1.5">
+              <span class="rounded-md border border-border bg-background/50 px-2 py-1 font-mono text-xs text-foreground">XLSX</span>
+              <span class="rounded-md border border-border bg-background/50 px-2 py-1 font-mono text-xs text-foreground">CSV</span>
+            </div>
+            <p class="text-xs leading-relaxed text-muted-foreground">
+              XLSX rows with headers. CSV with quoted fields and
+              embedded commas. Each row becomes a searchable record
+              with inferred field types.
+            </p>
+          </div>
+
+          {/* Structured data */}
+          <div class="card-lift reveal reveal-hidden reveal-delay-3 flex flex-col gap-3 rounded-xl border bg-card/80 p-5 backdrop-blur-sm">
+            <div class="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-4" style="color: var(--accent);" aria-hidden="true"><path d="M3 3v18h18"/><path d="m7 14 4-4 4 4 5-5"/></svg>
+              Structured data
+            </div>
+            <div class="flex flex-wrap gap-1.5">
+              <span class="rounded-md border border-border bg-background/50 px-2 py-1 font-mono text-xs text-foreground">JSON</span>
+              <span class="rounded-md border border-border bg-background/50 px-2 py-1 font-mono text-xs text-foreground">NDJSON</span>
+              <span class="rounded-md border border-border bg-background/50 px-2 py-1 font-mono text-xs text-foreground">JSONL</span>
+            </div>
+            <p class="text-xs leading-relaxed text-muted-foreground">
+              Nested JSON flattened up to 6 levels deep. NDJSON/JSONL
+              line-by-line. Arrays of records extracted automatically.
+              Schema inference detects field types and relationships.
+            </p>
+          </div>
+
+          {/* Images */}
+          <div class="card-lift reveal reveal-hidden reveal-delay-4 flex flex-col gap-3 rounded-xl border bg-card/80 p-5 backdrop-blur-sm">
+            <div class="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-4" style="color: var(--accent);" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.5-3.5L12 17"/></svg>
+              Images & scanned PDFs
+            </div>
+            <div class="flex flex-wrap gap-1.5">
+              <span class="rounded-md border border-border bg-background/50 px-2 py-1 font-mono text-xs text-foreground">JPEG</span>
+              <span class="rounded-md border border-border bg-background/50 px-2 py-1 font-mono text-xs text-foreground">PNG</span>
+              <span class="rounded-md border border-border bg-background/50 px-2 py-1 font-mono text-xs text-foreground">WebP</span>
+              <span class="rounded-md border border-border bg-background/50 px-2 py-1 font-mono text-xs text-foreground">Scanned PDF</span>
+            </div>
+            <p class="text-xs leading-relaxed text-muted-foreground">
+              Vision OCR via Llama 3.2 Vision and Llama 4 Scout.
+              Embedded PDF images extracted and transcribed. Markdown
+              Conversion merges with vision output.
+            </p>
+          </div>
+
+          {/* Sources */}
+          <div class="card-lift reveal reveal-hidden reveal-delay-5 flex flex-col gap-3 rounded-xl border bg-card/80 p-5 backdrop-blur-sm">
+            <div class="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-4" style="color: var(--accent);" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+              Live sources
+            </div>
+            <div class="flex flex-wrap gap-1.5">
+              <span class="rounded-md border border-border bg-background/50 px-2 py-1 font-mono text-xs text-foreground">URL</span>
+              <span class="rounded-md border border-border bg-background/50 px-2 py-1 font-mono text-xs text-foreground">SEC EDGAR</span>
+            </div>
+            <p class="text-xs leading-relaxed text-muted-foreground">
+              Import from URLs or pull SEC filings by ticker and form
+              type. Auto-ingest stages jobs for queued processing.
+            </p>
+          </div>
+
+          {/* Free text */}
+          <div class="card-lift reveal reveal-hidden reveal-delay-6 flex flex-col gap-3 rounded-xl border bg-card/80 p-5 backdrop-blur-sm">
+            <div class="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-4" style="color: var(--accent);" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z"/></svg>
+              Free-form text
+            </div>
+            <div class="flex flex-wrap gap-1.5">
+              <span class="rounded-md border border-border bg-background/50 px-2 py-1 font-mono text-xs text-foreground">Inline text</span>
+              <span class="rounded-md border border-border bg-background/50 px-2 py-1 font-mono text-xs text-foreground">Records</span>
+            </div>
+            <p class="text-xs leading-relaxed text-muted-foreground">
+              Paste raw text or POST structured records directly via
+              the API. Schema-free domain text ingestion for notes,
+              transcripts, and unstructured knowledge.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* ── Schema inference ──────────────────────────────────────── */}
+      <section class="reveal reveal-hidden flex w-full max-w-4xl flex-col gap-6">
+        <h2 class="text-2xl font-bold tracking-tight text-foreground">Schemas inferred, not configured.</h2>
+        <p class="max-w-xl text-sm text-muted-foreground">
+          Upload a sample and Knowledgebase detects field types, entity
+          types, and cross-record relationships — then extracts
+          structured entities with provenance into a queryable graph.
+        </p>
+        <div class="grid gap-4 lg:grid-cols-2">
+          {/* Input */}
+          <div class="overflow-hidden rounded-xl border" style="background-color: var(--code-bg);">
+            <div class="flex items-center gap-2 border-b border-white/5 px-4 py-2.5">
+              <span class="font-mono text-xs text-muted-foreground">input.json</span>
+              <span class="ml-auto text-xs text-muted-foreground">nested, 3 levels</span>
+            </div>
+            <pre class="overflow-x-auto px-4 py-4 font-mono text-xs leading-relaxed" style="color: var(--code-text);">[
+  &#123;
+    <span style="color: var(--code-string);">"company"</span>: &#123;
+      <span style="color: var(--code-string);">"name"</span>: <span style="color: var(--code-string);">"NVIDIA"</span>,
+      <span style="color: var(--code-string);">"ticker"</span>: <span style="color: var(--code-string);">"NVDA"</span>
+    &#125;,
+    <span style="color: var(--code-string);">"filing"</span>: <span style="color: var(--code-string);">"10-K"</span>,
+    <span style="color: var(--code-string);">"risk_factors"</span>: [
+      <span style="color: var(--code-string);">"Supply chain concentration"</span>,
+      <span style="color: var(--code-string);">"Export controls"</span>
+    ]
+  &#125;
+]</pre>
+          </div>
+          {/* Inferred schema */}
+          <div class="overflow-hidden rounded-xl border bg-card/80 backdrop-blur-sm">
+            <div class="flex items-center gap-2 border-b border-border px-4 py-2.5">
+              <span class="font-mono text-xs text-muted-foreground">inferred_schema</span>
+              <span class="ml-auto rounded-md px-2 py-0.5 text-xs font-medium" style="background-color: var(--accent); color: var(--accent-foreground);">auto</span>
+            </div>
+            <div class="flex flex-col gap-3 px-4 py-4">
+              <div class="flex flex-col gap-1">
+                <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Entity: Filing</span>
+                <div class="flex flex-wrap gap-1.5">
+                  <span class="rounded-md border border-border bg-background/50 px-2 py-0.5 font-mono text-xs text-foreground">company.name: string</span>
+                  <span class="rounded-md border border-border bg-background/50 px-2 py-0.5 font-mono text-xs text-foreground">company.ticker: string</span>
+                  <span class="rounded-md border border-border bg-background/50 px-2 py-0.5 font-mono text-xs text-foreground">filing: string</span>
+                  <span class="rounded-md border border-border bg-background/50 px-2 py-0.5 font-mono text-xs text-foreground">risk_factors: string[]</span>
+                </div>
+              </div>
+              <div class="flex flex-col gap-1">
+                <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Relationships</span>
+                <div class="flex items-center gap-2 text-xs text-muted-foreground">
+                  <span class="rounded-md border border-border bg-background/50 px-2 py-0.5 font-mono text-foreground">Filing</span>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-3" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                  <span class="rounded-md border border-border bg-background/50 px-2 py-0.5 font-mono text-foreground">Company</span>
+                </div>
+              </div>
+              <div class="flex flex-col gap-1">
+                <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Queryable as</span>
+                <code class="font-mono text-xs text-foreground">counterparty: NVIDIA</code>
+                <code class="font-mono text-xs text-foreground">filing: 10-K</code>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── API preview ──────────────────────────────────────────── */}
+      <section id="api" class="reveal reveal-hidden flex w-full max-w-4xl flex-col gap-6">
+        <h2 class="text-2xl font-bold tracking-tight text-foreground">One API. Two endpoints.</h2>
+        <p class="max-w-xl text-sm text-muted-foreground">
+          Your agents call <code class="rounded bg-card px-1.5 py-0.5 font-mono text-xs">/v1/kb/search</code> for cited retrieval
+          or <code class="rounded bg-card px-1.5 py-0.5 font-mono text-xs">/v1/kb/query</code> for cited answers. Service-key auth, tenant isolation, streaming support.
+        </p>
+        <div class="overflow-hidden rounded-xl border" style="background-color: var(--code-bg);">
+          <div class="flex items-center gap-2 border-b border-white/5 px-4 py-2.5">
+            <span class="size-2.5 rounded-full bg-red-500/80"></span>
+            <span class="size-2.5 rounded-full bg-yellow-500/80"></span>
+            <span class="size-2.5 rounded-full bg-green-500/80"></span>
+            <span class="ml-2 font-mono text-xs text-muted-foreground">query.sh</span>
+          </div>
+          <pre class="overflow-x-auto px-4 py-4 font-mono text-xs leading-relaxed" style="color: var(--code-text);"><span style="color: var(--code-keyword);">curl</span> -X POST https://knowledgebase.sarthakagrawal927.workers.dev/v1/kb/query \
+  -H <span style="color: var(--code-string);">"Authorization: Bearer $RAG_SERVICE_KEY"</span> \
+  -H <span style="color: var(--code-string);">"Content-Type: application/json"</span> \
+  -d <span style="color: var(--code-string);">'&#123;
+    "domain": "sec",
+    "question": "What risk factors did NVIDIA disclose?",
+    "mode": "hybrid",
+    "answer_mode": "extractive"
+  &#125;'</span>
+
+<span style="color: var(--code-comment);"># → &#123; answer, citations: [&#123; chunk_id, score, document &#125;], ... &#125;</span></pre>
+        </div>
+      </section>
+
+      {/* ── Comparison ───────────────────────────────────────────── */}
+      <section class="reveal reveal-hidden flex w-full max-w-4xl flex-col gap-6">
+        <h2 class="text-2xl font-bold tracking-tight text-foreground">Why not generic chat RAG?</h2>
+        <div class="overflow-hidden rounded-xl border">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b bg-card/80 backdrop-blur-sm">
+                <th class="px-4 py-3 text-left font-semibold text-foreground"></th>
+                <th class="px-4 py-3 text-left font-semibold text-foreground">Generic chat RAG</th>
+                <th class="px-4 py-3 text-left font-semibold" style="color: var(--accent);">Knowledgebase</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-border">
+              <tr class="table-row-reveal" style="animation-delay: 0.1s;">
+                <td class="px-4 py-3 text-muted-foreground">Formats</td>
+                <td class="px-4 py-3 text-muted-foreground">PDF, TXT only</td>
+                <td class="px-4 py-3 font-medium text-foreground">12+ — PDF, DOCX, XLSX, JSON, CSV, images</td>
+              </tr>
+              <tr class="table-row-reveal" style="animation-delay: 0.2s;">
+                <td class="px-4 py-3 text-muted-foreground">Citations</td>
+                <td class="px-4 py-3 text-muted-foreground">Optional, often missing</td>
+                <td class="px-4 py-3 font-medium text-foreground">Every answer, chunk-level</td>
+              </tr>
+              <tr class="table-row-reveal" style="animation-delay: 0.3s;">
+                <td class="px-4 py-3 text-muted-foreground">Schemas</td>
+                <td class="px-4 py-3 text-muted-foreground">Flat text chunks</td>
+                <td class="px-4 py-3 font-medium text-foreground">Inferred, entity graph</td>
+              </tr>
+              <tr class="table-row-reveal" style="animation-delay: 0.4s;">
+                <td class="px-4 py-3 text-muted-foreground">Retrieval</td>
+                <td class="px-4 py-3 text-muted-foreground">Vector-only</td>
+                <td class="px-4 py-3 font-medium text-foreground">Lexical + semantic + hybrid</td>
+              </tr>
+              <tr class="table-row-reveal" style="animation-delay: 0.5s;">
+                <td class="px-4 py-3 text-muted-foreground">Verification</td>
+                <td class="px-4 py-3 text-muted-foreground">Extra LLM call</td>
+                <td class="px-4 py-3 font-medium text-foreground">Deterministic, zero AI</td>
+              </tr>
+              <tr class="table-row-reveal" style="animation-delay: 0.6s;">
+                <td class="px-4 py-3 text-muted-foreground">Latency</td>
+                <td class="px-4 py-3 text-muted-foreground">2-5s typical</td>
+                <td class="px-4 py-3 font-medium text-foreground">99ms lexical p95</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* ── Final CTA ────────────────────────────────────────────── */}
+      <section class="reveal reveal-hidden flex w-full max-w-3xl flex-col items-start gap-6 rounded-2xl border bg-card/80 p-8 backdrop-blur-sm sm:p-10" style="box-shadow: 0 0 60px oklch(0.72 0.14 180 / 0.08);">
+        <h2 class="text-2xl font-bold tracking-tight text-foreground">Give your agents a memory they can cite.</h2>
+        <p class="max-w-lg text-sm text-muted-foreground">
+          Create a domain, drop in any file — PDF, XLSX, nested JSON,
+          CSV, scanned images — and get a cited search endpoint in
+          under a minute. No ETL, no Python, no infrastructure.
+        </p>
+        <a
+          href={APP_URL}
+          class="cta-primary inline-flex h-12 items-center justify-center gap-2 rounded-md px-8 text-base font-medium transition-all hover:scale-[1.02]"
+          style="background-color: var(--accent); color: var(--accent-foreground);"
+        >
+          Open the dashboard
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="size-4" aria-hidden="true">
+            <path d="M5 12h14" /><path d="m12 5 7 7-7 7" />
+          </svg>
+        </a>
+      </section>
+
+      {/* ── Footer ────────────────────────────────────────────────── */}
+      <footer class="flex w-full max-w-3xl flex-col items-start gap-3 border-t pt-8 text-sm text-muted-foreground">
+        <p class="text-pretty">
+          Built by <a
+            href="https://github.com/sarthakagrawal927"
+            class="font-medium text-foreground underline-offset-4 hover:underline"
+            target="_blank"
+            rel="noopener noreferrer"
+          >Sarthak</a> because agents kept hallucinating over private
+          documents. Open source, runs on Cloudflare's free tier.
+        </p>
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+          <a
+            href={API_DOCS}
+            class="underline-offset-4 hover:text-foreground hover:underline"
+            target="_blank"
+            rel="noopener noreferrer"
+          >Source on GitHub</a>
+          <span aria-hidden="true">·</span>
+          <a
+            href={APP_URL}
+            class="underline-offset-4 hover:text-foreground hover:underline"
+          >Dashboard</a>
+          <span aria-hidden="true">·</span>
+          <span>Cloudflare Workers · D1 · Vectorize · R2</span>
+        </div>
+      </footer>
+    </main>
+  </div>
+
+  {/* ── Scroll reveal + count-up script ─────────────────────────── */}
+  <script>
+    // Reveal on scroll using IntersectionObserver.
+    // Elements with .reveal-hidden get .reveal-hidden removed when they
+    // enter the viewport. Content is visible by default (CSS .reveal
+    // is opacity:1), so this is progressive enhancement — if JS fails
+    // or IO is unsupported, everything shows.
+    (function() {
+      var reveals = document.querySelectorAll('.reveal-hidden');
+      if (!reveals.length || !('IntersectionObserver' in window)) {
+        reveals.forEach(function(el) { el.classList.remove('reveal-hidden'); });
+        return;
+      }
+      var observer = new IntersectionObserver(function(entries) {
+        entries.forEach(function(entry) {
+          if (entry.isIntersecting) {
+            entry.target.classList.remove('reveal-hidden');
+            observer.unobserve(entry.target);
+          }
+        });
+      }, { threshold: 0.1, rootMargin: '0px 0px -40px 0px' });
+      reveals.forEach(function(el) { observer.observe(el); });
+    })();
+
+    // Count-up animation for stat numbers.
+    // Uses requestAnimationFrame with ease-out-quart.
+    (function() {
+      var stats = document.querySelectorAll('.stat-number[data-count-to]');
+      if (!stats.length) return;
+
+      function animate(el) {
+        var target = parseInt(el.getAttribute('data-count-to'), 10);
+        var suffix = el.getAttribute('data-suffix') || '';
+        var divisor = parseInt(el.getAttribute('data-divisor'), 10) || 1;
+        var duration = 1200;
+        var start = null;
+
+        function step(timestamp) {
+          if (!start) start = timestamp;
+          var progress = Math.min((timestamp - start) / duration, 1);
+          // ease-out-quart
+          var eased = 1 - Math.pow(1 - progress, 4);
+          var value = Math.round(target * eased);
+          var display = divisor > 1 ? (value / divisor).toFixed(1) : value;
+          el.textContent = display + suffix;
+          if (progress < 1) requestAnimationFrame(step);
+        }
+        requestAnimationFrame(step);
+      }
+
+      if (!('IntersectionObserver' in window)) {
+        stats.forEach(animate);
+        return;
+      }
+      var statObserver = new IntersectionObserver(function(entries) {
+        entries.forEach(function(entry) {
+          if (entry.isIntersecting) {
+            animate(entry.target);
+            statObserver.unobserve(entry.target);
+          }
+        });
+      }, { threshold: 0.5 });
+      stats.forEach(function(el) { statObserver.observe(el); });
+    })();
+  </script>
+</Layout>

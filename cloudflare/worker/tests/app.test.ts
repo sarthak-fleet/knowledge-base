@@ -6659,6 +6659,32 @@ describe('knowledgebase RAG Worker app', () => {
     expect(aiCalls).toBe(0);
     expect(vectorQueries).toBe(0);
     expect(repo.listChunksForIndexCalls).toBe(1);
+
+    const secondQuery = await app.request(
+      `/v1/indexes/${index.id}/query`,
+      {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({
+          query: 'billing',
+          top_k: 1,
+          mode: 'lexical',
+          rerank: false,
+          mmr: false,
+        }),
+      },
+      env,
+    );
+    const secondTiming = JSON.parse(secondQuery.headers.get('X-RAG-Timing') ?? '{}');
+
+    expect(secondQuery.status).toBe(200);
+    expect(secondTiming).toMatchObject({
+      retrieval: 'lexical',
+      lexical_chunk_cache: 'hit',
+      lexical_prefilter: 'chunk_cache_full_scan',
+    });
+    expect(secondTiming.lexical_prepare_ms).toBeUndefined();
+    expect(repo.listChunksForIndexCalls).toBe(1);
   });
 
   it('caches knowledgebase domain index lookups across hot searches', async () => {

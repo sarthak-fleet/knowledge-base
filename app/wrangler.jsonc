@@ -1,0 +1,20 @@
+// Cloudflare Workers config for opennextjs-cloudflare deploy.
+// Run `pnpm deploy:cf` to publish.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "knowledgebase-app",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-06-20",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": {
+    "binding": "ASSETS",
+    "directory": ".open-next/assets"
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "vars": {
+    "NEXT_PUBLIC_RAG_SERVICE_URL": "https://knowledgebase.sarthakagrawal927.workers.dev"
+  }
+}

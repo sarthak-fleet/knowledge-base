@@ -17,6 +17,10 @@ describe('benchmark-rag', () => {
       'fixtures/benchmark.sample.json',
       '--mode',
       'lexical',
+      '--cache-mode',
+      'bypass-read-write',
+      '--warmup',
+      '2',
       '--surface',
       'kb-search',
       '--domain',
@@ -26,6 +30,8 @@ describe('benchmark-rag', () => {
       .toMatchObject({
         input: 'fixtures/benchmark.sample.json',
         mode: 'lexical',
+        cacheMode: 'bypass_read_write',
+        warmup: 2,
         surface: 'kb-search',
         domain: 'manuals',
         dryRun: true,
@@ -125,6 +131,58 @@ describe('benchmark-rag', () => {
       server_cache_latency: {
         hit: { count: 0 },
         non_cache: { count: 1, p95_ms: 12 },
+      },
+    });
+  });
+
+  it('passes cache bypass controls to live benchmark query requests', async () => {
+    const calls: Array<{ path: string; body: unknown }> = [];
+    const fetchImpl = async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const href = typeof url === 'string' ? url : url instanceof URL ? url.toString() : url.url;
+      calls.push({ path: new URL(href).pathname, body: init?.body ? JSON.parse(String(init.body)) : null });
+      return new Response(JSON.stringify({
+        data: [{ document_id: 'doc-1', chunk_id: 'chunk-1', chunk_content: 'alpha manual', score: 1 }],
+      }), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RAG-Cache': 'miss',
+          'X-RAG-Timing': '{"total_ms":12,"retrieval":"lexical","cache_mode":"bypass_read_write"}',
+        },
+      });
+    };
+
+    const result = await runBenchmark({
+      baseUrl: 'https://kb.example',
+      key: 'key-a',
+      input: { queries: [{ query: 'alpha', expected_contains: ['alpha'] }] },
+      surface: 'kb-search',
+      domain: 'manuals',
+      mode: 'lexical',
+      cacheMode: 'bypass_read_write',
+      warmup: 1,
+      repeat: 1,
+      fetchImpl,
+    });
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toEqual(calls[1]);
+    expect(calls[0]).toEqual({
+      path: '/v1/kb/search',
+      body: {
+        domain: 'manuals',
+        query: 'alpha',
+        top_k: 5,
+        mode: 'lexical',
+        cache_mode: 'bypass_read_write',
+      },
+    });
+    expect(result).toMatchObject({
+      cache_mode: 'bypass_read_write',
+      warmup: 1,
+      cache_hit_rate: 0,
+      server_timing: {
+        total_ms: { count: 1 },
       },
     });
   });

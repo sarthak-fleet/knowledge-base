@@ -208,6 +208,10 @@ Worker: Fleet consumer → Hono → free-ai/Workers AI embed → Vectorize query
 - **D1 migrations:** core RAG tables, query cache, **`0003_knowledgebase_metadata.sql`** (`kb_*` projects/domains/schemas/files/jobs/chunks/sessions/traces), **`0005_index_embedding_model.sql`** for per-index embedding model/provider metadata, **`0006_kb_domain_embedding_model.sql`** for selected-model metadata on KB domains before auto-index creation, and **`0007_embedding_cache.sql`** for cross-isolate normalized query embedding reuse.
 - **Eval maturity:** cross-domain 5×2 LLM eval matrix documented; methodology bugs caught and fixed (DuckDB route, env propagation, citation hygiene).
 - **Fleet cutover:** SaaS Maker, Linkchat, Starboard on service binding; production SaaS Maker knowledge tables empty — no backfill required before rollout.
+- **Frontend surfaces:** Astro landing deployed to Cloudflare Pages at
+  `https://knowledgebase-landing.pages.dev`; Next.js/OpenNext dashboard
+  deployed to Cloudflare Workers at
+  `https://knowledgebase-app.sarthakagrawal927.workers.dev`.
 - **CI:** Worker-local `pnpm run predeploy:local` is the active local gate;
   it wraps typecheck/tests, binding preflight, Python retirement audit, local
   no-external-`rag-service` reference guard, consumer source audit and
@@ -222,6 +226,8 @@ Worker: Fleet consumer → Hono → free-ai/Workers AI embed → Vectorize query
 | Product | Surface | Role |
 | --- | --- | --- |
 | Cloudflare RAG_SERVICE | Worker `/v1/*` + hosted `/ui` | Fleet-shared index/query/metadata API with tenant isolation |
+| Landing page | `https://knowledgebase-landing.pages.dev` (`landing-astro/`) | Public marketing surface for Private Agent Search |
+| Dashboard app | `https://knowledgebase-app.sarthakagrawal927.workers.dev` (`app/`) | Operator/admin UI for service-key-backed domain, ingest, query, trace, and eval workflows |
 | Demo domains | SEC (25-question eval) + Legal/SPDX (12-question eval) | Same code, two reference corpora |
 | Agent contracts | `docs/agent-tool-contract.md`, `docs/agent-integration-examples.md` | External agent integration specs |
 

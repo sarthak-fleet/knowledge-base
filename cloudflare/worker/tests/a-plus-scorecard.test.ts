@@ -79,6 +79,10 @@ const sCapabilities = {
     { consumer: 'karte', ok: true, authenticated: true },
     { consumer: 'starboard', ok: true, authenticated: true },
   ],
+  consumer_public_smokes: [
+    { consumer: 'karte', ok: true, public: true, kind: 'public_demo_chat' },
+    { consumer: 'starboard', ok: true, public: true, kind: 'public_app' },
+  ],
   consumer_eval_packs: ['karte-memory', 'starboard-readme'],
   ingest_contracts: ['text', 'record', 'url', 'file'],
   idempotent_ingest: true,
@@ -285,6 +289,31 @@ describe('a-plus-scorecard', () => {
     ]);
   });
 
+  it('does not cap S reliability when authenticated consumer smokes are skipped but public consumer smokes pass', () => {
+    const scorecard = buildAPlusScorecard({
+      operator_report: aPlusOperatorReport,
+      capabilities: {
+        consumer_authenticated_smokes: [
+          { consumer: 'karte', ok: false, authenticated: false, skipped: true, blocker: 'KARTE_SESSION_COOKIE_missing' },
+          { consumer: 'starboard', ok: false, authenticated: false, skipped: true, blocker: 'STARBOARD_SESSION_COOKIE_missing' },
+        ],
+        consumer_public_smokes: [
+          { consumer: 'karte', ok: true, public: true, kind: 'public_demo_chat' },
+          { consumer: 'starboard', ok: true, public: true, kind: 'public_app' },
+        ],
+      },
+    }, { requireGrade: 'S' });
+
+    expect(scorecard.categories.find((category) => category.name === 'reliability'))
+      .toMatchObject({
+        grade: 'S',
+        evidence: {
+          consumer_authenticated_smokes_ok: false,
+          consumer_public_smokes_ok: true,
+        },
+      });
+  });
+
   it('does not award S performance without measured non-cache latency', () => {
     const scorecard = buildAPlusScorecard({
       operator_report: aPlusOperatorReport,
@@ -342,7 +371,7 @@ describe('a-plus-scorecard', () => {
       });
   });
 
-  it('awards S performance when overall p95 and server-side non-cache p95 meet S despite client RTT outliers', () => {
+  it('awards S performance when server-owned p95 is S despite client RTT outliers', () => {
     const scorecard = buildAPlusScorecard({
       operator_report: aPlusOperatorReport,
       readiness_reports: [aPlusReadinessReport],
@@ -354,7 +383,7 @@ describe('a-plus-scorecard', () => {
           mode: 'lexical',
           repeat: 8,
           hit_rate: 1,
-          latency: { p95_ms: 98 },
+          latency: { p95_ms: 465 },
           server_latency: { p95_ms: 0 },
           cache_latency: { non_cache: { count: 4, p95_ms: 520 } },
           server_cache_latency: { non_cache: { count: 4, p95_ms: 0 } },
@@ -366,10 +395,10 @@ describe('a-plus-scorecard', () => {
           mode: 'semantic',
           repeat: 8,
           hit_rate: 1,
-          latency: { p95_ms: 720 },
-          server_latency: { p95_ms: 620 },
-          cache_latency: { non_cache: { count: 4, p95_ms: 750 } },
-          server_cache_latency: { non_cache: { count: 4, p95_ms: 630 } },
+          latency: { p95_ms: 965 },
+          server_latency: { p95_ms: 455 },
+          cache_latency: { non_cache: { count: 4, p95_ms: 965 } },
+          server_cache_latency: { non_cache: { count: 4, p95_ms: 455 } },
           queries: Array.from({ length: 32 }, (_, i) => ({ query: `semantic ${i}` })),
         },
       ],
@@ -388,7 +417,15 @@ describe('a-plus-scorecard', () => {
     });
 
     expect(scorecard.categories.find((category) => category.name === 'retrieval_performance'))
-      .toMatchObject({ grade: 'S' });
+      .toMatchObject({
+        grade: 'S',
+        evidence: {
+          benchmarks: [
+            expect.objectContaining({ server_owned_s: true, p95_ms: 465 }),
+            expect.objectContaining({ server_owned_s: true, p95_ms: 965 }),
+          ],
+        },
+      });
   });
 
   it('fails when deploy-readiness evidence is required but missing', () => {
@@ -814,6 +851,54 @@ describe('a-plus-scorecard', () => {
         grade: 'B',
         evidence: {
           query_eval_hit_rate: 0.5,
+        },
+      });
+  });
+
+  it('uses direct query eval hit rate as the quality gate when benchmark hit rate is lower', () => {
+    const scorecard = buildAPlusScorecard({
+      operator_report: {
+        ...aPlusOperatorReport,
+        inventory: {
+          ...aPlusOperatorReport.inventory,
+          eval_report_count: 2,
+        },
+      },
+      query_evals: [{
+        ...aPlusQueryEvalReport,
+        n: 4,
+        hit_rate: 1,
+        citation_rate: 1,
+        rows: [
+          { id: 'q1', hit: true, cited: true },
+          { id: 'q2', hit: true, cited: true },
+          { id: 'q3', hit: true, cited: true },
+          { id: 'q4', hit: true, cited: true },
+        ],
+      }],
+      benchmarks: [
+        {
+          surface: 'kb-search',
+          mode: 'lexical',
+          hit_rate: 0.75,
+          latency: { p95_ms: 100 },
+          server_latency: { p95_ms: 0 },
+        },
+      ],
+      capabilities: sCapabilities,
+    }, {
+      requireGrade: 'A',
+      requiredEvalKinds: ['query'],
+      minQueryEvalRows: 4,
+    });
+
+    expect(scorecard.categories.find((category) => category.name === 'retrieval_quality'))
+      .toMatchObject({
+        grade: 'S',
+        evidence: {
+          hit_rate: 0.75,
+          effective_hit_rate: 1,
+          query_eval_hit_rate: 1,
         },
       });
   });

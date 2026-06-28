@@ -104,13 +104,17 @@ function parseArgs(argv) {
 function buildPlan(options) {
   const requiresS = options.requireGrade === 'S';
   const minProofQueries = requiresS ? MIN_S_PROOF_QUERIES : MIN_PROOF_QUERIES;
+  const benchmarkCacheMode = requiresS ? 'bypass_read_write' : 'default';
+  const benchmarkWarmup = requiresS ? 1 : 0;
   return {
     base_url: options.baseUrl,
     domain: options.domain || null,
     benchmark_input: options.input,
     output_dir: options.outputDir || null,
     repeat: options.repeat,
+    benchmark_warmup: benchmarkWarmup,
     top_k: options.topK,
+    benchmark_cache_mode: benchmarkCacheMode,
     expected_deploy_fingerprint: options.expectedDeployFingerprint,
     required_grade: options.requireGrade,
     continue_after_readiness_failure: options.continueAfterReadinessFailure === true,
@@ -308,6 +312,7 @@ export async function runQueryEvalProof(options) {
       top_k: options.topK,
       answer_mode: 'extractive',
       ai_judge: false,
+      ...(options.cacheMode ? { cache_mode: options.cacheMode } : {}),
       ...(options.sessionIdPrefix ? { session_id_prefix: options.sessionIdPrefix } : {}),
       cases,
     },
@@ -393,6 +398,8 @@ export async function runAPlusProof(options) {
     surface: 'kb-search',
     domain: options.domain,
     mode: 'lexical',
+    cacheMode: options.requireGrade === 'S' ? 'bypass_read_write' : 'default',
+    warmup: options.requireGrade === 'S' ? 1 : 0,
     repeat: options.repeat,
     topK: options.topK,
   });
@@ -403,6 +410,8 @@ export async function runAPlusProof(options) {
     surface: 'kb-query',
     domain: options.domain,
     mode: 'semantic',
+    cacheMode: options.requireGrade === 'S' ? 'bypass_read_write' : 'default',
+    warmup: options.requireGrade === 'S' ? 1 : 0,
     repeat: options.repeat,
     topK: options.topK,
   });
@@ -418,6 +427,7 @@ export async function runAPlusProof(options) {
       sessionIdPrefix: options.requireGrade === 'S'
         ? `proof:${options.domain}:${Date.now()}:${i + 1}`
         : '',
+      cacheMode: options.requireGrade === 'S' ? 'bypass_read_write' : '',
     }));
   }
   const queryEval = queryEvals[0];
@@ -443,6 +453,7 @@ export async function runAPlusProof(options) {
     benchmarks: [lexicalBenchmark, semanticBenchmark],
     capabilities: {
       ...(consumerSmokes ? { consumer_authenticated_smokes: consumerSmokes.consumers } : {}),
+      ...(consumerSmokes ? { consumer_public_smokes: consumerSmokes.public_consumers } : {}),
       consumer_eval_packs: detectConsumerEvalPacks(input),
       typed_client_contract: clientContract.ok === true,
       one_command_smoke: true,

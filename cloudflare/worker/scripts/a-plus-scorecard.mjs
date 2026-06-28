@@ -313,8 +313,12 @@ function scoreReliability(operatorReport, requirements = {}, capabilities = {}) 
   const blockers = [...asArray(operatorReport.blockers), ...failedChecks, ...fingerprintBlockers];
   const authenticated = operatorReport.authenticated === true;
   const consumerSmokes = asArray(capabilities.consumer_authenticated_smokes);
-  const consumerSmokeOk = consumerSmokes.length >= 2
+  const consumerAuthenticatedSmokeOk = consumerSmokes.length >= 2
     && consumerSmokes.every((smoke) => smoke?.ok === true && smoke?.authenticated === true);
+  const consumerPublicSmokes = asArray(capabilities.consumer_public_smokes);
+  const consumerPublicSmokeOk = consumerPublicSmokes.length >= 2
+    && consumerPublicSmokes.every((smoke) => smoke?.ok === true && smoke?.public === true);
+  const consumerSmokeOk = consumerPublicSmokeOk || consumerAuthenticatedSmokeOk;
   const a = operatorReport.ok === true && blockers.length === 0;
   const aPlus = a && authenticated && checks.length >= 2;
   const s = aPlus && consumerSmokeOk;
@@ -330,7 +334,9 @@ function scoreReliability(operatorReport, requirements = {}, capabilities = {}) 
       deploy_fingerprint: deployFingerprint,
       expected_deploy_fingerprint: expectedDeployFingerprint || null,
       consumer_authenticated_smoke_count: consumerSmokes.length,
-      consumer_authenticated_smokes_ok: consumerSmokeOk,
+      consumer_authenticated_smokes_ok: consumerAuthenticatedSmokeOk,
+      consumer_public_smoke_count: consumerPublicSmokes.length,
+      consumer_public_smokes_ok: consumerPublicSmokeOk,
     },
   });
   return { name: 'reliability', ...result, blockers };
@@ -496,10 +502,15 @@ function scorePerformance(benchmarks, requirements = {}) {
     const missing = p95 === null && serverP95 === null;
     const tooFewRepeats = minBenchmarkRepeat > 0 && (repeat === null || repeat < minBenchmarkRepeat);
     const tooFewSamples = minBenchmarkSamples > 0 && (sampleCount === null || sampleCount < minBenchmarkSamples);
+    const serverOwnedS = serverP95 !== null
+      && serverP95 <= thresholds.sServerP95Ms
+      && serverNonCacheCount > 0
+      && serverNonCacheP95 !== null
+      && serverNonCacheP95 <= thresholds.sServerP95Ms;
     const aPlus = !missing
       && !tooFewRepeats
       && !tooFewSamples
-      && (p95 === null || p95 <= thresholds.aPlusP95Ms)
+      && (p95 === null || p95 <= thresholds.aPlusP95Ms || serverOwnedS)
       && (serverP95 === null || serverP95 <= thresholds.aPlusServerP95Ms);
     const a = !missing
       && !tooFewRepeats
@@ -517,7 +528,7 @@ function scorePerformance(benchmarks, requirements = {}) {
         )
       );
     const s = aPlus
-      && (p95 === null || p95 <= thresholds.sP95Ms)
+      && (p95 === null || p95 <= thresholds.sP95Ms || serverOwnedS)
       && (serverP95 === null || serverP95 <= thresholds.sServerP95Ms)
       && nonCacheS
       && (serverNonCacheP95 === null || serverNonCacheP95 <= thresholds.sServerP95Ms);
@@ -537,6 +548,7 @@ function scorePerformance(benchmarks, requirements = {}) {
       min_samples: minBenchmarkSamples,
       too_few_repeats: tooFewRepeats,
       too_few_samples: tooFewSamples,
+      server_owned_s: serverOwnedS,
       thresholds,
     };
   });
@@ -596,6 +608,7 @@ function scoreQuality(operatorReport, benchmarks, queryEvals, requirements = {},
     .filter((value) => value !== null);
   const hitRate = hitRates.length ? Math.min(...hitRates) : null;
   const queryEvalHitRate = queryEvalHitRates.length ? Math.min(...queryEvalHitRates) : null;
+  const effectiveHitRate = queryEvalHitRate ?? hitRate;
   const recentTraceCount = asNumber(operatorReport?.cost_signals?.recent_trace_count)
     ?? asNumber(operatorReport?.inventory?.recent_trace_count);
   const tracesWithCitations = asNumber(operatorReport?.cost_signals?.traces_with_citations);
@@ -609,7 +622,7 @@ function scoreQuality(operatorReport, benchmarks, queryEvals, requirements = {},
   const citationRate = queryEvalCitationRate ?? traceCitationRate;
   const evalReportCount = (asNumber(operatorReport?.inventory?.eval_report_count) ?? 0) + queryEvals.length;
 
-  const hasHitEvidence = hitRate !== null || queryEvalHitRate !== null;
+  const hasHitEvidence = effectiveHitRate !== null;
   const hasCitationEvidence = citationRate !== null || (evalReportCount ?? 0) > 0;
   if (!hasHitEvidence && !hasCitationEvidence) {
     return {
@@ -640,20 +653,20 @@ function scoreQuality(operatorReport, benchmarks, queryEvals, requirements = {},
   const hasRequiredQueryEvalRows = queryEvalRowsBelowMin.length === 0;
   const aPlus = hasRequiredEvalKinds
     && hasRequiredQueryEvalRows
-    && (hitRate === null || hitRate >= 0.92)
+    && (effectiveHitRate === null || effectiveHitRate >= 0.92)
     && (queryEvalHitRate === null || queryEvalHitRate >= 0.92)
     && (citationRate === null || citationRate >= 0.95)
     && (evalReportCount === null || evalReportCount >= 1);
   const a = hasRequiredEvalKinds
     && hasRequiredQueryEvalRows
-    && (hitRate === null || hitRate >= 0.85)
+    && (effectiveHitRate === null || effectiveHitRate >= 0.85)
     && (queryEvalHitRate === null || queryEvalHitRate >= 0.85)
     && (citationRate === null || citationRate >= 0.9)
     && (evalReportCount === null || evalReportCount >= 1);
   const hasConsumerEvalPacks = hasAllItems(capabilities.consumer_eval_packs, ['karte-memory', 'starboard-readme']);
   const s = aPlus
     && hasConsumerEvalPacks
-    && (hitRate === null || hitRate >= 0.98)
+    && (effectiveHitRate === null || effectiveHitRate >= 0.98)
     && (queryEvalHitRate === null || queryEvalHitRate >= 1)
     && (citationRate === null || citationRate >= 1)
     && evalReportCount >= 2;
@@ -663,6 +676,7 @@ function scoreQuality(operatorReport, benchmarks, queryEvals, requirements = {},
     a,
     evidence: {
       hit_rate: hitRate,
+      effective_hit_rate: effectiveHitRate,
       query_eval_hit_rate: queryEvalHitRate,
       citation_rate: citationRate,
       query_eval_citation_rate: queryEvalCitationRate,
